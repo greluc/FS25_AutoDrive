@@ -937,38 +937,44 @@ function AutoDrive.getWaterTrailerInWater(vehicle, trailers)
 end
 
 function AutoDrive.startFillTrigger(trailers)
-    local ret = nil
+    local tempFillTrigger = nil
     if trailers == nil then
-        return ret
+        return tempFillTrigger
     end
+    local wasAtTrigger = false
     for _, trailer in pairs(trailers) do
-        local rootVehicle = trailer:getRootVehicle()
         local spec = trailer.spec_fillUnit
         if spec and spec.fillTrigger and spec.fillTrigger.triggers and #spec.fillTrigger.triggers >0 then
+            local rootVehicle = trailer:getRootVehicle()
             for _, trigger in ipairs(spec.fillTrigger.triggers) do
                 local fillType = trigger:getCurrentFillType()
-                if fillType == rootVehicle.ad.stateModule:getFillType() then
-                    if trigger:getIsActivatable(rootVehicle) then
-                        if not spec.fillTrigger.isFilling then
-                            AutoDrive.debugPrint(rootVehicle, AutoDrive.DC_TRAILERINFO, "AutoDrive.startFillTrigger currentTrigger %s #triggers %s", tostring(spec.fillTrigger.currentTrigger), tostring(#spec.fillTrigger.triggers))
-                            spec:setFillUnitIsFilling(true)
-                        end
-                        if spec.fillTrigger.isFilling and spec.fillTrigger.currentTrigger ~= nil then
-                            ret = spec.fillTrigger
+                if table.contains(rootVehicle.ad.stateModule:getSelectedFillTypes(), fillType) then
+                    local fillUnitIndex
+                    for _fillUnitIndex, _ in pairs(trailer:getFillUnits()) do
+                        if trailer:getFillUnitAllowsFillType(_fillUnitIndex, fillType) then
+                            wasAtTrigger = true
+                            if trailer:getFillUnitFreeCapacity(_fillUnitIndex) > 0 then
+                                fillUnitIndex = _fillUnitIndex
+                                break
+                            end
                         end
                     end
-                else
-                    local triggerFillTypeName = g_fillTypeManager:getFillTypeNameByIndex(fillType)
-                    local vehicleFillTypeName = g_fillTypeManager:getFillTypeNameByIndex(rootVehicle.ad.stateModule:getFillType())
-                    AutoDrive.debugPrint(rootVehicle, AutoDrive.DC_TRAILERINFO, "ERROR: AutoDrive.startFillTrigger fillTypes missmatch triggerFillTypeName %s <-> vehicleFillTypeName %s "
-                    , tostring(triggerFillTypeName)
-                    , tostring(vehicleFillTypeName)
-                    )
+                    if fillUnitIndex then
+                        if trigger:getIsActivatable(rootVehicle) then
+                            if not spec.fillTrigger.isFilling then
+                                AutoDrive.debugPrint(rootVehicle, AutoDrive.DC_TRAILERINFO, "AutoDrive.startFillTrigger currentTrigger %s #triggers %s", tostring(spec.fillTrigger.currentTrigger), tostring(#spec.fillTrigger.triggers))
+                                spec:setFillUnitIsFilling(true)
+                            end
+                            if spec.fillTrigger.isFilling and spec.fillTrigger.currentTrigger ~= nil then
+                                tempFillTrigger = spec.fillTrigger
+                            end
+                        end
+                    end
                 end
             end
         end
     end
-    return ret
+    return tempFillTrigger, wasAtTrigger
 end
 
 function AutoDrive.startLoadTreePlanter(trailers)

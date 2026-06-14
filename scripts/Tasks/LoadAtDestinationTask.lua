@@ -97,14 +97,14 @@ function LoadAtDestinationTask:update(dt)
                         self.retryTime = LoadAtDestinationTask.LOAD_RETRY_TIME
                     end
                 else
-                    if (AutoDrive.checkForContinueOnEmptyLoadTrigger(self.vehicle) and self.vehicle.ad.trailerModule:wasAtSuitableTrigger())
+                    if (self.vehicle.ad.trailerModule:wasAtSuitableTrigger())
                         or ((AutoDrive.getSetting("rotateTargets", self.vehicle) == AutoDrive.RT_ONLYPICKUP or AutoDrive.getSetting("rotateTargets", self.vehicle) == AutoDrive.RT_PICKUPANDDELIVER) and AutoDrive.getSetting("useFolders"))
                     then
-                        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO, "LoadAtDestinationTask:update checkForContinueOnEmptyLoadTrigger -> self:finished")
+                        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO, "LoadAtDestinationTask:update wasAtSuitableTrigger -> self:finished")
                         self:finished()
                         return
                     end
-                    self.retryTime = LoadAtDestinationTask.LOAD_RETRY_TIME
+                    self.retryTime = 0
                 end
                 if self.vehicle.ad.trailerModule:isActiveAtTrigger() then
                     -- update to catch if no longer active at trigger
@@ -170,11 +170,6 @@ function LoadAtDestinationTask:update(dt)
                 self.vehicle.ad.specialDrivingModule:stopVehicle()
                 self.vehicle.ad.specialDrivingModule:update(dt)
             else
-                if AutoDrive.checkForContinueOnEmptyLoadTrigger(self.vehicle) and self.vehicle.ad.trailerModule:wasAtSuitableTrigger() then
-                    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO, "LoadAtDestinationTask:update not isActiveAtTrigger + should continue + wasAtSuitableTrigger -> finished")
-                    self:finished()
-                    return
-                end
                 if self.isReverseTriggerReached then
                     self.fillLevel, _, self.filledToUnload, self.fillFreeCapacity = AutoDrive.getAllFillLevels(self.trailers)
                     if self.filledToUnload then

@@ -393,17 +393,6 @@ AutoDrive.settings.mapMarkerDetour = {
     isVehicleSpecific = false
 }
 
-AutoDrive.settings.continueOnEmptySilo = {
-    values = {false, true},
-    texts = {"gui_ad_wait", "gui_ad_drive"},
-    default = 1,
-    current = 1,
-    text = "gui_ad_siloEmpty",
-    tooltip = "gui_ad_siloEmpty_tooltip",
-    translate = true,
-    isVehicleSpecific = false
-}
-
 AutoDrive.settings.autoConnectStart = {
     values = {false, true},
     texts = {"gui_ad_no", "gui_ad_yes"},
@@ -1984,7 +1973,6 @@ function AutoDrive.readVehicleSettingsFromXML(vehicle, xmlFile, key)
         vehicle.ad.settings = {}
     end
 
-    vehicle.ad.settings = {}
     for settingName, setting in pairs(AutoDrive.settings) do
         if setting.isVehicleSpecific and not setting.shallNotBeSaved then
             local settingVehicle = {}

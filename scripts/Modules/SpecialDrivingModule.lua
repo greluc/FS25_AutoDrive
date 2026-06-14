@@ -54,6 +54,8 @@ function ADSpecialDrivingModule:update(dt)
         self.reverseTarget = nil
     end
     self.isReversing = false
+    self.targetLX = nil
+    self.targetLZ = nil
 end
 
 function ADSpecialDrivingModule:isStoppingVehicle()
@@ -61,6 +63,44 @@ function ADSpecialDrivingModule:isStoppingVehicle()
 end
 
 function ADSpecialDrivingModule:stopAndHoldVehicle(dt)
+    if self.targetLX then
+        self:stopAndHoldVehicle_org(dt)
+    else
+        local speedSign = AutoDrive.sign(self.vehicle.lastSignedSpeed)
+        if self.vehicle.lastSpeedReal * 3600 > 10 then
+            self.vehicle:updateVehiclePhysics(-speedSign * 15   , 0, true, dt)
+        elseif self.vehicle.lastSpeedReal * 3600 > 5 then
+            self.vehicle:updateVehiclePhysics(-speedSign * 10, 0, true, dt)
+        elseif self.vehicle.lastSpeedReal * 3600 > 1 then
+            self.vehicle:updateVehiclePhysics(-speedSign * 5, 0, true, dt)
+        elseif self.vehicle.lastSpeedReal * 3600 > 0.2 then
+            self.vehicle:updateVehiclePhysics(-speedSign * 3, 0, true, dt)
+        else
+            self.vehicle:updateVehiclePhysics(0.0001, 0, true, dt) -- enable handbrake
+        end
+
+        if self.vehicle.ad and self.vehicle.ad.specialDrivingModule then
+            local speedReal = self.vehicle.lastSpeedReal * 3600
+            self.vehicle.ad.specialDrivingModule.stoppedTimer:timer(math.abs(speedReal) < 1 and (self.vehicle.ad.trailerModule:getCanStopMotor()), 10000, dt)
+            if self.vehicle.ad.specialDrivingModule.stoppedTimer:done() then
+                self.vehicle.ad.specialDrivingModule.motorShouldBeStopped = true
+                if self.vehicle.ad.specialDrivingModule:shouldStopMotor() and self.vehicle:getIsMotorStarted() and (not g_currentMission.missionInfo.automaticMotorStartEnabled) then
+                    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "ADSpecialDrivingModule:stopAndHoldVehicle stopMotor")
+                    if self.setCruiseControlState then
+                        self:setCruiseControlState(Drivable.CRUISECONTROL_STATE_OFF)
+                        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "stopAndHoldVehicle updateVehiclePhysics - 0, 0, true, 16")
+                        self:updateVehiclePhysics(0, 0, true, dt)
+                        self:raiseActive()
+                    end
+                    self.vehicle:stopMotor()
+                end
+            end
+        end
+    end
+    self.vehicle:raiseActive()
+end
+
+function ADSpecialDrivingModule:stopAndHoldVehicle_org(dt)
     if self.vehicle.spec_locomotive and self.vehicle.ad and self.vehicle.ad.trainModule then
         self.vehicle.ad.trainModule:stopAndHoldVehicle(dt)
         return
