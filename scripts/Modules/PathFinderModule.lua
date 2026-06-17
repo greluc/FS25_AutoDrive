@@ -2817,6 +2817,7 @@ function PathFinderModule:createWayPointsNew()
     -- shortcut the path if possible
     -- self:smoothResultingPPPath_Refined() -- shortcut makes no sense for AStar
     self.smoothStep = 2
+    self.smoothDone = true
 
     if self.smoothStep == 2 then
         self:appendWayPointsNew()
