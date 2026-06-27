@@ -19,7 +19,7 @@ function AutoDriveCreateWayPointEvent.new(x, y, z, out, incoming, flags, connect
 	self.connect = connect
 	self.reverseDirection = reverseDirection
 	self.dualConnection = dualConnection
-	self.fieldID = fieldID
+	self.fieldID = fieldID or 0
 	return self
 end
 
