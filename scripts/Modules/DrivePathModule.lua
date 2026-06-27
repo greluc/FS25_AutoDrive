@@ -216,15 +216,21 @@ function ADDrivePathModule:isCloseToWaypoint()
         AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "ADDrivePathModule:isCloseToWaypoint - start, wpIdx=%d, maxSkip=%d"
         , self:getCurrentWayPointIndex(), maxSkipWayPoints)
     end
+    local min_distance = self.min_distance
+    if self.vehicle:getLastSpeed() > 100 then
+        min_distance = min_distance * 3
+    elseif self.vehicle:getLastSpeed() > 60 then
+        min_distance = min_distance * 2
+    end
 
     for i = 0, maxSkipWayPoints do
         if self.wayPoints[self:getCurrentWayPointIndex() + i] ~= nil then
             local distanceToCurrentWp = MathUtil.vector2Length(x - self.wayPoints[self:getCurrentWayPointIndex() + i].x, z - self.wayPoints[self:getCurrentWayPointIndex() + i].z)
             if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
                 AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "ADDrivePathModule:isCloseToWaypoint(%d/%d) distanceToCurrentWp=%.1f min_distance=%.1f"
-                , i, maxSkipWayPoints, distanceToCurrentWp, self.min_distance)
+                , i, maxSkipWayPoints, distanceToCurrentWp, min_distance)
             end
-            if distanceToCurrentWp < self.min_distance then --and i == 0
+            if distanceToCurrentWp < min_distance then --and i == 0
                 if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
                     AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "ADDrivePathModule:isCloseToWaypoint return true")
                 end
