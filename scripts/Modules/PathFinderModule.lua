@@ -78,7 +78,7 @@ PathFinderModule.PP_CELL_Z = 9
 PathFinderModule.GRID_SIZE_FACTOR = 0.5
 PathFinderModule.GRID_SIZE_FACTOR_SECOND_UNLOADER = 1.1
 
-PathFinderModule.PP_MAX_EAGER_LOOKAHEAD_STEPS = 1
+PathFinderModule.PP_MAX_EAGER_LOOKAHEAD_STEPS = 10
 
 PathFinderModule.MIN_FRUIT_VALUE = 50
 PathFinderModule.SLOPE_DETECTION_THRESHOLD = math.rad(20)
@@ -2143,7 +2143,7 @@ function PathFinderModule:smoothResultingPPPath_Refined()
                 end
             end
 
-            if foundCollision or ((self.smoothIndex + self.totalEagerSteps) >= (#self.wayPoints - unfilteredEndPointCount)) then
+            if foundCollision or ((self.smoothIndex + self.totalEagerSteps) >= (#self.wayPoints - unfilteredEndPointCount)) or self.totalEagerSteps > PathFinderModule.PP_MAX_EAGER_LOOKAHEAD_STEPS then
                 self.smoothIndex = self.smoothIndex + math.max(1, (self.lookAheadIndex))
                 self.totalEagerSteps = 0
             end
@@ -2815,9 +2815,9 @@ function PathFinderModule:createWayPointsNew()
         self:smoothResultingPPPath()
     end
     -- shortcut the path if possible
-    -- self:smoothResultingPPPath_Refined() -- shortcut makes no sense for AStar
-    self.smoothStep = 2
-    self.smoothDone = true
+    self:smoothResultingPPPath_Refined()
+    -- self.smoothStep = 2
+    -- self.smoothDone = true
 
     if self.smoothStep == 2 then
         self:appendWayPointsNew()
