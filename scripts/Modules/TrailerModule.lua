@@ -688,7 +688,7 @@ function ADTrailerModule:startUnloadingIntoTrigger(trailer, trigger)
     elseif trigger.bunkerSiloArea ~= nil then
         -- bunker silo
         if (not self.vehicle.ad.drivePathModule:getIsReversing() and not (self.vehicle.lastSpeedReal * 3600 < 1)) -- forward through bunker silo
-            or (self.vehicle.ad.drivePathModule:getIsReversing() and self.vehicle:getLastSpeed() < 1) then -- reverse into bunker silo
+            or (self.vehicle.ad.drivePathModule:getIsReversing() and self.vehicle:getLastSpeed() < 0.5) then -- reverse into bunker silo
             AutoDrive.debugPrint(trailer, AutoDrive.DC_TRAILERINFO, "Start unloading into bunkersilo - fillUnitIndex: %s", tostring(trailer:getCurrentDischargeNode().fillUnitIndex))
             trailer:setDischargeState(Dischargeable.DISCHARGE_STATE_GROUND)
             self.isUnloading = true
