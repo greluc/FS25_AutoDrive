@@ -942,6 +942,7 @@ function AutoDrive.startFillTrigger(trailers)
         return tempFillTrigger
     end
     local wasAtTrigger = false
+    local fillingTrailer = nil
     for _, trailer in pairs(trailers) do
         local spec = trailer.spec_fillUnit
         if spec and spec.fillTrigger and spec.fillTrigger.triggers and #spec.fillTrigger.triggers >0 then
@@ -966,7 +967,11 @@ function AutoDrive.startFillTrigger(trailers)
                                 spec:setFillUnitIsFilling(true)
                             end
                             if spec.fillTrigger.isFilling and spec.fillTrigger.currentTrigger ~= nil then
+                                if spec.fillTrigger.stoppedTimer == nil then
+                                    spec.fillTrigger.stoppedTimer = AutoDriveTON:new()
+                                end
                                 tempFillTrigger = spec.fillTrigger
+                                fillingTrailer = trailer
                             end
                         end
                     end
@@ -974,7 +979,7 @@ function AutoDrive.startFillTrigger(trailers)
             end
         end
     end
-    return tempFillTrigger, wasAtTrigger
+    return tempFillTrigger, wasAtTrigger, fillingTrailer
 end
 
 function AutoDrive.startLoadTreePlanter(trailers)
