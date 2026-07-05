@@ -708,7 +708,7 @@ function PathFinderModule:update(dt)
         AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PathFinderModule:update - self.steps %d #self.grid %d", self.steps, table.count(self.grid))
     end
 
-    if self.completelyBlocked or self.targetBlocked or (not self.isNewPF and self.steps > (self.max_pathfinder_steps)) then
+    if self.completelyBlocked or self.targetBlocked or self.steps > (self.max_pathfinder_steps) then
         --[[ We need some better logic here.
         Some situations might be solved by the module itself by either
             a) 'fallBackMode (ignore fruit and field restrictions)'
