@@ -297,6 +297,8 @@ function AutoDrive:onPostLoad(savegame)
     end
 
     self.ad.foldStartTime = 0
+    self.ad.ALDelayStartTime = 0
+
     -- Pure client side state
     self.ad.nToolTipWait = 300
     self.ad.sToolTip = ""
@@ -440,33 +442,42 @@ end
 function AutoDrive:onUpdate(dt)
     if self.isServer and self.ad.stateModule:isActive() then
         self.ad.recordingModule:update(dt)
+        local shouldUStopVehicle = false
+        local allowTaskUpdate = (not AutoDrive.getSetting("FoldImplements", self) or (self.ad.foldStartTime + AutoDrive.foldTimeout < g_time))
+        allowTaskUpdate = allowTaskUpdate and (self.ad.ALDelayStartTime + AutoDrive.ALDelayTimeout < g_time)
 
-        if not AutoDrive.getSetting("FoldImplements", self) or (self.ad.foldStartTime + AutoDrive.foldTimeout < g_time) then
-            self.ad.taskModule:update(dt)
+        if allowTaskUpdate then
+             self.ad.taskModule:update(dt)
         else
-            -- should fold implements
-            if not AutoDrive.getAllImplementsFolded(self) then
-                if (g_updateLoopIndex % (AutoDrive.PERF_FRAMES) == 0) then
-                    -- fold animations take some time, so no need to check and initiate each frame
-                    if self.startMotor then
-                        if not self:getIsMotorStarted() then
-                            self:startMotor()
+            if AutoDrive.getSetting("FoldImplements", self) then
+                -- should fold implements
+                if not AutoDrive.getAllImplementsFolded(self) then
+                    if (g_updateLoopIndex % (AutoDrive.PERF_FRAMES) == 0) then
+                        -- fold animations take some time, so no need to check and initiate each frame
+                        if self.startMotor then
+                            if not self:getIsMotorStarted() then
+                                self:startMotor()
+                            end
                         end
+                        AutoDrive.foldAllImplements(self)
                     end
-                    AutoDrive.foldAllImplements(self)
+                    shouldUStopVehicle = true
+                else
+                    -- all folded - no further tries necessary
+                    self.ad.foldStartTime = 0
+                    AutoDrive.getAllVehicleDimensions(self, true)
+                    self:raiseActive()
                 end
-                if self.ad ~= nil and self.ad.specialDrivingModule ~= nil then
-                    self.ad.specialDrivingModule.motorShouldNotBeStopped = true
-                    self.ad.specialDrivingModule:stopVehicle()
-                    self.ad.specialDrivingModule:update(dt)
-                    self.ad.specialDrivingModule.motorShouldNotBeStopped = false
-                end
-            else
-                -- all folded - no further tries necessary
-                self.ad.foldStartTime = 0
-                AutoDrive.getAllVehicleDimensions(self, true)
-                self:raiseActive()
             end
+            if (self.ad.ALDelayStartTime + AutoDrive.ALDelayTimeout >= g_time) then
+                shouldUStopVehicle = true
+            end
+        end
+        if self.ad ~= nil and self.ad.specialDrivingModule ~= nil and shouldUStopVehicle then
+            self.ad.specialDrivingModule.motorShouldNotBeStopped = true
+            self.ad.specialDrivingModule:stopVehicle()
+            self.ad.specialDrivingModule:update(dt)
+            self.ad.specialDrivingModule.motorShouldNotBeStopped = false
         end
     end
 
@@ -1233,7 +1244,7 @@ function AutoDrive:stopAutoDrive()
             if self.ad.isStoppingWithError == true then
                 self.ad.onRouteToRefuel = false
                 self.ad.onRouteToRepair = false
-                AutoDrive.debugPrint(self, AutoDrive.DC_VEHICLEINFO, "AutoDrive:startAutoDrive self.ad.onRouteToRefuel %s", tostring(self.ad.onRouteToRefuel))
+                AutoDrive.debugPrint(self, AutoDrive.DC_VEHICLEINFO, "AutoDrive:stopAutoDrive self.ad.onRouteToRefuel %s", tostring(self.ad.onRouteToRefuel))
             end
             AutoDrive.updateAutoDriveLights(self, true)
 
@@ -1256,6 +1267,7 @@ function AutoDrive:stopAutoDrive()
                     end
 
                     if self.stopMotor ~= nil then
+                        AutoDrive.debugPrint(self, AutoDrive.DC_VEHICLEINFO, "AutoDrive:stopAutoDrive stopMotor")
                         self:stopMotor()
                     end
                 end
