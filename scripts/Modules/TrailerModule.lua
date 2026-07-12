@@ -119,9 +119,9 @@ function ADTrailerModule:getBunkerSiloSpeed()
             local normalVector = {x = -rz, z = rx}
 
             --                                                                                  vecW
-            local x1, z1 = trigger.bunkerSiloArea.sx, trigger.bunkerSiloArea.sz --              1 ---- 2
-            --local x2, z2 = trigger.bunkerSiloArea.wx, trigger.bunkerSiloArea.wz--     vecH    | ---- |
-            local x3, z3 = trigger.bunkerSiloArea.hx, trigger.bunkerSiloArea.hz --              | ---- |
+            local x1, z1 = trigger.bunkerSiloArea.inner.sx, trigger.bunkerSiloArea.inner.sz --              1 ---- 2
+            --local x2, z2 = trigger.bunkerSiloArea.inner.wx, trigger.bunkerSiloArea.inner.wz--     vecH    | ---- |
+            local x3, z3 = trigger.bunkerSiloArea.inner.hx, trigger.bunkerSiloArea.inner.hz --              | ---- |
             --local x4, z4 = x2 + (x3 - x1), z2 + (z3 - z1) --                                  3 ---- 4    4 = 2 + vecH
 
             local vecH = {x = (x3 - x1), z = (z3 - z1)}

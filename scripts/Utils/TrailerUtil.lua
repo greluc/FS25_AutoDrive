@@ -753,9 +753,9 @@ function AutoDrive.isTrailerInBunkerSiloArea(trailer, trigger)
             local x, y, z = getWorldTranslation(dischargeNode.node)
             local tx, _, tz = x, y, z + 1
             if trigger ~= nil and trigger.bunkerSiloArea ~= nil then
-                local x1, z1 = trigger.bunkerSiloArea.sx, trigger.bunkerSiloArea.sz
-                local x2, z2 = trigger.bunkerSiloArea.wx, trigger.bunkerSiloArea.wz
-                local x3, z3 = trigger.bunkerSiloArea.hx, trigger.bunkerSiloArea.hz
+                local x1, z1 = trigger.bunkerSiloArea.inner.sx, trigger.bunkerSiloArea.inner.sz
+                local x2, z2 = trigger.bunkerSiloArea.inner.wx, trigger.bunkerSiloArea.inner.wz
+                local x3, z3 = trigger.bunkerSiloArea.inner.hx, trigger.bunkerSiloArea.inner.hz
                 return MathUtil.hasRectangleLineIntersection2D(x1, z1, x2 - x1, z2 - z1, x3 - x1, z3 - z1, x, z, tx - x, tz - z)
             end
         end

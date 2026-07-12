@@ -98,7 +98,7 @@ AutoDrive.UAL_FILLTYPE_ALL = 1 -- value for set all materials in UniversalAutolo
 
 AutoDrive.MAX_REFUEL_TRIGGER_DISTANCE = 15
 AutoDrive.REFUEL_LEVEL = 0.15
-AutoDrive.BUNKERSILO_CONNECTED_DISTANCE = 10
+AutoDrive.BUNKERSILO_CONNECTED_DISTANCE = 1
 
 AutoDrive.colors = {
 	ad_color_singleConnection = { 0, 1, 0, 1 },
