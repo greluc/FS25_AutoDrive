@@ -97,10 +97,9 @@ function LoadAtDestinationTask:update(dt)
                         self.retryTime = LoadAtDestinationTask.LOAD_RETRY_TIME
                     end
                 else
-                    if (self.vehicle.ad.trailerModule:wasAtSuitableTrigger() and not self.vehicle.ad.trailerModule:isOverloadingFromFillable())
-                        or ((AutoDrive.getSetting("rotateTargets", self.vehicle) == AutoDrive.RT_ONLYPICKUP or AutoDrive.getSetting("rotateTargets", self.vehicle) == AutoDrive.RT_PICKUPANDDELIVER) and AutoDrive.getSetting("useFolders"))
+                    if ((AutoDrive.getSetting("rotateTargets", self.vehicle) == AutoDrive.RT_ONLYPICKUP or AutoDrive.getSetting("rotateTargets", self.vehicle) == AutoDrive.RT_PICKUPANDDELIVER) and AutoDrive.getSetting("useFolders"))
                     then
-                        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO, "LoadAtDestinationTask:update wasAtSuitableTrigger -> self:finished")
+                        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO, "LoadAtDestinationTask:update -> self:finished")
                         self:finished()
                         return
                     end

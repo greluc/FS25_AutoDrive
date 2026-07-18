@@ -63,6 +63,7 @@ function ADSpecialDrivingModule:isStoppingVehicle()
 end
 
 function ADSpecialDrivingModule:stopAndHoldVehicle(dt)
+    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "ADSpecialDrivingModule:stopAndHoldVehicle start self.targetLX %s", tostring(self.targetLX))
     if self.targetLX then
         self:stopAndHoldVehicle_org(dt)
     else
@@ -85,13 +86,13 @@ function ADSpecialDrivingModule:stopAndHoldVehicle(dt)
             if self.vehicle.ad.specialDrivingModule.stoppedTimer:done() then
                 self.vehicle.ad.specialDrivingModule.motorShouldBeStopped = true
                 if self.vehicle.ad.specialDrivingModule:shouldStopMotor() and self.vehicle:getIsMotorStarted() and (not g_currentMission.missionInfo.automaticMotorStartEnabled) then
-                    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "ADSpecialDrivingModule:stopAndHoldVehicle stopMotor")
                     if self.setCruiseControlState then
                         self:setCruiseControlState(Drivable.CRUISECONTROL_STATE_OFF)
-                        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "stopAndHoldVehicle updateVehiclePhysics - 0, 0, true, 16")
+                        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "ADSpecialDrivingModule:stopAndHoldVehicle updateVehiclePhysics - 0, 0, true, 16")
                         self:updateVehiclePhysics(0, 0, true, dt)
                         self:raiseActive()
                     end
+                    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "ADSpecialDrivingModule:stopAndHoldVehicle stopMotor")
                     self.vehicle:stopMotor()
                 end
             end
@@ -101,6 +102,7 @@ function ADSpecialDrivingModule:stopAndHoldVehicle(dt)
 end
 
 function ADSpecialDrivingModule:stopAndHoldVehicle_org(dt)
+    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "ADSpecialDrivingModule:stopAndHoldVehicle_org start self.targetLX %s", tostring(self.targetLX))
     if self.vehicle.spec_locomotive and self.vehicle.ad and self.vehicle.ad.trainModule then
         self.vehicle.ad.trainModule:stopAndHoldVehicle(dt)
         return
@@ -132,6 +134,7 @@ function ADSpecialDrivingModule:stopAndHoldVehicle_org(dt)
     if self.stoppedTimer:done() then
         self.motorShouldBeStopped = true
         if self:shouldStopMotor() and self.vehicle:getIsMotorStarted() then
+            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "ADSpecialDrivingModule:stopAndHoldVehicle_org stopMotor")
             self.vehicle:stopMotor()
         end
     end
