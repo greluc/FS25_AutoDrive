@@ -103,7 +103,7 @@ function LoadAtDestinationTask:update(dt)
                         self:finished()
                         return
                     end
-                    self.retryTime = 0
+                    self.retryTime = LoadAtDestinationTask.LOAD_RETRY_TIME
                 end
                 if self.vehicle.ad.trailerModule:isActiveAtTrigger() then
                     -- update to catch if no longer active at trigger
