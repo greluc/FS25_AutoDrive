@@ -718,17 +718,23 @@ function CombineUnloaderMode:getPipeChasePosition(planningPhase)
     -- in case of rotated attached combine use the trailing vehicle sensors
     local combineSensors = self.combine.ad.sensors or self.combineRootVehicle.ad.sensors
 
+    local swathDetection =  AutoDrive.getSetting("detectSwath", self.vehicle) or false
+
+    combineSensors.leftSensorFruit:setSwathDetection(swathDetection)
     local leftBlocked = (AutoDrive.getSetting("avoidFruit", self.vehicle) and combineSensors.leftSensorFruit:pollInfo())
     or combineSensors.leftSensor:pollInfo()
     or (AutoDrive.getSetting("followOnlyOnField", self.vehicle) and (not combineSensors.leftSensorField:pollInfo()))
 
+    combineSensors.leftFrontSensorFruit:setSwathDetection(swathDetection)
     local leftFrontBlocked = (AutoDrive.getSetting("avoidFruit", self.vehicle) and combineSensors.leftFrontSensorFruit:pollInfo())
     or combineSensors.leftFrontSensor:pollInfo()
 
+    combineSensors.rightSensorFruit:setSwathDetection(swathDetection)
     local rightBlocked = (AutoDrive.getSetting("avoidFruit", self.vehicle) and combineSensors.rightSensorFruit:pollInfo())
     or combineSensors.rightSensor:pollInfo()
     or (AutoDrive.getSetting("followOnlyOnField", self.vehicle) and (not combineSensors.rightSensorField:pollInfo()))
 
+    combineSensors.rightFrontSensorFruit:setSwathDetection(swathDetection)
     local rightFrontBlocked = (AutoDrive.getSetting("avoidFruit", self.vehicle) and combineSensors.rightFrontSensorFruit:pollInfo())
     or combineSensors.rightFrontSensor:pollInfo()
 
