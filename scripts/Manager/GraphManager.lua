@@ -17,6 +17,9 @@ end
 function ADGraphManager:markChanges()
     self.changes = true
     self.preparedWayPoints = false
+    -- Every mutation of the network routes through here, which makes this the one place the
+    -- spatial index has to be dropped. Rebuilding is lazy, so a burst of edits costs one rebuild.
+    self:invalidateSpatialIndex()
 end
 
 function ADGraphManager:resetChanges()
@@ -204,10 +207,21 @@ function ADGraphManager:FastShortestPath(start, markerName, markerId)
         return wp
     end
 
-    for i in pairs(self.mapMarkers) do
-        if self.mapMarkers[i].name == markerName then
-            target_id = self.mapMarkers[i].id
-            break
+    -- Resolve by the marker id we were given. This used to search by NAME and take the first
+    -- match, which silently routed to a different destination whenever two markers share a name -
+    -- and they do: one measured savegame has 167 duplicate names among 565 markers. The markerId
+    -- parameter was passed by every caller and then ignored. pathFromToMarker directly above
+    -- always did it correctly and is the model here; markerName is kept only as a fallback for
+    -- callers that have no id.
+    local marker = markerId ~= nil and self.mapMarkers[markerId] or nil
+    if marker ~= nil and marker.id ~= nil then
+        target_id = marker.id
+    elseif markerName ~= nil then
+        for i in pairs(self.mapMarkers) do
+            if self.mapMarkers[i].name == markerName then
+                target_id = self.mapMarkers[i].id
+                break
+            end
         end
     end
 
@@ -238,83 +252,121 @@ function ADGraphManager:checkYPositionIntegrity()
 end
 
 function ADGraphManager:removeWayPoint(wayPointId, sendEvent)
-    if wayPointId ~= nil and wayPointId >= 0 and self.wayPoints[wayPointId] ~= nil then
-        if sendEvent == nil or sendEvent == true then
-            -- Propagating way point deletion all over the network
-            AutoDriveDeleteWayPointsEvent.sendEvent({wayPointId})
-        else
-            -- Deleting map marker if there is one on this waypoint, 'sendEvent' must be false because the event propagation has already happened
-            self:removeMapMarkerByWayPoint(wayPointId, false)
+    self:removeWayPoints({wayPointId}, sendEvent)
+end
 
-            local wayPoint = self.wayPoints[wayPointId]
+-- Deletes a set of way points in one pass.
+--
+-- Deleting used to renumber the entire graph once per removed point: every way point, every out
+-- and incoming list and every marker. deleteWayPointsInSection calls this in a loop, so removing
+-- a section of M points from a network of N cost M*N. The measured networks hold 20.000 to 55.000
+-- points, which is what made deleting a longer section freeze the editor.
+--
+-- Now the whole set is removed first and the graph is renumbered exactly once at the end.
+function ADGraphManager:removeWayPoints(wayPointIds, sendEvent)
+    if wayPointIds == nil or #wayPointIds == 0 then
+        return
+    end
 
-            -- Removing incoming node reference on all out nodes
-            for _, id in pairs(wayPoint.out) do
-                if self.wayPoints[id] ~= nil and self.wayPoints[id].incoming ~= nil and wayPoint.id ~= nil then
-                    local incomingId = table.indexOf(self.wayPoints[id].incoming, wayPoint.id)
-                    if incomingId ~= nil then
-                        table.remove(self.wayPoints[id].incoming, incomingId)
-                    end
-                end
-            end
+    if sendEvent == nil or sendEvent == true then
+        -- Propagating way point deletion all over the network
+        AutoDriveDeleteWayPointsEvent.sendEvent(wayPointIds)
+        return
+    end
 
-            -- Removing out node reference on all incoming nodes
-            for _, id in pairs(wayPoint.incoming) do
-                if self.wayPoints[id] ~= nil and self.wayPoints[id].out ~= nil and wayPoint.id ~= nil then
-                    local outId = table.indexOf(self.wayPoints[id].out, wayPoint.id)
-                    if outId ~= nil then
-                        table.remove(self.wayPoints[id].out, outId)
-                    end
-                end
-            end
-
-            if #wayPoint.incoming == 0 then
-                -- This is a reverse node, so we can't rely on the incoming table
-                for _, wp in pairs(self.wayPoints) do
-                    if wp.out ~= nil and wayPoint.id ~= nil then
-                        if table.contains(wp.out, wayPoint.id) then
-                            table.removeValue(wp.out, wayPoint.id)
-                        end
-                    end
-                end
-            end
-
-            -- Removing waypoint from waypoints array and invalidate it by setting id to -1
-            local wp = table.remove(self.wayPoints, wayPoint.id)
-            if wp ~= nil then
-                wp.id = -1
-            end
-
-            -- Adjusting ids for all succesive nodes :(
-            for _, wp in pairs(self.wayPoints) do
-                if wp.id > wayPointId then
-                    wp.id = wp.id - 1
-                end
-                for i, outId in pairs(wp.out) do
-                    if outId > wayPointId then
-                        wp.out[i] = outId - 1
-                    end
-                end
-                for i, incomingId in pairs(wp.incoming) do
-                    if incomingId > wayPointId then
-                        wp.incoming[i] = incomingId - 1
-                    end
-                end
-            end
-
-            -- Adjusting way point id in markers
-            for _, marker in pairs(self.mapMarkers) do
-                if marker.id > wayPointId then
-                    marker.id = marker.id - 1
-                end
-            end
-
-            -- Resetting HUD
-            AutoDrive.Hud.lastUIScale = 0
-
-            self:markChanges()
+    -- Collect the valid ids as a set, so duplicates in the input cannot delete twice
+    local toRemove = {}
+    local removeCount = 0
+    for _, id in pairs(wayPointIds) do
+        if id ~= nil and id >= 0 and self.wayPoints[id] ~= nil and not toRemove[id] then
+            toRemove[id] = true
+            removeCount = removeCount + 1
         end
     end
+    if removeCount == 0 then
+        return
+    end
+
+    -- Deleting map markers on these way points, 'sendEvent' is false because the event
+    -- propagation has already happened
+    for id in pairs(toRemove) do
+        self:removeMapMarkerByWayPoint(id, false)
+    end
+
+    -- Drop every connection that points at a removed way point. This replaces the old
+    -- out/incoming walk plus its separate "reverse node" fallback: a reverse node has an empty
+    -- incoming list, so the old code could not find its referrers through the way point itself
+    -- and scanned the whole network for them. Filtering all surviving points once covers both
+    -- cases and costs a single pass either way.
+    for _, wp in pairs(self.wayPoints) do
+        if not toRemove[wp.id] then
+            if wp.out ~= nil then
+                ADTable.removeAll(wp.out, function(outId) return toRemove[outId] == true end)
+            end
+            if wp.incoming ~= nil then
+                ADTable.removeAll(wp.incoming, function(inId) return toRemove[inId] == true end)
+            end
+        end
+    end
+
+    -- Compact the array and build the old id -> new id mapping in the same walk
+    local oldToNew = {}
+    local compacted = {}
+    local newId = 0
+    for oldId = 1, #self.wayPoints do
+        local wp = self.wayPoints[oldId]
+        if wp ~= nil then
+            if toRemove[oldId] then
+                wp.id = -1 -- invalidate, other code tests for this
+            else
+                newId = newId + 1
+                oldToNew[oldId] = newId
+                compacted[newId] = wp
+            end
+        end
+    end
+
+    -- Renumber: once, not once per deleted point
+    for id = 1, newId do
+        local wp = compacted[id]
+        wp.id = id
+        if wp.out ~= nil then
+            for i, outId in pairs(wp.out) do
+                wp.out[i] = oldToNew[outId] or outId
+            end
+        end
+        if wp.incoming ~= nil then
+            for i, inId in pairs(wp.incoming) do
+                wp.incoming[i] = oldToNew[inId] or inId
+            end
+        end
+    end
+    self.wayPoints = compacted
+    self.renumberCount = (self.renumberCount or 0) + 1
+
+    -- Adjusting way point id in markers
+    for _, marker in pairs(self.mapMarkers) do
+        if marker.id ~= nil and oldToNew[marker.id] ~= nil then
+            marker.id = oldToNew[marker.id]
+        end
+    end
+
+    -- Resetting HUD
+    if AutoDrive.Hud ~= nil then
+        AutoDrive.Hud.lastUIScale = 0
+    end
+
+    self:markChanges()
+end
+
+-- Test hooks for the renumbering pass. A regression to per-point renumbering is otherwise
+-- invisible: the graph would still come out correct, only slowly.
+function ADGraphManager:getRenumberCount()
+    return self.renumberCount or 0
+end
+
+function ADGraphManager:resetRenumberCount()
+    self.renumberCount = 0
 end
 
 function ADGraphManager:renameMapMarker(newName, markerId, sendEvent)
@@ -385,7 +437,7 @@ function ADGraphManager:addGroup(groupName, sendEvent)
             -- Propagating group creation all over the network
             AutoDriveGroupsEvent.sendEvent(groupName, AutoDriveGroupsEvent.TYPE_ADD)
         else
-            self.groups[groupName] = table.count(self.groups) + 1
+            self.groups[groupName] = ADTable.count(self.groups) + 1
             for _, vehicle in pairs(AutoDrive.getAllVehicles()) do
                 if (vehicle.ad ~= nil and vehicle.ad.groups ~= nil) then
                     if vehicle.ad.groups[groupName] == nil then
@@ -570,9 +622,9 @@ function ADGraphManager:toggleConnectionBetween(startNode, endNode, reverseDirec
         -- Propagating connection toggling all over the network
         AutoDriveToggleConnectionEvent.sendEvent(startNode, endNode, reverseDirection, dualConnection)
     else
-        if table.contains(startNode.out, endNode.id) or table.contains(endNode.incoming, startNode.id) then
-            table.removeValue(startNode.out, endNode.id)
-            table.removeValue(endNode.incoming, startNode.id)
+        if ADTable.contains(startNode.out, endNode.id) or ADTable.contains(endNode.incoming, startNode.id) then
+            ADTable.removeValue(startNode.out, endNode.id)
+            ADTable.removeValue(endNode.incoming, startNode.id)
         else
             table.insert(startNode.out, endNode.id)
             if not reverseDirection then
@@ -603,17 +655,17 @@ function ADGraphManager:setConnectionBetween(startNode, endNode, direction, send
         AutoDriveSetConnectionEvent.sendEvent(startNode, endNode, direction)
     else
         -- remove all connections between the 2 nodes
-        if table.contains(startNode.out, endNode.id) then
-            table.removeValue(startNode.out, endNode.id)
+        if ADTable.contains(startNode.out, endNode.id) then
+            ADTable.removeValue(startNode.out, endNode.id)
         end
-        if table.contains(startNode.incoming, endNode.id) then
-            table.removeValue(startNode.incoming, endNode.id)
+        if ADTable.contains(startNode.incoming, endNode.id) then
+            ADTable.removeValue(startNode.incoming, endNode.id)
         end
-        if table.contains(endNode.out, startNode.id) then
-            table.removeValue(endNode.out, startNode.id)
+        if ADTable.contains(endNode.out, startNode.id) then
+            ADTable.removeValue(endNode.out, startNode.id)
         end
-        if table.contains(endNode.incoming, startNode.id) then
-            table.removeValue(endNode.incoming, startNode.id)
+        if ADTable.contains(endNode.incoming, startNode.id) then
+            ADTable.removeValue(endNode.incoming, startNode.id)
         end
         if direction == 1 then
             -- forward
@@ -743,7 +795,7 @@ function ADGraphManager:isDualRoad(start, target)
      then
         return false
     end
-    if table.contains(start.incoming, target.id) and table.contains(target.incoming, start.id) then
+    if ADTable.contains(start.incoming, target.id) and ADTable.contains(target.incoming, start.id) then
         return true
     end
     return false
@@ -753,7 +805,7 @@ function ADGraphManager:isReverseRoad(start, target)
     if start == nil or target == nil or start.out == nil or start.id == nil or target.id == nil then
         return false
     end
-    return (not table.contains(target.incoming, start.id) and table.contains(start.out, target.id))
+    return (not ADTable.contains(target.incoming, start.id) and ADTable.contains(start.out, target.id))
 end
 
 function ADGraphManager:getDistanceBetweenNodes(start, target)
@@ -965,16 +1017,99 @@ function ADGraphManager:findMatchingWayPoint(point, direction, candidates)
     return closest
 end
 
-function ADGraphManager:getWayPointsInRange(point, rangeMin, rangeMax)
-    local inRange = {}
+-- Uniform grid over the map, rebuilt lazily after any change to the network.
+--
+-- Way point networks measured from real savegames hold 20.310 to 55.595 points, and of those
+-- under 1 % lie within 200 m of any given position - 0,13 % within 50 m. Answering a range query
+-- by walking all of them therefore threw away more than 99 % of the work, several times per frame
+-- and per vehicle.
+--
+-- Cell size is a compromise: large cells mean fewer cells to visit but more points rejected
+-- inside them, small cells mean the opposite. 32 m sits below the common query radii so a short
+-- query touches a handful of cells, and above the typical way point spacing so cells are not
+-- mostly empty.
+ADGraphManager.SPATIAL_CELL_SIZE = 32
 
+function ADGraphManager:invalidateSpatialIndex()
+    self.spatialIndex = nil
+end
+
+local function spatialKey(cx, cz)
+    -- Two integers into one key without allocating a string per lookup.
+    return cx * 100000 + cz
+end
+
+function ADGraphManager:buildSpatialIndex()
+    local cellSize = ADGraphManager.SPATIAL_CELL_SIZE
+    local cells = {}
+    local floor = math.floor
     for _, wp in pairs(self.wayPoints) do
-        local dis = MathUtil.vector2Length(wp.x - point.x, wp.z - point.z)
-        if dis < rangeMax and dis > rangeMin then
-            table.insert(inRange, wp.id)
+        if wp.id ~= nil and wp.id > 0 then
+            local key = spatialKey(floor(wp.x / cellSize), floor(wp.z / cellSize))
+            local bucket = cells[key]
+            if bucket == nil then
+                bucket = {}
+                cells[key] = bucket
+            end
+            bucket[#bucket + 1] = wp
         end
     end
+    self.spatialIndex = {cellSize = cellSize, cells = cells}
+end
 
+function ADGraphManager:getSpatialIndex()
+    if self.spatialIndex == nil then
+        self:buildSpatialIndex()
+    end
+    return self.spatialIndex
+end
+
+-- How many way points the last range query actually inspected. Used by the tests to prove the
+-- index is doing its job - a silent regression to a full scan would otherwise still be correct.
+ADGraphManager.rangeQueryVisitCount = 0
+
+function ADGraphManager:getRangeQueryVisitCount()
+    return self.rangeQueryVisitCount
+end
+
+-- Visits every way point whose cell overlaps the box around point with the given radius.
+-- The caller still has to do the exact distance test; this only narrows the candidate set.
+function ADGraphManager:forEachWayPointNear(point, radius, callback)
+    local index = self:getSpatialIndex()
+    local cellSize = index.cellSize
+    local cells = index.cells
+    local floor = math.floor
+
+    local minCX = floor((point.x - radius) / cellSize)
+    local maxCX = floor((point.x + radius) / cellSize)
+    local minCZ = floor((point.z - radius) / cellSize)
+    local maxCZ = floor((point.z + radius) / cellSize)
+
+    for cx = minCX, maxCX do
+        for cz = minCZ, maxCZ do
+            local bucket = cells[spatialKey(cx, cz)]
+            if bucket ~= nil then
+                for i = 1, #bucket do
+                    callback(bucket[i])
+                end
+            end
+        end
+    end
+end
+
+function ADGraphManager:getWayPointsInRange(point, rangeMin, rangeMax)
+    local inRange = {}
+    local visited = 0
+
+    self:forEachWayPointNear(point, rangeMax, function(wp)
+        visited = visited + 1
+        local dis = MathUtil.vector2Length(wp.x - point.x, wp.z - point.z)
+        if dis < rangeMax and dis > rangeMin then
+            inRange[#inRange + 1] = wp.id
+        end
+    end)
+
+    self.rangeQueryVisitCount = visited
     return inRange
 end
 
@@ -1021,10 +1156,10 @@ function ADGraphManager:prepareWayPoints()
                         table.insert(wp.inverseTransitMapping[outId], inId)
                     else
                         --Also for reverse routes - but only checked on demand, if angle check fails
-                        local isReverseStart = not table.contains(outPoint.incoming, wp.id)
+                        local isReverseStart = not ADTable.contains(outPoint.incoming, wp.id)
 
                         local isReverseEnd =
-                            table.contains(outPoint.incoming, wp.id) and not table.contains(wp.incoming, inPoint.id)
+                            ADTable.contains(outPoint.incoming, wp.id) and not ADTable.contains(wp.incoming, inPoint.id)
                         if isReverseStart or isReverseEnd then
                             table.insert(wp.transitMapping[inId], outId)
                             table.insert(wp.inverseTransitMapping[outId], inId)
@@ -1060,10 +1195,10 @@ function ADGraphManager:getNetworkErrors()
                         )
                         if angle > 80 then
                             local isBadAngle = true
-                            local isReverseStart = not table.contains(outPoint.incoming, wp.id)
+                            local isReverseStart = not ADTable.contains(outPoint.incoming, wp.id)
 
                             local isReverseEnd =
-                                table.contains(outPoint.incoming, wp.id) and not table.contains(wp.incoming, inPoint.id)
+                                ADTable.contains(outPoint.incoming, wp.id) and not ADTable.contains(wp.incoming, inPoint.id)
                             if isReverseStart or isReverseEnd then
                                 isBadAngle = false
                             end
@@ -1151,7 +1286,6 @@ function ADGraphManager:createDebugMarkers(updateMap)
     if overallnumberWP < 3 then
         return
     end
-    ADGraphManager:getNetworkErrors()
     local network = self:getWayPoints()
 
     local shouldUpdateMap = updateMap
@@ -1164,6 +1298,14 @@ function ADGraphManager:createDebugMarkers(updateMap)
     end
 
     if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_ROADNETWORKINFO) then
+        -- getNetworkErrors used to run above this guard, so it executed on every call regardless
+        -- of any debug channel being active. It walks every way point and calls angleBetween once
+        -- per incoming/outgoing pair - measured at 63.000 to 175.500 calls on the real networks,
+        -- plus an errorMapping table allocated per way point. createDebugMarkers is reached from
+        -- config load, from setMapMarkers (so from every multiplayer client sync) and from route
+        -- upload, which meant every player paid for it with all debug output switched off.
+        -- Its results are only ever read by the marker creation below, so it belongs in here.
+        ADGraphManager:getNetworkErrors()
         -- create markers for open ends
         if self:getGroupByName(ADGraphManager.debugGroupName) == nil then
             -- sendEvent should be false as function is initiated on server and all clients via debug setting
@@ -1346,10 +1488,10 @@ function ADGraphManager:checkForWrongReverseStart(wp_ref, wp_current, wp_ahead)
         return reverseStart
     end
 
-    local isReverseStart = wp_ahead.incoming ~= nil and (not table.contains(wp_ahead.incoming, wp_current.id))
+    local isReverseStart = wp_ahead.incoming ~= nil and (not ADTable.contains(wp_ahead.incoming, wp_current.id))
 
     isReverseStart =
-        isReverseStart and not (wp_current.incoming ~= nil and (not table.contains(wp_current.incoming, wp_ref.id)))
+        isReverseStart and not (wp_current.incoming ~= nil and (not ADTable.contains(wp_current.incoming, wp_ref.id)))
 
     local angle =
         AutoDrive.angleBetween(
@@ -1376,7 +1518,7 @@ function ADGraphManager:checkForMissingIncoming(wp_current)
         -- search for a possible reverse connection
         for _, wp in pairs(self.wayPoints) do
             if wp.out ~= nil and wp_current.id ~= nil then
-                if table.contains(wp.out, wp_current.id) then
+                if ADTable.contains(wp.out, wp_current.id) then
                     reverseFound = true
                     break
                 end
@@ -1499,12 +1641,12 @@ function ADGraphManager:getIsWayPointInSection(wayPointId, direction)
 
     local connectedIds = {}
     for _, incomingId in pairs(wayPoint.incoming) do
-        if not table.contains(connectedIds, incomingId) then
+        if not ADTable.contains(connectedIds, incomingId) then
             table.insert(connectedIds, incomingId)
         end
     end
     for _, outId in pairs(wayPoint.out) do
-        if not table.contains(connectedIds, outId) then
+        if not ADTable.contains(connectedIds, outId) then
             table.insert(connectedIds, outId)
         end
     end
@@ -1554,7 +1696,7 @@ function ADGraphManager:getIsWayPointJunction(startId, targetId)
     local function addConnections(input, connections)
         if connections ~= nil and #input > 0 then
             for _, connectedId in pairs(input) do
-                if not table.contains(connections, connectedId) then
+                if not ADTable.contains(connections, connectedId) then
                     table.insert(connections, connectedId)
                 end
             end
@@ -1572,33 +1714,33 @@ function ADGraphManager:getIsWayPointJunction(startId, targetId)
     addConnections(wayPointTarget.out, targetConnectedIdsOut)
 
     if
-        not (table.contains(startConnectedIdsIncoming, targetId) and table.contains(targetConnectedIdsOut, startId)) and
-            table.contains(startConnectedIdsOut, targetId) and
-            table.contains(targetConnectedIdsIncoming, startId) and
+        not (ADTable.contains(startConnectedIdsIncoming, targetId) and ADTable.contains(targetConnectedIdsOut, startId)) and
+            ADTable.contains(startConnectedIdsOut, targetId) and
+            ADTable.contains(targetConnectedIdsIncoming, startId) and
             (#startConnectedIds >= 3) and
             (#targetConnectedIds == 2)
      then
         -- one way ahead
         return 1
     elseif
-        table.contains(startConnectedIdsIncoming, targetId) and table.contains(targetConnectedIdsOut, startId) and
-            not (table.contains(startConnectedIdsOut, targetId) and table.contains(targetConnectedIdsIncoming, startId)) and
+        ADTable.contains(startConnectedIdsIncoming, targetId) and ADTable.contains(targetConnectedIdsOut, startId) and
+            not (ADTable.contains(startConnectedIdsOut, targetId) and ADTable.contains(targetConnectedIdsIncoming, startId)) and
             (#startConnectedIds >= 3) and
             (#targetConnectedIds == 2)
      then
         -- one way backward
         return 2
     elseif
-        table.contains(startConnectedIdsIncoming, targetId) and table.contains(targetConnectedIdsOut, startId) and
-            table.contains(startConnectedIdsOut, targetId) and
-            table.contains(targetConnectedIdsIncoming, startId) and
+        ADTable.contains(startConnectedIdsIncoming, targetId) and ADTable.contains(targetConnectedIdsOut, startId) and
+            ADTable.contains(startConnectedIdsOut, targetId) and
+            ADTable.contains(targetConnectedIdsIncoming, startId) and
             (#startConnectedIds >= 3) and
             (#targetConnectedIds == 2)
      then
         -- two way
         return 3
     elseif
-        table.contains(startConnectedIdsOut, targetId) and not table.contains(targetConnectedIdsIncoming, startId) and
+        ADTable.contains(startConnectedIdsOut, targetId) and not ADTable.contains(targetConnectedIdsIncoming, startId) and
             (#startConnectedIds >= 3)
      then
         -- reverse
@@ -1623,7 +1765,7 @@ function ADGraphManager:getWayPointsInSection(startId, targetId, direction)
         return sectionWayPoints
     end
 
-    if not table.contains(sectionWayPoints, previousId) then
+    if not ADTable.contains(sectionWayPoints, previousId) then
         -- add the first wayPoint
         table.insert(sectionWayPoints, previousId)
     end
@@ -1649,7 +1791,7 @@ function ADGraphManager:getWayPointsInSection(startId, targetId, direction)
             break
         end
     end
-    if not table.contains(sectionWayPoints, nextId) then
+    if not ADTable.contains(sectionWayPoints, nextId) then
         -- add the last wayPoint
         table.insert(sectionWayPoints, nextId)
     end
@@ -1712,12 +1854,12 @@ function ADGraphManager:deleteWayPointsInSection(startNodeId, nextNodeId, sendEv
             local lastWayPoint = self:getWayPointById(lastWayPointID)
             local connectedIds = {}
             for _, incomingId in pairs(lastWayPoint.incoming) do
-                if not table.contains(connectedIds, incomingId) then
+                if not ADTable.contains(connectedIds, incomingId) then
                     table.insert(connectedIds, incomingId)
                 end
             end
             for _, outId in pairs(lastWayPoint.out) do
-                if not table.contains(connectedIds, outId) then
+                if not ADTable.contains(connectedIds, outId) then
                     table.insert(connectedIds, outId)
                 end
             end

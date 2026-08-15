@@ -109,7 +109,7 @@ function ADPathCalculator:GetPath(startID, targetID, preferredStartIds)
                             end
                             local preventTurnaroundWeight = 0
                             if point.id == startID then
-                                if not table.contains(preferredStartIds, outPoint.id) then
+                                if not ADTable.contains(preferredStartIds, outPoint.id) then
                                     preventTurnaroundWeight = 5000000
                                 end
                             end

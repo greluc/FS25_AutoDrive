@@ -43,6 +43,11 @@ function AutoDrive.registerEventListeners(vehicleType)
             "onCpFull",
             "onCpFuelEmpty",
             "onCpBroken",
+            -- C4: Courseplay tells us when the harvester state actually changes, so the four
+            -- getIsCP* queries can read a cached value instead of walking getRootVehicle every
+            -- frame. Absent on a Courseplay without the interface, in which case the queries fall
+            -- back to polling exactly as before.
+            "onCpHarvesterStateChanged",
             -- Giants helper events
             "onAIJobFinished",
         }
@@ -251,10 +256,13 @@ function AutoDrive:onPostLoad(savegame)
                     local groupTable = string.split(groupString, ";")
                     for _, groupCombined in pairs(groupTable) do
                         local groupNameAndBool = string.split(groupCombined, ",")
-                        if tonumber(groupNameAndBool[2]) >= 1 then
-                            self.ad.groups[groupNameAndBool[1]] = true
-                        else
-                            self.ad.groups[groupNameAndBool[1]] = false
+                        local groupName = groupNameAndBool[1]
+                        -- A savegame written by an older version, hand edited, or truncated can
+                        -- leave an entry without its flag. tonumber then returns nil and the
+                        -- comparison below raised an error in the middle of loading the vehicle.
+                        local flag = tonumber(groupNameAndBool[2])
+                        if groupName ~= nil and groupName ~= "" then
+                            self.ad.groups[groupName] = flag ~= nil and flag >= 1
                         end
                     end
                 end
@@ -710,6 +718,20 @@ end
 function AutoDrive:onPreDetachImplement(implement)
     local attachable = implement.object
     if attachable.isTrailedHarvester and attachable.trailingVehicle == self then
+        -- onPostAttachImplement does "attachable.ad = self.ad", so the harvester shares the
+        -- TRACTOR's ad table rather than owning one. Everything written through attachable.ad -
+        -- isReverseAttached and ADRootNode for a rotated attachment - therefore landed in
+        -- self.ad, and clearing attachable.ad below only drops the second reference to it.
+        -- Without this the tractor stays flagged as reverse attached for the rest of the session
+        -- and keeps a transform group that is linked to a node it no longer carries.
+        if self.ad ~= nil then
+            if self.ad.ADRootNode ~= nil then
+                delete(self.ad.ADRootNode)
+                self.ad.ADRootNode = nil
+            end
+            self.ad.isReverseAttached = nil
+        end
+
         attachable.ad = nil
         self.ad.attachableCombine = nil
         ADHarvestManager:unregisterHarvester(attachable)
@@ -767,7 +789,9 @@ function AutoDrive:onEnterVehicle(isControlling)
 end
 
 function AutoDrive:onLeaveVehicle(wasEntered)
-    AutoDrive.debugPrint(self, AutoDrive.DC_VEHICLEINFO, "AutoDrive:onLeaveVehicle wasEntered: %s", tostring(wasEntered))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_VEHICLEINFO) then
+        AutoDrive.debugPrint(self, AutoDrive.DC_VEHICLEINFO, "AutoDrive:onLeaveVehicle wasEntered: %s", tostring(wasEntered))
+    end
     if not wasEntered then
         return
     end
@@ -972,8 +996,8 @@ function AutoDrive:onDrawEditorMode()
                 local skipSectionDraw = false
                 if self.ad.sectionWayPoints ~= nil and #self.ad.sectionWayPoints > 2 then
                     if
-                        table.contains(self.ad.sectionWayPoints, point.id)
-                        and table.contains(self.ad.sectionWayPoints, neighbor)
+                        ADTable.contains(self.ad.sectionWayPoints, point.id)
+                        and ADTable.contains(self.ad.sectionWayPoints, neighbor)
                         and (previewDirection or previewSubPrio)
                         then
                         skipSectionDraw = true
@@ -986,7 +1010,7 @@ function AutoDrive:onDrawEditorMode()
                 if target ~= nil and not skipSectionDraw then
                     --check if outgoing connection is a dual way connection
                     local nWp = ADGraphManager:getWayPointById(neighbor)
-                    if point.incoming == nil or table.contains(point.incoming, neighbor) then
+                    if point.incoming == nil or ADTable.contains(point.incoming, neighbor) then
                         --draw dual way line
                         if point.id > nWp.id then
                             if isSubPrio or targetIsSubPrio then
@@ -997,7 +1021,7 @@ function AutoDrive:onDrawEditorMode()
                         end
                     else
                         --draw line with direction markers (arrow)
-                        if (nWp.incoming == nil or table.contains(nWp.incoming, point.id)) then
+                        if (nWp.incoming == nil or ADTable.contains(nWp.incoming, point.id)) then
                             -- one way line
                             if isSubPrio or targetIsSubPrio then
                                 DrawingManager:addLineTask(x, y, z, nWp.x, nWp.y, nWp.z, 1, unpack(AutoDrive.currentColors.ad_color_subPrioSingleConnection))
@@ -1017,7 +1041,7 @@ function AutoDrive:onDrawEditorMode()
         end
 
         --just a quick way to highlight single (forgotten) points with no connections
-        if ((#point.out == 0) and (#point.incoming == 0) and not table.contains(outPointsSeen, point.id) and point.colors == nil)
+        if ((#point.out == 0) and (#point.incoming == 0) and not ADTable.contains(outPointsSeen, point.id) and point.colors == nil)
         and (isInExtendedEditorMode or isEditorShowEnabled) then
             y = getTerrainHeightAtWorldPos(g_currentMission.terrainRootNode, x, 1, z) + 0.5
             DrawingManager:addCrossTask(x, y, z)
@@ -1232,7 +1256,9 @@ function AutoDrive:stopAutoDrive()
             if self.ad.isStoppingWithError == true then
                 self.ad.onRouteToRefuel = false
                 self.ad.onRouteToRepair = false
-                AutoDrive.debugPrint(self, AutoDrive.DC_VEHICLEINFO, "AutoDrive:startAutoDrive self.ad.onRouteToRefuel %s", tostring(self.ad.onRouteToRefuel))
+                if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_VEHICLEINFO) then
+                    AutoDrive.debugPrint(self, AutoDrive.DC_VEHICLEINFO, "AutoDrive:startAutoDrive self.ad.onRouteToRefuel %s", tostring(self.ad.onRouteToRefuel))
+                end
             end
             AutoDrive.updateAutoDriveLights(self, true)
 
@@ -1509,9 +1535,11 @@ function AutoDrive.passToExternalMod_AI(vehicle)
             return
         end
         AutoDriveMessageEvent.sendMessageOrNotification(vehicle, ADMessagesManager.messageTypes.ERROR, "$l10n_AD_Driver_of; %s: $l10n_AD_Unable_to_start_AIJob;", 5000, vehicle.ad.stateModule:getName())
-        AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive.passToExternalMod lastJob aiSystem:startJob errorMessage: %s"
-        , tostring(errorMessage)
-        )
+        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+            AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive.passToExternalMod lastJob aiSystem:startJob errorMessage: %s"
+            , tostring(errorMessage)
+            )
+        end
     end
 end
 
@@ -1534,23 +1562,54 @@ function AutoDrive:updateWayPointsDistance(x, z)
         x, _, z = getWorldTranslation(self.components[1].node)
     end
 
-    --We should see some perfomance increase by localizing the sqrt/pow functions right here
+    -- This used to walk every way point in the network on every call. The measured networks hold
+    -- 20.310 to 55.595 points, so that meant tens of thousands of square roots per vehicle, and
+    -- the function is reached from the draw path as well as from every argument-less
+    -- getClosestWayPoint(). The spatial index in ADGraphManager narrows the candidates to the
+    -- cells that can actually contain a hit.
+    --
+    -- The two "closest" results must stay exactly what they were: the nearest point in the WHOLE
+    -- network, not the nearest within draw distance. A vehicle parked far away from any route
+    -- still has to find its closest way point. So the search starts at draw distance and widens
+    -- until something is found, which for the normal case - a vehicle on or near its route -
+    -- terminates on the first pass.
     local sqrt = math.sqrt
-    local distanceFunc = function(a, b)
-        return sqrt(a * a + b * b)
+    local point = {x = x, z = z}
+    local drawDistance = AutoDrive.drawDistance
+    local wayPointsInDrawRange = self.ad.distances.wayPoints
+    local closest = self.ad.distances.closest
+    local closestNotReverse = self.ad.distances.closestNotReverse
+
+    local function consider(wp, collectInDrawRange)
+        local dx, dz = wp.x - x, wp.z - z
+        local distance = sqrt(dx * dx + dz * dz)
+        if distance < closest.distance then
+            closest.distance = distance
+            closest.wayPoint = wp
+        end
+        if collectInDrawRange and distance <= drawDistance then
+            wayPointsInDrawRange[#wayPointsInDrawRange + 1] = {distance = distance, wayPoint = wp}
+        end
+        if distance < closestNotReverse.distance and (wp.incoming == nil or #wp.incoming > 0) then
+            closestNotReverse.distance = distance
+            closestNotReverse.wayPoint = wp
+        end
     end
-    for _, wp in pairs(ADGraphManager:getWayPoints()) do
-        local distance = distanceFunc(wp.x - x, wp.z - z)
-        if distance < self.ad.distances.closest.distance then
-            self.ad.distances.closest.distance = distance
-            self.ad.distances.closest.wayPoint = wp
-        end
-        if distance <= AutoDrive.drawDistance then
-            table.insert(self.ad.distances.wayPoints, {distance = distance, wayPoint = wp})
-        end
-        if distance < self.ad.distances.closestNotReverse.distance and (wp.incoming == nil or #wp.incoming > 0) then
-            self.ad.distances.closestNotReverse.distance = distance
-            self.ad.distances.closestNotReverse.wayPoint = wp
+
+    ADGraphManager:forEachWayPointNear(point, drawDistance, function(wp)
+        consider(wp, true)
+    end)
+
+    -- Nothing within draw distance, or only reverse nodes there: widen until both answers exist
+    -- or the search covers the map. Cells outside draw distance cannot add to the draw-range list.
+    if closest.wayPoint == nil or closestNotReverse.wayPoint == nil then
+        local radius = drawDistance * 2
+        local maxRadius = math.max(g_currentMission.mapWidth or 4096, g_currentMission.mapHeight or 4096) * 2
+        while (closest.wayPoint == nil or closestNotReverse.wayPoint == nil) and radius <= maxRadius do
+            ADGraphManager:forEachWayPointNear(point, radius, function(wp)
+                consider(wp, false)
+            end)
+            radius = radius * 2
         end
     end
 end
@@ -1646,17 +1705,17 @@ function AutoDrive:getWayPointsInRange(minDistance, maxDistance)
             local countDual = 0
             point.isRightOfWayCenter = false
             for _, incoming in pairs(point.incoming) do
-                if not table.contains(point.out, incoming) then
+                if not ADTable.contains(point.out, incoming) then
                     countSingleIncoming = countSingleIncoming + 1
                 end
             end
             for _, out in pairs(point.out) do
-                if not table.contains(point.incoming, out) then
+                if not ADTable.contains(point.incoming, out) then
                     countSingleOut = countSingleOut + 1
                 end
             end
             for _, incoming in pairs(point.incoming) do
-                if table.contains(point.out, incoming) then
+                if ADTable.contains(point.out, incoming) then
                     countDual = countDual + 1
                 end
             end
