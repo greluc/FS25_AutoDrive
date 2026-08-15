@@ -1,0 +1,46 @@
+name: Check
+
+# Compiles every Lua file and runs the unit test suites.
+#
+# The compile step is the important half: it uses the same Luau dialect the game runs, so a syntax
+# error that Lua 5.4 would accept (or reject differently) cannot slip through. When the Luau
+# compiler is not available the check falls back to luac -p and says so rather than passing quietly.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Lua
+        run: sudo apt-get update && sudo apt-get install -y lua5.4 luajit
+
+      - name: Cache fs-utils build
+        id: cache-fsutils
+        uses: actions/cache@v4
+        with:
+          path: fs-utils/target/release/fs-luau-compile
+          key: fs-utils-luau-compile-v1
+
+      - name: Build the Luau compiler
+        if: steps.cache-fsutils.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: |
+          git clone --depth 1 https://github.com/Paint-a-Farm/fs-utils.git fs-utils || true
+          if [ -d fs-utils ]; then
+            cd fs-utils && cargo build --release -p fs-luau-compile || true
+          fi
+
+      - name: Make the compiler discoverable
+        continue-on-error: true
+        run: |
+          mkdir -p tools/bin
+          cp fs-utils/target/release/fs-luau-compile tools/bin/fs-luau-compile.exe 2>/dev/null || true
+
+      - name: Run checks
+        run: python3 tools/check.py -v

@@ -1,0 +1,661 @@
+--[[
+Tests for scripts/Modes/CombineUnloaderMode.lua.
+
+Covers findings:
+  A1  self.activeTask was not kept in sync with the task that is actually running, so the
+      AD_continue key could call :continue() on nil or on the wrong task
+  A6  CombineUnloaderMode:continue() queued a task on a stopped driver
+  A30 getPipeSlopeCorrection was evaluated twice per frame in the chopper branch
+  A31 dead helpers that read fields nobody assigns are gone
+  K4  the lateral clearance to the pipe used the TRACTOR's width instead of the widest unit of the
+      train, plus the new internal safety margin and its one-time pipeOffset migration
+  K6  the chase side was picked purely from the harvester's sensors, with no consideration of
+      whether the unloader can get there at all
+
+The mode itself loads standalone - it only needs AbstractMode at load time - so this is a real
+behaviour test, not a source-level one. What the mode reaches for at runtime (the harvester, the
+task module, the pipe geometry helpers) is stubbed per test; the transform helpers are the real
+ones from UtilFuncs on top of an identity-rotation scene, so the offsets that come out are the
+offsets the mod computes.
+]]
+
+lu = require('luaunit')
+require('test-setup')
+
+require('UtilFuncs')
+require('AutoDriveUtilFuncs')
+require('Settings')
+require('AbstractMode')
+require('CombineUnloaderMode')
+
+------------------------------------------------------------------------------------------------------------------------
+--- Scene: every vehicle sits at its node position facing +Z, so local == world minus origin.
+------------------------------------------------------------------------------------------------------------------------
+function localToWorld(node, x, y, z)
+    local p = MockEngine.nodePositions[node] or { x = 0, y = 0, z = 0 }
+    return p.x + x, p.y + y, p.z + z
+end
+
+function worldToLocal(node, x, y, z)
+    local p = MockEngine.nodePositions[node] or { x = 0, y = 0, z = 0 }
+    return x - p.x, y - p.y, z - p.z
+end
+
+function localToLocal(fromNode, toNode, x, y, z)
+    return worldToLocal(toNode, localToWorld(fromNode, x, y, z))
+end
+
+function localDirectionToWorld(_, x, y, z) return x, y, z end
+function worldDirectionToLocal(_, x, y, z) return x, y, z end
+function getTerrainNormalAtWorldPos() return 0, 1, 0 end
+
+--- Counts how often the geometry check actually fires, so a test cannot pass by never running it.
+local engineOverlapBox = overlapBox
+local overlapBoxCalls = 0
+function overlapBox(...)
+    overlapBoxCalls = overlapBoxCalls + 1
+    return engineOverlapBox(...)
+end
+
+------------------------------------------------------------------------------------------------------------------------
+--- Fixtures
+------------------------------------------------------------------------------------------------------------------------
+local addedTasks = {}
+
+local function task(name)
+    return {
+        new = function(_, ...)
+            local t = { name = name, args = { ... } }
+            return t
+        end
+    }
+end
+
+local function resumableTask(name)
+    return {
+        new = function(_, ...)
+            local t = { name = name, args = { ... }, continued = 0 }
+            t.continue = function(self) self.continued = self.continued + 1 end
+            return t
+        end
+    }
+end
+
+local function makeVehicle(isActive)
+    local v = TestSetup.vehicle()
+    v.components = { { node = 1 } }
+    v.size = { width = 3, length = 6, lengthOffset = 0 }
+    v.ad.stateModule = {
+        active = isActive ~= false,
+        isActive = function(self) return self.active end,
+        getFirstMarker = function() return { id = 1 } end,
+        getSecondMarker = function() return { id = 2 } end,
+        setSecondMarker = function() end,
+        getName = function() return 'TestDriver' end,
+    }
+    v.ad.taskModule = {
+        aborts = 0,
+        addTask = function(_, t) table.insert(addedTasks, t) end,
+        abortCurrentTask = function(self) self.aborts = self.aborts + 1 end,
+        abortAllTasks = function(self) self.aborts = self.aborts + 1 end,
+    }
+    v.ad.trailerModule = { reset = function() end }
+    setTranslation(1, 0, 0, -20)
+    return v
+end
+
+local function makeCombine(overrides)
+    local c = {
+        size = { width = 4, length = 8, lengthOffset = 0 },
+        components = { { node = 10 } },
+        lastSpeedReal = 0,
+        ad = {
+            ADRootNode = 10,
+            isChopper = false,
+            isFixedPipeChopper = false,
+            isAutoAimingChopper = false,
+            isSugarcaneHarvester = false,
+            isHarvester = true,
+            noMovementTimer = { elapsedTime = 0 },
+            sensors = {},
+        },
+        getRootVehicle = function(self) return self end,
+    }
+    for _, name in ipairs({ 'leftSensor', 'leftSensorFruit', 'leftSensorField',
+                            'leftFrontSensor', 'leftFrontSensorFruit',
+                            'rightSensor', 'rightSensorFruit', 'rightSensorField',
+                            'rightFrontSensor', 'rightFrontSensorFruit', 'frontSensorFruit' }) do
+        -- field sensors report "we are on the field", everything else reports "nothing there"
+        local clear = name:find('Field') ~= nil
+        c.ad.sensors[name] = { pollInfo = function() return clear end }
+    end
+    setTranslation(10, 0, 0, 0)
+    setTranslation(11, 3, 2, 0) -- discharge node, left of the harvester
+    if overrides then
+        for k, val in pairs(overrides) do c.ad[k] = val end
+    end
+    return c
+end
+
+local function makeMode(vehicle)
+    local mode = CombineUnloaderMode:create()
+    mode.vehicle = vehicle
+    mode.trailers = {}
+    mode.trailerCount = 1
+    mode.tractorTrainLength = 12
+    mode.tractorTrainWidth = 0
+    CombineUnloaderMode.setStateNames(mode)
+    return mode
+end
+
+--- The world outside the mode. Individual tests overwrite what they care about.
+local function installStubs()
+    addedTasks = {}
+    overlapBoxCalls = 0
+
+    ADGraphManager = { getWayPointById = function(_, _) return { x = 0, y = 0, z = 0 } end }
+    ADHarvestManager = {
+        unregisterAsUnloader = function() end,
+        getAssignedUnloader = function() return nil end,
+    }
+    ADMultipleTargetsManager = { getNextTarget = function() return nil end }
+
+    UnloadAtDestinationTask = resumableTask('UnloadAtDestinationTask')
+    ExitFieldTask = resumableTask('ExitFieldTask')
+    WaitForCallTask = task('WaitForCallTask')
+    EmptyHarvesterTask = task('EmptyHarvesterTask')
+    CatchCombinePipeTask = task('CatchCombinePipeTask')
+    DriveToVehicleTask = task('DriveToVehicleTask')
+    DriveToDestinationTask = task('DriveToDestinationTask')
+    ReverseFromBadLocationTask = task('ReverseFromBadLocationTask')
+    ClearCropTask = task('ClearCropTask')
+    FollowCombineTask = task('FollowCombineTask')
+    HandleHarvesterTurnTask = task('HandleHarvesterTurnTask')
+
+    AutoDrive.checkIsOnField = function() return false end
+    AutoDrive.getAllFillLevels = function() return 0, 100, false, 100 end
+    AutoDrive.getObjectFillLevels = function() return 0, 100, false, 100 end
+    AutoDrive.getAllDischargeableUnits = function() return {}, 0 end
+    AutoDrive.validateCachedPipeData = function() end
+    AutoDrive.isPipeOut = function() return false end
+    AutoDrive.getPipeLength = function() return 3 end
+    AutoDrive.getPipeSide = function() return AutoDrive.CHASEPOS_LEFT end
+    AutoDrive.getDischargeNode = function() return 11 end
+    AutoDrive.getPipeRoot = function() return 10 end
+    AutoDrive.getFrontToolWidth = function(combine) return combine.size.width end
+    AutoDrive.getFrontToolLength = function() return 0 end
+    AutoDrive.getNextFreeDischargeableUnit = function() return 1, 20 end
+    AutoDrive.combineIsTurning = function() return false end
+    AutoDrive.getIsCPActive = function() return false end
+    AutoDrive.getAllImplements = function(vehicle) return { vehicle } end
+    AutoDrive.getAllUnits = function(vehicle) return { vehicle }, 1 end
+    AutoDrive.collisionMaskVehicleDimesions = CollisionFlag.VEHICLE
+    AutoDrive.dynamicChaseDistance = false
+end
+
+local function pipeOffsetIndexFor(value)
+    for index, v in ipairs(AutoDrive.settings.pipeOffset.values) do
+        if math.abs(v - value) < 1e-9 then
+            return index
+        end
+    end
+    error('no pipeOffset grid entry for ' .. tostring(value))
+end
+
+------------------------------------------------------------------------------------------------------------------------
+--- A1 / A6 - the mode must always know which task is running
+------------------------------------------------------------------------------------------------------------------------
+TestActiveTaskBookkeeping = {}
+
+function TestActiveTaskBookkeeping:setUp()
+    TestSetup.reset()
+    installStubs()
+    self.vehicle = makeVehicle(true)
+    self.mode = makeMode(self.vehicle)
+end
+
+--- A6: the continue key is bindable and reaches a driver that is not running.
+function TestActiveTaskBookkeeping:testContinueOnStoppedDriverDoesNothing()
+    self.vehicle.ad.stateModule.active = false
+    self.mode.state = self.mode.STATE_DRIVE_TO_UNLOAD
+
+    self.mode:continue()
+
+    lu.assertEquals(#addedTasks, 0, 'a stopped driver must not get a task queued for its next start')
+    lu.assertEquals(self.vehicle.ad.taskModule.aborts, 0)
+    lu.assertNil(self.mode.activeTask)
+end
+
+--- A1: setToWaitForCall leaves STATE_DRIVE_TO_UNLOAD behind with no task recorded at all. That used
+--- to be `nil:continue()`.
+function TestActiveTaskBookkeeping:testContinueWithoutActiveTaskDoesNotCrash()
+    self.mode.state = self.mode.STATE_DRIVE_TO_UNLOAD
+    self.mode.activeTask = nil
+
+    self.mode:continue()
+
+    lu.assertNotNil(self.mode.activeTask, 'continue must leave a task behind it can account for')
+    lu.assertEquals(#addedTasks, 1)
+    lu.assertEquals(addedTasks[1], self.mode.activeTask)
+end
+
+--- A1: HandleHarvesterTurnTask finishes with DONT_PROPAGATE and then calls setToWaitForCall, so
+--- activeTask could point at a task class that has no continue method at all.
+function TestActiveTaskBookkeeping:testContinueWithNonResumableTaskDoesNotCrash()
+    self.mode.state = self.mode.STATE_DRIVE_TO_UNLOAD
+    self.mode.activeTask = { name = 'HandleHarvesterTurnTask' } -- AbstractTask has no continue
+
+    self.mode:continue()
+
+    lu.assertEquals(#addedTasks, 1, 'the unload task has to be rebuilt instead')
+    lu.assertEquals(addedTasks[1].name, 'UnloadAtDestinationTask')
+    lu.assertEquals(self.mode.activeTask, addedTasks[1])
+end
+
+--- The case that always worked must keep working: a real unload task is resumed, not replaced.
+function TestActiveTaskBookkeeping:testContinueResumesTheRunningUnloadTask()
+    local running = UnloadAtDestinationTask:new(self.vehicle, 2)
+    self.mode.state = self.mode.STATE_DRIVE_TO_UNLOAD
+    self.mode.activeTask = running
+
+    self.mode:continue()
+
+    lu.assertEquals(running.continued, 1)
+    lu.assertEquals(#addedTasks, 0, 'resuming must not queue a second task')
+    lu.assertEquals(self.vehicle.ad.taskModule.aborts, 0)
+    lu.assertEquals(self.mode.activeTask, running)
+end
+
+function TestActiveTaskBookkeeping:testSetToWaitForCallRecordsTheWaitTask()
+    self.mode:setToWaitForCall()
+
+    lu.assertEquals(self.mode.state, self.mode.STATE_WAIT_TO_BE_CALLED)
+    lu.assertEquals(#addedTasks, 1)
+    lu.assertEquals(addedTasks[1].name, 'WaitForCallTask')
+    lu.assertEquals(self.mode.activeTask, addedTasks[1])
+end
+
+function TestActiveTaskBookkeeping:testSetToWaitForCallRecordsTheUnloadTask()
+    AutoDrive.getAllFillLevels = function() return 100, 100, true, 0 end
+
+    self.mode:setToWaitForCall()
+
+    lu.assertEquals(self.mode.state, self.mode.STATE_DRIVE_TO_UNLOAD)
+    lu.assertEquals(addedTasks[1].name, 'UnloadAtDestinationTask')
+    lu.assertEquals(self.mode.activeTask, addedTasks[1])
+end
+
+function TestActiveTaskBookkeeping:testSetToWaitForCallRecordsTheExitFieldTask()
+    AutoDrive.getAllFillLevels = function() return 100, 100, true, 0 end
+    AutoDrive.checkIsOnField = function() return true end
+    ADGraphManager.getWayPointById = function() return { x = 500, y = 0, z = 500 } end
+
+    self.mode:setToWaitForCall()
+
+    lu.assertEquals(self.mode.state, self.mode.STATE_EXIT_FIELD)
+    lu.assertEquals(addedTasks[1].name, 'ExitFieldTask')
+    lu.assertEquals(self.mode.activeTask, addedTasks[1])
+end
+
+--- getNextTask returns nil when it delegated to setToWaitForCall. Assigning that nil on top of the
+--- task setToWaitForCall just enqueued is exactly how activeTask went missing.
+function TestActiveTaskBookkeeping:testHandleFinishedTaskKeepsTheTaskSetToWaitForCallQueued()
+    self.mode.state = self.mode.STATE_DRIVE_TO_START
+
+    self.mode:handleFinishedTask()
+
+    lu.assertEquals(self.mode.state, self.mode.STATE_WAIT_TO_BE_CALLED)
+    lu.assertEquals(#addedTasks, 1, 'the wait task must be queued exactly once')
+    lu.assertEquals(self.mode.activeTask, addedTasks[1])
+end
+
+function TestActiveTaskBookkeeping:testAssignToHarvesterRecordsTheTask()
+    self.mode.state = self.mode.STATE_WAIT_TO_BE_CALLED
+
+    self.mode:assignToHarvester(makeCombine())
+
+    lu.assertEquals(#addedTasks, 1)
+    lu.assertEquals(addedTasks[1].name, 'CatchCombinePipeTask')
+    lu.assertEquals(self.mode.activeTask, addedTasks[1])
+end
+
+function TestActiveTaskBookkeeping:testAssignToHarvesterWithExtendedPipeRecordsTheTask()
+    AutoDrive.isPipeOut = function() return true end
+    AutoDrive.getObjectFillLevels = function() return 100, 100, true, 0 end
+    self.mode.state = self.mode.STATE_WAIT_TO_BE_CALLED
+
+    self.mode:assignToHarvester(makeCombine())
+
+    lu.assertEquals(addedTasks[1].name, 'EmptyHarvesterTask')
+    lu.assertEquals(self.mode.activeTask, addedTasks[1])
+end
+
+function TestActiveTaskBookkeeping:testDriveToUnloaderRecordsTheTask()
+    local other = makeVehicle(true)
+    other.ad.modes = { [AutoDrive.MODE_UNLOAD] = { registerFollowingUnloader = function() end } }
+    self.mode.state = self.mode.STATE_WAIT_TO_BE_CALLED
+
+    self.mode:driveToUnloader(other)
+
+    lu.assertEquals(addedTasks[1].name, 'DriveToVehicleTask')
+    lu.assertEquals(self.mode.activeTask, addedTasks[1])
+end
+
+------------------------------------------------------------------------------------------------------------------------
+--- A31 - dead helpers reading fields nobody ever assigns
+------------------------------------------------------------------------------------------------------------------------
+TestDeadCode = {}
+
+function TestDeadCode:setUp()
+    TestSetup.reset()
+end
+
+--- getPipeSlopeCorrection1 read self.combineNode, getDynamicSideChaseOffsetZ_FS19 read
+--- self.targetTrailer / self.targetTrailerFillRatio. None of the three is ever written on the mode,
+--- so both functions could only ever have thrown.
+function TestDeadCode:testHelpersReadingUnassignedFieldsAreGone()
+    lu.assertNil(CombineUnloaderMode.getPipeSlopeCorrection1)
+    lu.assertNil(CombineUnloaderMode.getDynamicSideChaseOffsetZ_FS19)
+end
+
+--- The survivor is the one that is actually wired up.
+function TestDeadCode:testTheUsedSlopeCorrectionSurvives()
+    lu.assertIsFunction(CombineUnloaderMode.getPipeSlopeCorrection)
+    lu.assertIsFunction(CombineUnloaderMode.getPipeSlopeCorrection2)
+end
+
+------------------------------------------------------------------------------------------------------------------------
+--- K4 - the clearance to the pipe has to fit the whole train, not the tractor
+------------------------------------------------------------------------------------------------------------------------
+TestTrainWidth = {}
+
+function TestTrainWidth:setUp()
+    TestSetup.reset()
+    installStubs()
+    self.vehicle = makeVehicle(true)
+    -- own copy of the vehicle specific settings, so setSettingState cannot leak into other tests
+    AutoDrive.copySettingsToVehicle(self.vehicle)
+    self.mode = makeMode(self.vehicle)
+    self.mode.combine = makeCombine()
+end
+
+function TestTrainWidth:testWidestUnitWins()
+    local trailer = { size = { width = 4.2, length = 8 } }
+    AutoDrive.getAllUnits = function(v) return { v, trailer }, 2 end
+
+    lu.assertAlmostEquals(CombineUnloaderMode.getTrainWidth(self.vehicle), 4.2, 1e-9)
+end
+
+--- CollisionDetectionUtils measures the two half widths separately because implements are not
+--- symmetric around the centre line.
+function TestTrainWidth:testMeasuredHalfWidthsBeatTheVehicleDefinition()
+    local trailer = {
+        size = { width = 2.5, length = 8 },
+        ad = { adDimensions = { maxWidthLeft = 2.1, maxWidthRight = 2.3 } },
+    }
+    AutoDrive.getAllUnits = function(v) return { v, trailer }, 2 end
+
+    lu.assertAlmostEquals(CombineUnloaderMode.getTrainWidth(self.vehicle), 4.4, 1e-9)
+end
+
+function TestTrainWidth:testFallsBackToTheVehicleDefinition()
+    AutoDrive.getAllUnits = function() return nil, 0 end
+
+    lu.assertAlmostEquals(CombineUnloaderMode.getTrainWidth(self.vehicle), self.vehicle.size.width, 1e-9)
+end
+
+--- The defect itself: a 5 m chaser bin behind a 3 m tractor used to be given 3 m of clearance.
+function TestTrainWidth:testSideChaseOffsetClearsTheTrailerNotTheTractor()
+    local trailer = { size = { width = 5, length = 10 } }
+    AutoDrive.getAllUnits = function(v) return { v, trailer }, 2 end
+    AutoDrive.getPipeLength = function() return 0 end -- keep the pipe out of the max()
+    AutoDrive.setSettingState('pipeOffset', pipeOffsetIndexFor(0), self.vehicle)
+
+    local margin = CombineUnloaderMode.calculatePipeSafetyMargin(5)
+    -- combine half width + widest unit half width + header extra (0 here) + margin + offset (0)
+    lu.assertAlmostEquals(self.mode:getSideChaseOffsetX(), 4 / 2 + 5 / 2 + margin, 1e-9)
+
+    -- and it is strictly further out than the tractor-width answer the mod used to give
+    lu.assertTrue(self.mode:getSideChaseOffsetX() > 4 / 2 + self.vehicle.size.width / 2)
+end
+
+function TestTrainWidth:testHeaderOverhangIsStillAdded()
+    AutoDrive.getPipeLength = function() return 0 end
+    AutoDrive.getFrontToolWidth = function() return 9 end -- 2.5 m of header each side of a 4 m body
+    AutoDrive.setSettingState('pipeOffset', pipeOffsetIndexFor(0), self.vehicle)
+
+    local margin = CombineUnloaderMode.calculatePipeSafetyMargin(self.vehicle.size.width)
+    lu.assertAlmostEquals(self.mode:getSideChaseOffsetX(), 4 / 2 + 3 / 2 + 2.5 + margin, 1e-9)
+end
+
+------------------------------------------------------------------------------------------------------------------------
+--- K4 - safety margin and the one-time pipeOffset migration
+------------------------------------------------------------------------------------------------------------------------
+TestPipeSafetyMargin = {}
+
+function TestPipeSafetyMargin:setUp()
+    TestSetup.reset()
+    installStubs()
+    self.vehicle = makeVehicle(true)
+    AutoDrive.copySettingsToVehicle(self.vehicle)
+    self.mode = makeMode(self.vehicle)
+    self.mode.combine = makeCombine()
+end
+
+function TestPipeSafetyMargin:testMarginGrowsWithTheTrainButStaysBounded()
+    lu.assertAlmostEquals(CombineUnloaderMode.calculatePipeSafetyMargin(2),
+        CombineUnloaderMode.PIPE_SAFETY_MARGIN_MIN, 1e-9)
+    lu.assertAlmostEquals(CombineUnloaderMode.calculatePipeSafetyMargin(6),
+        6 * CombineUnloaderMode.PIPE_SAFETY_MARGIN_FACTOR, 1e-9)
+    lu.assertAlmostEquals(CombineUnloaderMode.calculatePipeSafetyMargin(100),
+        CombineUnloaderMode.PIPE_SAFETY_MARGIN_MAX, 1e-9)
+    lu.assertAlmostEquals(CombineUnloaderMode.calculatePipeSafetyMargin(nil),
+        CombineUnloaderMode.PIPE_SAFETY_MARGIN_MIN, 1e-9)
+end
+
+--- The player setting is a preference now; the margin is the mod's own and is added on top.
+function TestPipeSafetyMargin:testPipeOffsetIsPreferencePlusMargin()
+    AutoDrive.setSettingState('pipeOffset', pipeOffsetIndexFor(0.5), self.vehicle)
+
+    lu.assertAlmostEquals(self.mode:getPipeOffset(),
+        0.5 + CombineUnloaderMode.calculatePipeSafetyMargin(self.vehicle.size.width), 1e-9)
+end
+
+function TestPipeSafetyMargin:testMigrationTakesTheMarginOutOfTheStoredPreference()
+    local trailer = { size = { width = 4, length = 10 } }
+    AutoDrive.getAllUnits = function(v) return { v, trailer }, 2 end
+    local margin = CombineUnloaderMode.calculatePipeSafetyMargin(4) -- 0.6
+    AutoDrive.setSettingState('pipeOffset', pipeOffsetIndexFor(1.0), self.vehicle)
+
+    lu.assertTrue(CombineUnloaderMode.migratePipeOffsetForSafetyMargin(self.vehicle))
+
+    lu.assertAlmostEquals(AutoDrive.getSetting('pipeOffset', self.vehicle), 1.0 - margin, 1e-9)
+    -- what the mod actually drives with is unchanged, which is the point of migrating at all
+    lu.assertAlmostEquals(self.mode:getPipeOffset(), 1.0, 1e-9)
+end
+
+function TestPipeSafetyMargin:testMigrationRunsOnlyOnce()
+    AutoDrive.setSettingState('pipeOffset', pipeOffsetIndexFor(1.0), self.vehicle)
+
+    lu.assertTrue(CombineUnloaderMode.migratePipeOffsetForSafetyMargin(self.vehicle))
+    local afterFirst = AutoDrive.getSetting('pipeOffset', self.vehicle)
+
+    lu.assertFalse(CombineUnloaderMode.migratePipeOffsetForSafetyMargin(self.vehicle))
+    lu.assertEquals(AutoDrive.getSetting('pipeOffset', self.vehicle), afterFirst)
+end
+
+--- A negative preference used to eat straight into the clearance. After the migration it cannot.
+function TestPipeSafetyMargin:testMigrationFloorsAtZero()
+    AutoDrive.setSettingState('pipeOffset', pipeOffsetIndexFor(-1.0), self.vehicle)
+
+    CombineUnloaderMode.migratePipeOffsetForSafetyMargin(self.vehicle)
+
+    lu.assertAlmostEquals(AutoDrive.getSetting('pipeOffset', self.vehicle), 0, 1e-9)
+end
+
+--- The setting is an index into a coarse grid at the top end; landing between two entries must
+--- round down, never up, or the migration would hand out clearance nobody asked for.
+function TestPipeSafetyMargin:testMigrationRoundsDownOnTheCoarseGrid()
+    local trailer = { size = { width = 4, length = 10 } }
+    AutoDrive.getAllUnits = function(v) return { v, trailer }, 2 end
+    AutoDrive.setSettingState('pipeOffset', pipeOffsetIndexFor(3.0), self.vehicle)
+
+    CombineUnloaderMode.migratePipeOffsetForSafetyMargin(self.vehicle)
+
+    -- 3.0 - 0.6 = 2.4, and the grid only offers 2.25 and 2.5 there
+    lu.assertAlmostEquals(AutoDrive.getSetting('pipeOffset', self.vehicle), 2.25, 1e-9)
+end
+
+------------------------------------------------------------------------------------------------------------------------
+--- A30 / K6 - choosing the chase position
+------------------------------------------------------------------------------------------------------------------------
+TestPipeChasePosition = {}
+
+function TestPipeChasePosition:setUp()
+    TestSetup.reset()
+    installStubs()
+    self.vehicle = makeVehicle(true)
+    AutoDrive.copySettingsToVehicle(self.vehicle)
+    self.mode = makeMode(self.vehicle)
+    self.mode.combine = makeCombine()
+    self.mode.combineRootVehicle = self.mode.combine
+    -- unloader trailing the harvester on its left, i.e. already on the pipe side
+    self:placeUnloader(4, -18)
+
+    self.slopeCorrectionCalls = 0
+    local mode = self
+    self.mode.getPipeSlopeCorrection = function()
+        mode.slopeCorrectionCalls = mode.slopeCorrectionCalls + 1
+        return 0
+    end
+end
+
+--- Node 20 is the fill node the dynamic Z offset is measured to; keeping it on the unloader means
+--- the chase position stays alongside the harvester instead of drifting with the unloader.
+function TestPipeChasePosition:placeUnloader(x, z)
+    setTranslation(1, x, 0, z)
+    setTranslation(20, x, 0, z)
+end
+
+function TestPipeChasePosition:blockWith(object)
+    g_currentMission.nodeToObject[99] = object
+    MockEngine.overlapBoxHits = { 99 }
+end
+
+--- A30: one terrain query per frame, not one per side.
+function TestPipeChasePosition:testSlopeCorrectionIsEvaluatedOncePerFrameForChoppers()
+    self.mode.combine.ad.isChopper = true
+
+    self.mode:getPipeChasePosition(false)
+
+    lu.assertEquals(self.slopeCorrectionCalls, 1,
+        'the chopper branch used to ask for the slope correction once per side')
+end
+
+function TestPipeChasePosition:testSlopeCorrectionIsEvaluatedOnceForHarvesters()
+    self.mode:getPipeChasePosition(false)
+
+    lu.assertEquals(self.slopeCorrectionCalls, 1)
+end
+
+--- K6, the no-regression half: with nothing in the way the answer must be what it always was, and
+--- the check must genuinely have run (otherwise this test proves nothing).
+function TestPipeChasePosition:testClearFieldStillPicksTheSideChase()
+    self.mode.combine.ad.isChopper = true
+
+    local _, sideIndex = self.mode:getPipeChasePosition(false)
+
+    lu.assertEquals(sideIndex, AutoDrive.CHASEPOS_LEFT)
+    lu.assertTrue(overlapBoxCalls > 0, 'the reachability check has to actually run')
+end
+
+--- K6, the fix: the harvester's sensors report both sides clear - they cannot see the vehicle
+--- standing between the unloader and the pipe - so the mode has to notice by itself.
+function TestPipeChasePosition:testVehicleInTheWayRulesOutTheSideChase()
+    self.mode.combine.ad.isChopper = true
+    self:blockWith({ size = { width = 3, length = 6 }, components = { { node = 98 } },
+                     getRootVehicle = function(self) return self end })
+
+    local _, sideIndex = self.mode:getPipeChasePosition(false)
+
+    lu.assertEquals(sideIndex, AutoDrive.CHASEPOS_REAR)
+end
+
+--- The straight line runs alongside the harvester by construction, so hitting it must not count.
+function TestPipeChasePosition:testTheHarvesterItselfDoesNotBlockTheSide()
+    self.mode.combine.ad.isChopper = true
+    self:blockWith(self.mode.combine)
+
+    local _, sideIndex = self.mode:getPipeChasePosition(false)
+
+    lu.assertEquals(sideIndex, AutoDrive.CHASEPOS_LEFT)
+end
+
+function TestPipeChasePosition:testOurOwnTrainDoesNotBlockTheSide()
+    self.mode.combine.ad.isChopper = true
+    self:blockWith(self.vehicle)
+
+    local _, sideIndex = self.mode:getPipeChasePosition(false)
+
+    lu.assertEquals(sideIndex, AutoDrive.CHASEPOS_LEFT)
+end
+
+--- Same for the bunker harvester branch, where only the pipe side is a candidate.
+function TestPipeChasePosition:testHarvesterBranchClearFieldPicksThePipeSide()
+    local _, sideIndex = self.mode:getPipeChasePosition(false)
+
+    lu.assertEquals(sideIndex, AutoDrive.CHASEPOS_LEFT)
+    lu.assertTrue(overlapBoxCalls > 0)
+end
+
+function TestPipeChasePosition:testHarvesterBranchFallsBackToTheRearWhenThePipeSideIsUnreachable()
+    self:blockWith({ size = { width = 3, length = 6 }, components = { { node = 98 } },
+                     getRootVehicle = function(self) return self end })
+
+    local _, sideIndex = self.mode:getPipeChasePosition(false)
+
+    lu.assertEquals(sideIndex, AutoDrive.CHASEPOS_REAR)
+end
+
+--- An explicit chaseSide is the player overruling the automatic choice; the extra geometry check
+--- has no business running, let alone overruling them back.
+function TestPipeChasePosition:testExplicitChaseSideSkipsTheReachabilityCheck()
+    self.mode.combine.ad.isChopper = true
+    AutoDrive.copySettingsToVehicle(self.mode.combine)
+    AutoDrive.setSettingState('chaseSide', 4, self.mode.combine) -- CHASEPOS_RIGHT
+    overlapBoxCalls = 0
+
+    local _, sideIndex = self.mode:getPipeChasePosition(false)
+
+    lu.assertEquals(sideIndex, AutoDrive.CHASEPOS_RIGHT)
+    lu.assertEquals(overlapBoxCalls, 0)
+end
+
+--- A fixed pipe chopper is aimed straight at its discharge node and never uses the two side
+--- positions, so there is nothing to check and nothing to pay for.
+function TestPipeChasePosition:testFixedPipeChopperSkipsTheReachabilityCheck()
+    self.mode.combine.ad.isChopper = true
+    self.mode.combine.ad.isFixedPipeChopper = true
+    self.mode.targetFillNode = 20
+    overlapBoxCalls = 0
+
+    local _, sideIndex = self.mode:getPipeChasePosition(false)
+
+    lu.assertEquals(sideIndex, AutoDrive.CHASEPOS_LEFT) -- self.pipeSide
+    lu.assertEquals(overlapBoxCalls, 0)
+end
+
+--- Out of range the straight line says nothing, so it must not answer.
+function TestPipeChasePosition:testFarAwayChasePositionIsNotJudged()
+    self.mode.combine.ad.isChopper = true
+    self:placeUnloader(4, -400)
+    self:blockWith({ size = { width = 3, length = 6 }, components = { { node = 98 } },
+                     getRootVehicle = function(self) return self end })
+    overlapBoxCalls = 0
+
+    self.mode:getPipeChasePosition(false)
+
+    lu.assertEquals(overlapBoxCalls, 0, 'nothing to gain from a 400 m straight line')
+end
+
+os.exit(lu.LuaUnit.run())

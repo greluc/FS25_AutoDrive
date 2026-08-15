@@ -8,7 +8,10 @@ if __name__ == "__main__":
     archive_path = repo_root / "FS25_AutoDrive.zip"
     gitignore_path = repo_root / ".gitignore"
 
-    ignored = ["/.git", "/tools", "/credits.txt", "/.gitignore"]
+    # /.github does not match the "/.git" entry - fnmatch compares whole path segments, so the
+    # workflow files shipped to players until this was listed separately.
+    ignored = ["/.git", "/.github", "/tools", "/credits.txt", "/.gitignore",
+               "/FS25_AutoDrive.zip"]
     if gitignore_path.exists():
         ignored.extend(gitignore_path.read_text().splitlines())
 
