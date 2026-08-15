@@ -408,11 +408,19 @@ function ADHarvestManager:hasHarvesterPotentialUnloaders(harvester)
         end
     end
     for _, other in pairs(AutoDrive.getAllVehicles()) do
-        -- Was "other ~= self.vehicle". ADHarvestManager is a singleton manager and never had a
-        -- .vehicle field, so the guard was always true and filtered nothing; what it was meant to
-        -- skip cannot be recovered from the code. Excluding the harvester itself is the reading
-        -- that cannot corrupt the purpose of the function - a harvester is not its own unloader,
-        -- and every genuine unloader is still counted.
+        -- Was "other ~= self.vehicle". ADHarvestManager is a singleton manager and has no .vehicle
+        -- field, so the guard was always true and filtered nothing.
+        --
+        -- Traced through the history: this function was written from scratch in FS22_AutoDrive
+        -- commit e4bfbbc (2021-12-16, "Added message in HUD if no unloader/harvester assigned")
+        -- and the line was wrong in it from the start - there was never a version where it worked.
+        -- The same loop head appears twice in CollisionDetectionModule.lua of that same revision,
+        -- where self.vehicle IS valid because that module is instantiated per vehicle. It was
+        -- copied from there into a singleton.
+        --
+        -- So nothing was lost: at the source, self.vehicle meant "the vehicle this is about", and
+        -- here that is the harvester passed in. A harvester is not its own unloader, and every
+        -- genuine unloader is still counted.
         if other ~= harvester and other.ad ~= nil and other.ad.stateModule ~= nil and other.ad.stateModule:isActive() and other.ad.stateModule:getFirstMarker() == harvester.ad.stateModule:getFirstMarker() and other.ad.stateModule:getMode() == AutoDrive.MODE_UNLOAD then
             return true
         end
