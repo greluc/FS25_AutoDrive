@@ -973,10 +973,10 @@ function CombineUnloaderMode:getPipeChasePosition(planningPhase)
             else
                 chaseNode = rearChasePos
             end
-        elseif (not leftBlocked) and ((self:isUnloaderOnCorrectSide(AutoDrive.CHASEPOS_LEFT) and angleToLeftChaseSide < angleToRearChaseSide) or planningPhase) then
+        elseif (not leftBlocked) and self:mayUseChaseSide(AutoDrive.CHASEPOS_LEFT) and ((self:isUnloaderOnCorrectSide(AutoDrive.CHASEPOS_LEFT) and angleToLeftChaseSide < angleToRearChaseSide) or planningPhase) then
             chaseNode = leftChasePos
             sideIndex = AutoDrive.CHASEPOS_LEFT
-        elseif (not rightBlocked) and (self:isUnloaderOnCorrectSide(AutoDrive.CHASEPOS_RIGHT) or planningPhase) then
+        elseif (not rightBlocked) and self:mayUseChaseSide(AutoDrive.CHASEPOS_RIGHT) and (self:isUnloaderOnCorrectSide(AutoDrive.CHASEPOS_RIGHT) or planningPhase) then
             chaseNode = rightChasePos
             sideIndex = AutoDrive.CHASEPOS_RIGHT
         elseif not self.combine.ad.isSugarcaneHarvester then
@@ -1011,24 +1011,35 @@ function CombineUnloaderMode:getPipeChasePosition(planningPhase)
         local angleToSideChaseSide = self:getAngleToChasePos(sideChasePos)
         local angleToRearChaseSide = self:getAngleToChasePos(rearChasePos)
 
+        -- Unlike the chopper above, this branch has only one flank to offer, so the reservation is
+        -- checked around the whole decision rather than per side: if another unloader holds the pipe
+        -- side, the rear is the only remaining answer. The planning phase is inside the guard on
+        -- purpose - a plan that ignores the reservation would predict a position the drive itself
+        -- then refuses to take.
+        local mayUsePipeSide = self:mayUseChaseSide(self.pipeSide)
+
         if
+            mayUsePipeSide
+            and
             (
-                (
-                    (self.pipeSide == AutoDrive.CHASEPOS_LEFT and not leftBlocked) 
-                    or (self.pipeSide == AutoDrive.CHASEPOS_RIGHT and not rightBlocked)
-                ) 
-                and
                 (
                     (
-                        self:isUnloaderOnCorrectSide(self.pipeSide) 
-                        -- and math.abs(angleToSideChaseSide) < math.abs(angleToRearChaseSide)
+                        (self.pipeSide == AutoDrive.CHASEPOS_LEFT and not leftBlocked)
+                        or (self.pipeSide == AutoDrive.CHASEPOS_RIGHT and not rightBlocked)
                     )
-                    or (planningPhase == true)
+                    and
+                    (
+                        (
+                            self:isUnloaderOnCorrectSide(self.pipeSide)
+                            -- and math.abs(angleToSideChaseSide) < math.abs(angleToRearChaseSide)
+                        )
+                        or (planningPhase == true)
+                    )
                 )
-            )
-            or
-            (
-                (planningPhase == true) and (self.combine.ad.noMovementTimer.elapsedTime > 1000)
+                or
+                (
+                    (planningPhase == true) and (self.combine.ad.noMovementTimer.elapsedTime > 1000)
+                )
             )
          then
             -- Take into account a right sided harvester, e.g. potato harvester.
@@ -1040,8 +1051,29 @@ function CombineUnloaderMode:getPipeChasePosition(planningPhase)
          end
     end
 
+    -- Long term coordination between several unloaders: reserve the side we just picked.
+    --
+    -- Everything above derives the side from the harvester alone, so two unloaders sent to the same
+    -- harvester reach the same answer and converge on the same few square metres. Whoever asks
+    -- first holds the side; the other one is told so and can pick differently, instead of both
+    -- discovering the problem when a sensor finally sees the other vehicle.
+    --
+    -- Nothing is claimed while merely planning: that call is a look-ahead, not a commitment, and
+    -- claiming there would let a vehicle reserve a spot it never drives to.
+    if not planningPhase and self.combine ~= nil and self.vehicle ~= nil then
+        ADHarvestManager:claimApproach(self.vehicle, self.combine, sideIndex)
+    end
+
     self.chasePosIndex = sideIndex
     return chaseNode, self.chasePosIndex
+end
+
+--- Whether this unloader may use a side of its harvester, i.e. nobody else has reserved it.
+function CombineUnloaderMode:mayUseChaseSide(side)
+    if self.combine == nil or self.vehicle == nil then
+        return true
+    end
+    return not ADHarvestManager:isApproachClaimedByOther(self.vehicle, self.combine, side)
 end
 
 function CombineUnloaderMode:getAngleToCombineHeading()

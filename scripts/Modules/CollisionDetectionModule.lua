@@ -32,7 +32,9 @@ function ADCollisionDetectionModule:hasDetectedObstable(dt)
         )
     end
 
-    self.detectedObstable = detectObstacle or detectAdTrafficOnRoute or not self.reverseSectionClear:done()
+    local detectAdTrafficOffRoute = self:detectAdTrafficOffRoute()
+
+    self.detectedObstable = detectObstacle or detectAdTrafficOnRoute or detectAdTrafficOffRoute or not self.reverseSectionClear:done()
     return self.detectedObstable
 end
 
@@ -86,6 +88,98 @@ function ADCollisionDetectionModule:detectObstacle()
         end
     end
     return self.detectedCollision
+end
+
+-- Look-ahead between AutoDrive vehicles that are NOT on the road network.
+--
+-- detectAdTrafficOnRoute below cannot do this: it identifies route segments by way point id and
+-- asks ADGraphManager whether they are dual roads, and an off-network path has neither. So on a
+-- field - two unloaders converging on the same harvester, which is exactly where they get in each
+-- other's way - the entire route look-ahead was switched off and only the front sensors were left.
+-- Those see what is already in front, not what is about to be.
+--
+-- The rule is deliberately a right of way rule rather than a stop rule: when two paths converge,
+-- the vehicle that is FURTHER from the conflict point yields. That is decided identically on both
+-- sides from the same geometry, so exactly one of the two yields and they cannot deadlock by both
+-- waiting for each other.
+function ADCollisionDetectionModule:detectAdTrafficOffRoute()
+    if not self.vehicle.ad.stateModule:isActive() then
+        return false
+    end
+    if self.vehicle.ad.drivePathModule:isOnRoadNetwork() then
+        return false -- handled by detectAdTrafficOnRoute
+    end
+
+    -- same throttle and per-vehicle phase offset as the other scans
+    if ((g_updateLoopIndex + self.vehicle.id) % AutoDrive.PERF_FRAMES) ~= 0 then
+        return self.detectedOffRouteTraffic == true
+    end
+    self.detectedOffRouteTraffic = false
+
+    local ownPoints, ownDistances = self:getUpcomingPathPoints(self.vehicle)
+    if ownPoints == nil or #ownPoints < 2 then
+        return false
+    end
+
+    for _, other in pairs(AutoDrive.getAllVehicles()) do
+        if other ~= self.vehicle and other.ad ~= nil and other.ad.stateModule ~= nil
+            and other.ad.stateModule:isActive() and other.ad.drivePathModule ~= nil
+            and not AutoDrive:checkIsConnected(self.vehicle, other) then
+
+            local otherPoints, otherDistances = self:getUpcomingPathPoints(other)
+            if otherPoints ~= nil and #otherPoints >= 2 then
+                for i, a in ipairs(ownPoints) do
+                    for j, b in ipairs(otherPoints) do
+                        local dx, dz = a.x - b.x, a.z - b.z
+                        if (dx * dx + dz * dz) < (AutoDrive.AD_TRAFFIC_CONFLICT_RANGE * AutoDrive.AD_TRAFFIC_CONFLICT_RANGE) then
+                            -- both reach roughly this point; the one still further away gives way
+                            if ownDistances[i] > otherDistances[j] then
+                                self.detectedOffRouteTraffic = true
+                                self.trafficVehicle = other
+                                if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_SENSORINFO) then
+                                    AutoDrive.debugMsg(self.vehicle, "CDM: detectAdTrafficOffRoute yielding to %s at %.1f m (it is %.1f m away)"
+                                    , tostring(other.getName and other:getName()), ownDistances[i], otherDistances[j])
+                                end
+                                return true
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+-- The next stretch of a vehicle's path, as world points plus how far along the path each one is.
+-- Returns nil when the vehicle has no usable path.
+function ADCollisionDetectionModule:getUpcomingPathPoints(vehicle)
+    local wayPoints, currentWayPoint = vehicle.ad.drivePathModule:getWayPoints()
+    if wayPoints == nil or currentWayPoint == nil then
+        return nil, nil
+    end
+
+    local points, distances = {}, {}
+    local travelled = 0
+    local x, _, z = getWorldTranslation(vehicle.components[1].node)
+    local lastX, lastZ = x, z
+
+    for i = currentWayPoint, #wayPoints do
+        local wp = wayPoints[i]
+        if wp == nil then
+            break
+        end
+        travelled = travelled + MathUtil.vector2Length(wp.x - lastX, wp.z - lastZ)
+        if travelled > AutoDrive.AD_TRAFFIC_LOOKAHEAD then
+            break
+        end
+        points[#points + 1] = wp
+        distances[#distances + 1] = travelled
+        lastX, lastZ = wp.x, wp.z
+    end
+
+    return points, distances
 end
 
 function ADCollisionDetectionModule:detectAdTrafficOnRoute()

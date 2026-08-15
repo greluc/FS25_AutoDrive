@@ -10,6 +10,65 @@ function ADHarvestManager:load()
     self.activeUnloaders = {}
     self.idleUnloaders = {}
     self.assignmentDelayTimer = AutoDriveTON:new()
+    self.approachClaims = {}
+end
+
+------------------------------------------------------------------------------------------------------------------------
+--- Approach claims
+------------------------------------------------------------------------------------------------------------------------
+--- Which unloader is allowed to occupy which spot next to a harvester.
+---
+--- Without this, coordination between several unloaders is entirely reactive: each one computes a
+--- chase position from the harvester alone, drives at it, and only notices the other when a sensor
+--- sees it or their paths are already crossing. Two unloaders sent to the same harvester therefore
+--- pick the SAME side and converge on the same few square metres.
+---
+--- A claim is a reservation of a spot: the first unloader to ask for a side gets it and no one else
+--- may target it while the claim is alive. Claims are short lived and refreshed by the holder, so an
+--- unloader that stops chasing - finished, stuck, sent away, deleted - releases its spot on its own
+--- without anything having to notice.
+ADHarvestManager.CLAIM_VALID_TIME = 4000
+
+local function claimKey(harvester, side)
+    return tostring(harvester) .. "|" .. tostring(side)
+end
+
+--- Ask for a side of a harvester. Returns true when the caller may use it.
+---
+--- Re-asking with a claim you already hold refreshes it, which is how the holder keeps it: the
+--- chase loop calls this every frame, so the claim lives exactly as long as the chase does.
+function ADHarvestManager:claimApproach(unloader, harvester, side)
+    if unloader == nil or harvester == nil or side == nil then
+        return false
+    end
+    local key = claimKey(harvester, side)
+    local claim = self.approachClaims[key]
+
+    if claim ~= nil and claim.unloader ~= unloader and (g_time - claim.time) <= ADHarvestManager.CLAIM_VALID_TIME then
+        return false -- somebody else holds it and is still refreshing
+    end
+
+    self.approachClaims[key] = {unloader = unloader, time = g_time}
+    return true
+end
+
+--- Whether a side is taken by someone other than the caller.
+function ADHarvestManager:isApproachClaimedByOther(unloader, harvester, side)
+    local claim = self.approachClaims[claimKey(harvester, side)]
+    if claim == nil or claim.unloader == unloader then
+        return false
+    end
+    return (g_time - claim.time) <= ADHarvestManager.CLAIM_VALID_TIME
+end
+
+--- Give up every side this unloader holds. Called when it stops chasing; a claim that is simply no
+--- longer refreshed also expires on its own, so this is a courtesy rather than a requirement.
+function ADHarvestManager:releaseApproachClaims(unloader)
+    for key, claim in pairs(self.approachClaims) do
+        if claim.unloader == unloader then
+            self.approachClaims[key] = nil
+        end
+    end
 end
 
 function ADHarvestManager:registerHarvester(harvester)
@@ -57,6 +116,8 @@ function ADHarvestManager:registerAsUnloader(vehicle)
 end
 
 function ADHarvestManager:unregisterAsUnloader(vehicle)
+    -- a vehicle that is no longer an unloader must not keep a side of a harvester reserved
+    self:releaseApproachClaims(vehicle)
     if vehicle.ad and vehicle.ad.modes ~= nil and vehicle.ad.modes[AutoDrive.MODE_UNLOAD] ~= nil then
         local followingUnloder = vehicle.ad.modes[AutoDrive.MODE_UNLOAD]:getFollowingUnloader()
         if followingUnloder ~= nil then

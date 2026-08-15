@@ -26,6 +26,10 @@ require('UtilFuncs')
 require('AutoDriveUtilFuncs')
 require('Settings')
 require('AbstractMode')
+require('AutoDriveTON')
+-- getPipeChasePosition reserves the side it picks, so the manager holding those
+-- reservations has to be present
+require('HarvestManager')
 require('CombineUnloaderMode')
 
 ------------------------------------------------------------------------------------------------------------------------
@@ -154,10 +158,13 @@ local function installStubs()
     overlapBoxCalls = 0
 
     ADGraphManager = { getWayPointById = function(_, _) return { x = 0, y = 0, z = 0 } end }
-    ADHarvestManager = {
-        unregisterAsUnloader = function() end,
-        getAssignedUnloader = function() return nil end,
-    }
+    -- The real manager, not a stub: getPipeChasePosition reserves the side it picks through it,
+    -- and a stub would let every test silently pass that reservation. load() gives each test a
+    -- fresh claim table, otherwise one test's reservation refuses the next test's side.
+    ADHarvestManager:load()
+    g_time = 10000
+    ADHarvestManager.unregisterAsUnloader = function() end
+    ADHarvestManager.getAssignedUnloader = function() return nil end
     ADMultipleTargetsManager = { getNextTarget = function() return nil end }
 
     UnloadAtDestinationTask = resumableTask('UnloadAtDestinationTask')
@@ -615,6 +622,83 @@ function TestPipeChasePosition:testHarvesterBranchFallsBackToTheRearWhenThePipeS
     local _, sideIndex = self.mode:getPipeChasePosition(false)
 
     lu.assertEquals(sideIndex, AutoDrive.CHASEPOS_REAR)
+end
+
+------------------------------------------------------------------------------------------------------------------------
+--- Approach reservations
+---
+--- Several unloaders on one field used to pick the same side of the same harvester and then drive
+--- at the same patch of ground. The side a chase position lands on is now reserved for the unloader
+--- that got there first, and the others have to look elsewhere.
+------------------------------------------------------------------------------------------------------------------------
+
+--- Another unloader, already holding one side of our harvester.
+function TestPipeChasePosition:claimSideForSomeoneElse(side)
+    local other = TestSetup.vehicle()
+    other.id = 4711
+    lu.assertTrue(ADHarvestManager:claimApproach(other, self.mode.combine, side),
+        'test setup: the foreign claim has to be granted before it can block anything')
+    return other
+end
+
+function TestPipeChasePosition:testAChosenSideIsReservedForUs()
+    self.mode:getPipeChasePosition(false)
+
+    local other = TestSetup.vehicle()
+    other.id = 4711
+    lu.assertTrue(ADHarvestManager:isApproachClaimedByOther(other, self.mode.combine, AutoDrive.CHASEPOS_LEFT),
+        'picking a side has to reserve it, or the next unloader picks it too')
+end
+
+--- The regression: the harvester branch only offers the pipe side, so a foreign claim on it has to
+--- send us to the rear rather than to the same spot.
+function TestPipeChasePosition:testAForeignClaimOnThePipeSideSendsUsToTheRear()
+    self:claimSideForSomeoneElse(AutoDrive.CHASEPOS_LEFT)
+
+    local _, sideIndex = self.mode:getPipeChasePosition(false)
+
+    lu.assertEquals(sideIndex, AutoDrive.CHASEPOS_REAR)
+end
+
+--- Same for the chopper branch, which checks the reservation per flank. Which side it ends up on
+--- depends on where the unloader already is - here it is on the left, and an unloader does not
+--- swing around to the far flank, so the rear is the answer. The invariant worth pinning is only
+--- that it does not take the claimed side.
+function TestPipeChasePosition:testAClaimedFlankIsNotTaken()
+    self.mode.combine.ad.isChopper = true
+    self:claimSideForSomeoneElse(AutoDrive.CHASEPOS_LEFT)
+
+    local _, sideIndex = self.mode:getPipeChasePosition(false)
+
+    lu.assertNotEquals(sideIndex, AutoDrive.CHASEPOS_LEFT)
+end
+
+--- And without the claim the very same setup does take that side, so the test above cannot pass
+--- just because the fixture never wanted the left flank in the first place.
+function TestPipeChasePosition:testTheSameFlankIsTakenWhenNobodyHoldsIt()
+    self.mode.combine.ad.isChopper = true
+
+    local _, sideIndex = self.mode:getPipeChasePosition(false)
+
+    lu.assertEquals(sideIndex, AutoDrive.CHASEPOS_LEFT)
+end
+
+--- Planning is the mode asking "where would I go", not "I am going there" - reserving on those
+--- calls would have a vehicle hold sides it never drives to.
+function TestPipeChasePosition:testPlanningDoesNotReserve()
+    self.mode:getPipeChasePosition(true)
+
+    local other = TestSetup.vehicle()
+    other.id = 4711
+    lu.assertFalse(ADHarvestManager:isApproachClaimedByOther(other, self.mode.combine, AutoDrive.CHASEPOS_LEFT))
+end
+
+--- Our own claim from the previous frame must not push us off our own side.
+function TestPipeChasePosition:testOurOwnClaimDoesNotBlockUs()
+    local _, first = self.mode:getPipeChasePosition(false)
+    local _, second = self.mode:getPipeChasePosition(false)
+
+    lu.assertEquals(second, first, 'a vehicle has to be able to hold the side it already reserved')
 end
 
 --- An explicit chaseSide is the player overruling the automatic choice; the extra geometry check

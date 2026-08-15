@@ -49,8 +49,34 @@ function AutoDrive.checkForVehiclePathInBox(boundingBox, minTurnRadius, searchin
                 local lastWp = nil
                 -- check for other pathfinder steered vehicles and avoid any intersection with their routes
                 if otherWPs ~= nil and otherWPs[otherCurrentWp] ~= nil and otherWPs[otherCurrentWp].isPathFinderPoint then
+                    -- How much of the other vehicle's route to leave unprotected at its end.
+                    --
+                    -- This used to be a blanket "index < #otherWPs - 5", which exempted the last
+                    -- five way points of every route - that is, its destination. With two unloaders
+                    -- converging on the same harvester the destinations are exactly where the
+                    -- routes overlap, so the reservation had a hole precisely where it was needed.
+                    --
+                    -- The exemption exists for a real reason though: when both vehicles are headed
+                    -- for the same place, protecting that place would deadlock them - neither could
+                    -- ever approach. So it is applied only then. When the targets are far apart,
+                    -- the other vehicle's destination is protected like the rest of its route, and
+                    -- ordering two unloaders onto the same harvester is left to the queue in
+                    -- CombineUnloaderMode, which is the mechanism meant for it.
+                    local tailExemption = 0
+                    local ownWPs, _ = searchingVehicle.ad ~= nil and searchingVehicle.ad.drivePathModule ~= nil
+                        and searchingVehicle.ad.drivePathModule:getWayPoints() or nil
+                    if ownWPs ~= nil and #ownWPs > 0 and #otherWPs > 0 then
+                        local ownTarget, otherTarget = ownWPs[#ownWPs], otherWPs[#otherWPs]
+                        if ownTarget ~= nil and otherTarget ~= nil then
+                            local dx, dz = ownTarget.x - otherTarget.x, ownTarget.z - otherTarget.z
+                            if (dx * dx + dz * dz) < (AutoDrive.SHARED_TARGET_RANGE * AutoDrive.SHARED_TARGET_RANGE) then
+                                tailExemption = 5
+                            end
+                        end
+                    end
+
                     for index, wp in pairs(otherWPs) do
-                        if lastWp ~= nil and wp.id == nil and index >= otherCurrentWp and wp.isPathFinderPoint and index > 2 and index < (#otherWPs - 5) then
+                        if lastWp ~= nil and wp.id == nil and index >= otherCurrentWp and wp.isPathFinderPoint and index > 2 and index < (#otherWPs - tailExemption) then
                             local widthOfColBox = minTurnRadius
                             local sideLength = widthOfColBox / 1.66
 

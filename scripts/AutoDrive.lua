@@ -38,6 +38,16 @@ AutoDrive.MODE_BGA = 6
 -- 1: requestCourseplayProximity, requestBackupForReversingCombine, onCpHarvesterStateChanged
 AutoDrive.INTERFACE_VERSION = 1
 
+-- Two route targets closer than this count as "the same place". Used when deciding whether one
+-- AutoDrive vehicle may reserve its destination against another: protecting a shared target
+-- would deadlock both, so ordering there is left to the unloader queue instead.
+AutoDrive.SHARED_TARGET_RANGE = 30
+
+-- Off-network look-ahead between AutoDrive vehicles: how far along the path to look, and how
+-- close two upcoming points have to come before the paths count as converging.
+AutoDrive.AD_TRAFFIC_LOOKAHEAD = 25
+AutoDrive.AD_TRAFFIC_CONFLICT_RANGE = 8
+
 AutoDrive.DC_NONE = 0
 AutoDrive.DC_VEHICLEINFO = 1
 AutoDrive.DC_COMBINEINFO = 2
