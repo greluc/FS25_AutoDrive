@@ -35,11 +35,13 @@ Inside informations:
 This is a calculation with the worst assumption of all cells to be checked:
 
 Number of cells:
-#cells = MAX_PATHFINDER_STEPS_PER_FRAME / 2 * MAX_PATHFINDER_STEPS_TOTAL * 3 (next directions - see determineNextGridCells)
+#cells = stepsPerFrame / 2 * MAX_PATHFINDER_STEPS_TOTAL * 3 (next directions - see determineNextGridCells)
 
-PathFinderModule.MAX_PATHFINDER_STEPS_PER_FRAME = 10
+stepsPerFrame is no constant of this module: ADScheduler:getStepsPerFrame() paces the pathfinder
+by the measured frame rate and returns between ADScheduler.MIN_STEPS_PER_FRAME = 2 and
+ADScheduler.MAX_STEPS_PER_FRAME = 8.
 PathFinderModule.MAX_PATHFINDER_STEPS_TOTAL = 400
-#cells = 6000
+#cells = 1200 (2 steps per frame) .. 4800 (8 steps per frame)
 
 with minTurnRadius = 7m calculated area:
 
@@ -47,11 +49,11 @@ cellsize = 7m * 7m = 49m^2
 overall area = #cells * cellsize * pathFinderTime
 
 with pathFinderTime = 1:
-overall area = 6000 * 49 * 1 = 294000 m^2
-for quadrat field layout: side length ~ 540m
+overall area = 1200 * 49 * 1 = 58800 m^2 .. 4800 * 49 * 1 = 235200 m^2
+for quadrat field layout: side length ~ 240m .. ~ 485m
 
-with pathFinderTime = 2: side length ~ 760m
-with pathFinderTime = 3: side length ~ 940m
+with pathFinderTime = 2: side length ~ 340m .. ~ 685m
+with pathFinderTime = 3: side length ~ 420m .. ~ 840m
 
 This is inclusive of the field border cells!
 ]]
@@ -60,7 +62,6 @@ PathFinderModule = {}
 PathFinderModule.debug = false
 
 PathFinderModule.PATHFINDER_MAX_RETRIES = 3
-PathFinderModule.MAX_PATHFINDER_STEPS_PER_FRAME = 2
 PathFinderModule.MAX_PATHFINDER_STEPS_TOTAL = 400
 PathFinderModule.MAX_PATHFINDER_STEPS_COMBINE_TURN = 100
 PathFinderModule.PATHFINDER_FOLLOW_DISTANCE = 45
@@ -117,7 +118,6 @@ function PathFinderModule:reset()
     self.fallBackMode3 = false
     self.isFinished = true
     self.smoothDone = true
-    self.fruitAreas = {}
     self.goingToNetwork  = false
     self.goingToPipe = false
     self.chasingVehicle = false
@@ -146,8 +146,7 @@ function PathFinderModule:reset()
             "unknown"
         }
         self.minTurnRadius = AutoDrive.getDriverRadius(self.vehicle)
-        self.dubinsDone = false
-        self.dubinsCount = 0
+        self:resetDubins()
         self.isNewPF = true
     else
         self.PP_UP = 0
@@ -174,6 +173,20 @@ function PathFinderModule:reset()
     end
 end
 
+-- dubinsDone means a Dubins path was accepted and the wayPoints are built from it, while
+-- dubinsAborted means the Dubins shortcut gave up and the A* result has to be used. Both must be
+-- cleared for every new search, otherwise a found path is silently dropped.
+-- dubinsCandidate / dubinsSampleIndex keep a sweep that ran out of its frame budget resumable.
+function PathFinderModule:resetDubins()
+    self.dubinsDone = false
+    self.dubinsAborted = false
+    self.dubinsCount = 0
+    self.dubinsPending = false
+    self.dubinsCandidate = nil
+    self.dubinsSampleIndex = nil
+    self.dubinsFromCell = nil
+end
+
 function PathFinderModule:hasFinished()
     if AutoDrive.isEditorModeEnabled() and AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
         return false
@@ -186,6 +199,31 @@ end
 
 function PathFinderModule:getPath()
     return self.wayPoints
+end
+
+-- Which search restrictions have been dropped, as a short string for the HUD.
+--
+-- The debug overlay used to read self.fallBackMode, a field that is never assigned anywhere in the
+-- mod - so it always printed "Fallback: nil" and told the reader nothing. The real state lives in
+-- three separate flags, and they accumulate: the pathfinder drops the field restriction first, then
+-- the field border, then fruit avoidance, and only resets all three when it instead widens the step
+-- budget. Reporting them together is the only way the display can show how far the search has had
+-- to relax its constraints.
+function PathFinderModule:getFallBackModeText()
+    local active = {}
+    if self.fallBackMode1 then
+        table.insert(active, "1 no field")
+    end
+    if self.fallBackMode2 then
+        table.insert(active, "2 no border")
+    end
+    if self.fallBackMode3 then
+        table.insert(active, "3 no fruit")
+    end
+    if #active == 0 then
+        return "none"
+    end
+    return table.concat(active, ", ")
 end
 
 function PathFinderModule:startPathPlanningToNetwork(destinationId)
@@ -396,6 +434,7 @@ function PathFinderModule:startPathPlanningTo(targetPoint, targetVector)
     self.fallBackMode1 = false  -- disable restrict to field
     self.fallBackMode2 = false  -- disable restrict to field border
     self.fallBackMode3 = false  -- disable avoid fruit
+    self:resetDubins()
     self.max_pathfinder_steps = PathFinderModule.MAX_PATHFINDER_STEPS_TOTAL * AutoDrive.getSetting("pathFinderTime")
 
     self.fruitToCheck = nil
@@ -566,6 +605,31 @@ function PathFinderModule:autoRestart()
     self.initNew = false
     self.path = {}
     self.diffOverallNetTime = 0
+
+    -- Deliberately NOT a full resetDubins() here.
+    --
+    -- A fallback restart relaxes the field and fruit restrictions and runs the A* again. It does
+    -- not change the geometry between start and target, which is what the Dubins curves are about,
+    -- so a sweep that just failed will fail again for exactly the same reason.
+    --
+    -- Clearing dubinsAborted and dubinsCount here made the "give up after 4 sweeps" brake in
+    -- update() unreachable: every fallback released it, Dubins swept all seven curves again, burnt
+    -- the step budget, which triggered the next fallback. Measured in game: 352 fallbacks and 433
+    -- completed sweeps for 15 path requests, while the unloader stood still reporting
+    -- "Drescher Entladebereich blockiert".
+    --
+    -- The per-frame resume state is left alone too, and that matters just as much.
+    --
+    -- A first attempt at this cleared dubinsCandidate / dubinsSampleIndex here, on the assumption
+    -- that an interrupted sweep would continue into a grid that autoRestart rebuilds. That was
+    -- wrong: getDubinsPath works on its own dubinsNodes / dubinsFromCell and never touches
+    -- self.grid. Clearing them meant a sweep interrupted by the frame budget restarted from
+    -- candidate 0 on the next fallback, so it could never reach the end - measured in game as 918
+    -- sweep starts, 918 budget interruptions and zero completions, with the unloader stuck on
+    -- "Drescher Entladebereich blockiert" again.
+    --
+    -- A fallback only ever relaxes restrictions, so samples already rejected under the stricter
+    -- rules stay rejected. Resuming across a restart is therefore conservative, never optimistic.
     self.startCell.visited = false
     self.startCell.out = nil
     self.currentCell = nil
@@ -583,7 +647,7 @@ end
 function PathFinderModule:abort()
     PathFinderModule.debugMsg(self.vehicle, "PFM:abort start")
     self.isFinished = true
-    self.dubinsDone = true
+    self.dubinsAborted = true
     self.smoothDone = true
     self.wayPoints = {}
     ADScheduler:removePathfinderVehicle(self.vehicle)
@@ -684,7 +748,9 @@ function PathFinderModule:update(dt)
         end
     end
     if self.isFinished then
-        if self.dubinsDone then
+        -- only an accepted Dubins path brings its own wayPoints, giving up on Dubins must not
+        -- skip the wayPoint creation for the A* path that was found afterwards
+        if self.dubinsDone and #self.wayPoints > 0 then
             self.smoothDone = true
         end
         if not self.smoothDone then
@@ -705,7 +771,9 @@ function PathFinderModule:update(dt)
 
     self.steps = self.steps + 1
     if (self.steps % 100) == 0 then
-        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PathFinderModule:update - self.steps %d #self.grid %d", self.steps, table.count(self.grid))
+        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PathFinderModule:update - self.steps %d #self.grid %d", self.steps, ADTable.count(self.grid))
+        end
     end
 
     if self.completelyBlocked or self.targetBlocked or self.steps > (self.max_pathfinder_steps) then
@@ -728,37 +796,45 @@ function PathFinderModule:update(dt)
         local retryAllowed = self.destinationId ~= nil and self.retryCounter < self.PATHFINDER_MAX_RETRIES
 
         if fallBackModeAllowed1 then
-            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PathFinderModule:update - error - retryAllowed: no -> fallBackModeAllowed1: yes -> going fallback now -> disable restrict to field #self.grid %d", table.count(self.grid))
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PathFinderModule:update - error - retryAllowed: no -> fallBackModeAllowed1: yes -> going fallback now -> disable restrict to field #self.grid %d", ADTable.count(self.grid))
+            end
             PathFinderModule.debugVehicleMsg(self.vehicle,
                 string.format("PFM update - error - retryAllowed: no -> fallBackModeAllowed1: yes -> going fallback now -> disable restrict to field #self.grid %d",
-                    table.count(self.grid)
+                    ADTable.count(self.grid)
                 )
             )
             self.fallBackMode1 = true
             self:autoRestart()
         elseif fallBackModeAllowed2 and not self.isNewPF then
-            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PathFinderModule:update - error - retryAllowed: no -> fallBackModeAllowed2: yes -> going fallback now -> disable field borders #self.grid %d", table.count(self.grid))
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PathFinderModule:update - error - retryAllowed: no -> fallBackModeAllowed2: yes -> going fallback now -> disable field borders #self.grid %d", ADTable.count(self.grid))
+            end
             PathFinderModule.debugVehicleMsg(self.vehicle,
                 string.format("PFM update - error - retryAllowed: no -> fallBackModeAllowed2: yes -> going fallback now -> disable field borders #self.grid %d",
-                    table.count(self.grid)
+                    ADTable.count(self.grid)
                 )
             )
             self.fallBackMode2 = true
             self:autoRestart()
         elseif fallBackModeAllowed3 then
-            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PathFinderModule:update - error - retryAllowed: no -> fallBackModeAllowed3: yes -> going fallback now -> disable avoid fruit #self.grid %d", table.count(self.grid))
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PathFinderModule:update - error - retryAllowed: no -> fallBackModeAllowed3: yes -> going fallback now -> disable avoid fruit #self.grid %d", ADTable.count(self.grid))
+            end
             PathFinderModule.debugVehicleMsg(self.vehicle,
                 string.format("PFM update - error - retryAllowed: no -> fallBackModeAllowed3: yes -> going fallback now -> disable avoid fruit #self.grid %d",
-                    table.count(self.grid)
+                    ADTable.count(self.grid)
                 )
             )
             self.fallBackMode3 = true
             self:autoRestart()
         elseif increaseStepsAllowed then
-            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PathFinderModule:update - error - retryAllowed: no -> increaseStepsAllowed: yes -> restart #self.grid %d self.max_pathfinder_steps %d", table.count(self.grid), self.max_pathfinder_steps)
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PathFinderModule:update - error - retryAllowed: no -> increaseStepsAllowed: yes -> restart #self.grid %d self.max_pathfinder_steps %d", ADTable.count(self.grid), self.max_pathfinder_steps)
+            end
             PathFinderModule.debugVehicleMsg(self.vehicle,
                 string.format("PFM update - error - retryAllowed: no -> increaseStepsAllowed: yes -> restart -> disable avoid fruit #self.grid %d self.max_pathfinder_steps %d",
-                    table.count(self.grid),
+                    ADTable.count(self.grid),
                     self.max_pathfinder_steps
                 )
             )
@@ -805,8 +881,7 @@ function PathFinderModule:update(dt)
         if not self.isFinished then
             if MathUtil.vector2Length(self.start.x - self.target.x, self.start.z - self.target.z) < PathFinderModule.PATHFINDER_MIN_DISTANCE_START_TARGET then
                 -- try dubins first before full pathfinder if close to target
-                if not self.dubinsDone then
-                    self.dubinsCount = self.dubinsCount + 1
+                if not (self.dubinsDone or self.dubinsAborted) then
                     local dubinsPath = self:getDubinsPath()
                     PathFinderModule.debugMsg(self.vehicle, "PFM:update getDubinsPath dubinsPath %s"
                         , tostring(dubinsPath)
@@ -817,22 +892,17 @@ function PathFinderModule:update(dt)
                         self:appendWayPointsNew()
                         self.isFinished = true
                         return  -- found path
-                    else
-                        -- self.completelyBlocked = true
-                          -- no valid path
-                        -- PathFinderModule.debugMsg(self.vehicle, "PFM:update getDubinsPath self.completelyBlocked %s"
-                        --     , tostring(self.completelyBlocked)
-                        -- )
                     end
-                    PathFinderModule.debugMsg(self.vehicle, "PFM:update getDubinsPath self.fallBackMode3 %s"
-                        , tostring(self.fallBackMode3)
-                    )
-                    if self.fallBackMode3 or self.dubinsCount > 4 then
-                        self.dubinsDone = true
-                        -- self.completelyBlocked = false
-                        -- self.fallBackMode1 = false  -- disable restrict to field
-                        -- self.fallBackMode2 = false  -- disable restrict to field border
-                        -- self.fallBackMode3 = false  -- disable avoid fruit
+                    if not self.dubinsPending then
+                        -- a sweep spread over several frames is one try, so only count it once
+                        -- all candidate curves have been checked
+                        self.dubinsCount = self.dubinsCount + 1
+                        PathFinderModule.debugMsg(self.vehicle, "PFM:update getDubinsPath self.fallBackMode3 %s"
+                            , tostring(self.fallBackMode3)
+                        )
+                        if self.fallBackMode3 or self.dubinsCount > 4 then
+                            self.dubinsAborted = true
+                        end
                     end
                     -- return
                 end
@@ -854,8 +924,10 @@ function PathFinderModule:update(dt)
 
             local current
             local add_neighbor_fn = function(neighbor, cost)
-                if self:isDriveableAstar(neighbor) then
-                    if not self.closedset[neighbor] then
+                -- closed nodes first: the drivability test is the expensive part of an expansion
+                -- and its result would only be thrown away for a node that is already closed
+                if not self.closedset[neighbor] then
+                    if self:isDriveableAstar(neighbor) then
                         if not cost then cost = self:get_cost(current, neighbor) end
                         local tentative_g_score = self.g_score[current] + cost
                         local openset_idx = self.openset[neighbor]
@@ -864,7 +936,7 @@ function PathFinderModule:update(dt)
                             self.g_score[neighbor] = tentative_g_score
                             self.h_score[neighbor] = self.h_score[neighbor] or self:estimate_cost(neighbor, self.nodeGoal)
                             self.f_score[neighbor] = tentative_g_score + self.h_score[neighbor]
-                            self.openset[neighbor] = true
+                            self:push_open_node(neighbor)
                         end
                     end
                 end
@@ -957,7 +1029,7 @@ function PathFinderModule:update(dt)
                     AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PathFinderModule:update - Mark process stopped if we have no more cells to check")
                     PathFinderModule.debugVehicleMsg(self.vehicle,
                         string.format("PFM update - Mark process stopped if we have no more cells to check #self.grid %d",
-                            table.count(self.grid)
+                            ADTable.count(self.grid)
                         )
                     )
                     self.completelyBlocked = true
@@ -1001,7 +1073,7 @@ function PathFinderModule:reachedTargetsNeighbor(cells)
             AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PathFinderModule:update - path found")
             PathFinderModule.debugVehicleMsg(self.vehicle,
                 string.format("PFM update - path found #self.grid %d",
-                    table.count(self.grid)
+                    ADTable.count(self.grid)
                 )
             )
 
@@ -1050,7 +1122,6 @@ function PathFinderModule:testNextCells(cell)
     end
     for _, location in pairs(cell.out) do
         local createPoint = true
-        local duplicatePointDirection = -1
         if self.vehicle ~= nil and self.vehicle.ad ~= nil and self.vehicle.ad.debug ~= nil and AutoDrive.debugVehicleMsg ~= nil then
             PathFinderModule.debugVehicleMsg(self.vehicle,
                 string.format("PFM testNextCells location xz %d %d direction %s",
@@ -1085,18 +1156,14 @@ function PathFinderModule:testNextCells(cell)
                             self.grid[gridKey].incoming = cell
                             self.grid[gridKey].steps = cell.steps + 1
                         end
-                    --elseif self.grid[gridKey].direction ~= location.direction then
-                        --duplicatePointDirection = self.grid[gridKey].direction -- remember the grid direction
-                        --if self.grid[gridKey].steps > (cell.steps + 1) then --found shortcut -> not true!!! The outgoing angles would be all wrong here. This caused issues with undrivable paths being generated!
-                            --self.grid[gridKey].incoming = cell
-                            --self.grid[gridKey].steps = cell.steps + 1
-                        --end
                     end
+                    -- a cell already in the grid with a different direction is deliberately not
+                    -- reused: coming from another direction means another collision box, and the
+                    -- outgoing angles would be wrong. It is checked again as a new cell below.
                 end
             end
         end
         if createPoint then
-            local gridKey
             if self.vehicle ~= nil and self.vehicle.ad ~= nil and self.vehicle.ad.debug ~= nil and AutoDrive.debugVehicleMsg ~= nil then
                 PathFinderModule.debugVehicleMsg(self.vehicle,
                     string.format("PFM testNextCells location xz %d %d createPoint %s",
@@ -1106,37 +1173,8 @@ function PathFinderModule:testNextCells(cell)
                     )
                 )
             end
-            if duplicatePointDirection >= 0 then
-                -- if different direction, it is not necessary to check the cell details again, just add a new entry in grid with known required restrictions
-                -- Todo : Not true!! If we come from a different direction we ususally have a differently sized collision box to check. There is a difference between a 0° angle when coming from the last cell and a +/- 45° angle.
-                gridKey = string.format("%d|%d|%d", location.x, location.z, duplicatePointDirection)
-                location.isRestricted = self.grid[gridKey].isRestricted
-                location.hasCollision = self.grid[gridKey].hasCollision
-                location.bordercells = self.grid[gridKey].bordercells
-                location.hasFruit = self.grid[gridKey].hasFruit
-                location.fruitValue = self.grid[gridKey].fruitValue
-
-                if not location.isRestricted and not location.hasCollision and location.incoming ~= nil then
-                    -- check for up/down is to big or below water level
-                    -- this is a required check as we come from different direction
-                    local worldPos = self:gridLocationToWorldLocation(location)
-                    local worldPosPrevious = self:gridLocationToWorldLocation(location.incoming)
-                    location.hasCollision = location.hasCollision or self:checkSlopeAngle(worldPos.x, worldPos.z, worldPosPrevious.x, worldPosPrevious.z)    --> true if up/down is to big or below water level
-                end
-
-                if self.vehicle ~= nil and self.vehicle.ad ~= nil and self.vehicle.ad.debug ~= nil and AutoDrive.debugVehicleMsg ~= nil then
-                    PathFinderModule.debugVehicleMsg(self.vehicle,
-                        string.format("PFM testNextCells different direction xz %d %d createPoint %s",
-                            math.floor(location.x),
-                            math.floor(location.z),
-                            tostring(self.direction_to_text[location.direction+1])
-                        )
-                    )
-                end
-            else
-                self:checkGridCell(location)
-            end
-            gridKey = string.format("%d|%d|%d", location.x, location.z, location.direction)
+            self:checkGridCell(location)
+            local gridKey = string.format("%d|%d|%d", location.x, location.z, location.direction)
             self.grid[gridKey] = location
         end
     end
@@ -1168,7 +1206,7 @@ function PathFinderModule:checkGridCell(cell)
                         math.floor(cell.x),
                         math.floor(cell.z),
                         math.floor(cell.bordercells),
-                        table.count(self.grid)
+                        ADTable.count(self.grid)
                     )
                 )
             end
@@ -1176,8 +1214,10 @@ function PathFinderModule:checkGridCell(cell)
     end
 
     -- check the most probable restrictions on field first to prevent unneccessary checks
-    if not cell.isRestricted and self.restrictToField and not (self.fallBackMode1 and self.fallBackMode2) then
-        -- in fallBackMode1 we ignore the field restriction
+    if not cell.isRestricted and self.restrictToField and not (self.fallBackMode1 or self.fallBackMode2) then
+        -- in fallBackMode1 we ignore the field restriction, the cells off the field are limited by
+        -- the bordercells counter above instead. With 'and' the restriction stayed active in
+        -- fallBackMode1 and the whole fallback searched the very same area a second time.
         cell.isRestricted = cell.isRestricted or (not cell.isOnField)
 
         if cell.isRestricted then
@@ -1641,18 +1681,120 @@ function PathFinderModule:drawDebugForCreatedRoute()
     end
 end
 
+-- Half extents of the box a cell is tested with, derived from the actual train.
+--
+-- K1: this used to be minTurnRadius/2 in both axes - a square built from a STEERING property.
+-- A turn radius says nothing about the area a vehicle sweeps: a long trailer has a modest turn
+-- radius and a large footprint. The measured hull is available (see AutoDrive.getVehicleDimensions
+-- in CollisionDetectionUtils.lua) and is what the box should be built from, falling back to the
+-- turn radius when nothing has been measured yet so the behaviour degrades rather than breaks.
+function PathFinderModule:getTrainHalfExtents()
+    if self.trainHalfWidth ~= nil then
+        return self.trainHalfWidth, self.trainHalfLength
+    end
+
+    local halfWidth = self.minTurnRadius / 2
+    local halfLength = self.minTurnRadius / 2
+
+    local vehicle = self.vehicle
+    local dims = vehicle ~= nil and vehicle.ad ~= nil and vehicle.ad.adDimensions or nil
+    if dims ~= nil and dims.maxWidthLeft ~= nil and dims.maxWidthRight ~= nil then
+        halfWidth = math.max(halfWidth, (dims.maxWidthLeft + dims.maxWidthRight) / 2)
+    end
+    if AutoDrive.getTractorTrainLength ~= nil and vehicle ~= nil then
+        local trainLength = AutoDrive.getTractorTrainLength(vehicle, true, false)
+        if trainLength ~= nil and trainLength > 0 then
+            halfLength = math.max(halfLength, trainLength / 2)
+        end
+    end
+
+    self.trainHalfWidth = halfWidth
+    self.trainHalfLength = halfLength
+    return halfWidth, halfLength
+end
+
+-- Direction the vehicle actually passes through this cell, as an angle.
+--
+-- K1, second half: the box used to be rotated to self.targetVector - the heading at the DESTINATION,
+-- identical for every cell on the path. On a straight run that is roughly right; in a turn, which is
+-- exactly where clearance matters, the box stood at an angle to the real motion. The A* already
+-- knows where the cell was entered from, so use that and fall back to the target vector only for
+-- the very first cell.
+function PathFinderModule:getCellHeading(cell)
+    local from = cell.incoming
+    if from ~= nil and from.x ~= nil and from.z ~= nil and (from.x ~= cell.x or from.z ~= cell.z) then
+        local a = self:gridLocationToWorldLocation(from)
+        local b = self:gridLocationToWorldLocation(cell)
+        local dx, dz = b.x - a.x, b.z - a.z
+        if dx * dx + dz * dz > 1e-6 then
+            return AutoDrive.normalizeAngle(math.atan2(-dz, dx))
+        end
+    end
+    return AutoDrive.normalizeAngle(math.atan2(-self.targetVector.z, self.targetVector.x))
+end
+
+-- Where the rear of the train ends up relative to the tractor when the path bends at this cell.
+--
+-- Returns nil when the path runs straight here, which is the common case and costs one comparison.
+-- Otherwise returns a world space offset towards the INSIDE of the curve, which the caller uses to
+-- place a second collision box over the area the trailer actually sweeps.
+--
+-- The approximation is the textbook one for a single axle trailer: the rear cuts the corner by
+-- about L * (1 - cos(theta)), with L the train length and theta the heading change. It is an
+-- approximation on purpose - the exact swept envelope depends on the hitch geometry and would cost
+-- far more to compute than the margin it would buy.
+function PathFinderModule:getOffTrackingOffset(cell)
+    local from = cell.incoming
+    if from == nil or from.incoming == nil then
+        return nil  -- need two segments to have a heading change
+    end
+
+    local a = self:gridLocationToWorldLocation(from.incoming)
+    local b = self:gridLocationToWorldLocation(from)
+    local c = self:gridLocationToWorldLocation(cell)
+
+    local inX, inZ = b.x - a.x, b.z - a.z
+    local outX, outZ = c.x - b.x, c.z - b.z
+    local inLen = math.sqrt(inX * inX + inZ * inZ)
+    local outLen = math.sqrt(outX * outX + outZ * outZ)
+    if inLen < 1e-3 or outLen < 1e-3 then
+        return nil
+    end
+    inX, inZ = inX / inLen, inZ / inLen
+    outX, outZ = outX / outLen, outZ / outLen
+
+    local cosTheta = inX * outX + inZ * outZ
+    if cosTheta > 0.999 then
+        return nil  -- straight enough that the trailer tracks the tractor
+    end
+    cosTheta = math.max(-1, math.min(1, cosTheta))
+
+    local _, halfLength = self:getTrainHalfExtents()
+    local trainLength = halfLength * 2
+    local offset = trainLength * (1 - cosTheta)
+    if offset < 0.5 then
+        return nil  -- below the resolution the collision box already covers
+    end
+
+    -- Inside of the curve: the side the heading turned towards. The cross product's sign gives
+    -- the turn direction; the offset points that way, perpendicular to the outgoing heading.
+    local cross = inX * outZ - inZ * outX
+    local sign = cross >= 0 and 1 or -1
+    local perpX, perpZ = -outZ * sign, outX * sign
+
+    return perpX * offset, perpZ * offset
+end
+
 function PathFinderModule:getShapeDefByDirectionType_New(cell)
     local shapeDefinition = {}
-    shapeDefinition.angleRad = math.atan2(-self.targetVector.z, self.targetVector.x)
-    shapeDefinition.angleRad = AutoDrive.normalizeAngle(shapeDefinition.angleRad)
+    shapeDefinition.angleRad = self:getCellHeading(cell)
     local worldPos = self:gridLocationToWorldLocation(cell)
     shapeDefinition.y = getTerrainHeightAtWorldPos(g_currentMission.terrainRootNode, worldPos.x, 1, worldPos.z)
     shapeDefinition.height = self.vehicleMinHeight
 
     shapeDefinition.x = worldPos.x
     shapeDefinition.z = worldPos.z
-    shapeDefinition.widthX = self.minTurnRadius / 2
-    shapeDefinition.widthZ = self.minTurnRadius / 2
+    shapeDefinition.widthX, shapeDefinition.widthZ = self:getTrainHalfExtents()
 
     local corners = self:getCornersFromShapeDefinition(shapeDefinition)
     if corners ~= nil then
@@ -2498,7 +2640,6 @@ function PathFinderModule:isDriveableAstar(cell)
     if not cell.isRestricted and self.avoidFruitSetting and not self.fallBackMode3 then
         -- check for fruit
         self:checkForFruitInArea(cell, corners) -- set cell.isRestricted if fruit found
-        table.insert(self.fruitAreas, corners)
         if cell.isRestricted then
             PathFinderModule.debugMsg(self.vehicle, "PFM:isDriveableAstar cell.isRestricted xz %d,%d fruit found %s"
                 , cell.x, cell.z
@@ -2531,6 +2672,36 @@ function PathFinderModule:isDriveableAstar(cell)
             PathFinderModule.debugMsg(self.vehicle, "PFM:isDriveableAstar cell.hasCollision xz %d,%d collision"
                 , cell.x, cell.z
             )
+        end
+
+        -- K2: the swept area of the trailer.
+        --
+        -- A trailer does not follow the tractor's track through a bend, it cuts inside it. That
+        -- inside area is a DIFFERENT cell from the one the tractor drives through, and if the
+        -- tractor never enters it, nothing ever tested it. The path came back clear, the tractor
+        -- passed the obstacle, and the trailer hit it - which is exactly the "unloader catches a
+        -- tree while turning outside the field" case.
+        --
+        -- Only turns are checked, because on a straight run the trailer tracks the tractor and the
+        -- cell box already covers it. The offset is the standard single axle off-tracking
+        -- approximation: for a train of length L through a heading change of theta, the rear end
+        -- sits about L * (1 - cos(theta)) towards the inside of the curve.
+        if not cell.isRestricted then
+            local offsetX, offsetZ = self:getOffTrackingOffset(cell)
+            if offsetX ~= nil then
+                self.collisionhits = 0
+                overlapBox(cell.shapeDefinition.x + offsetX, cell.shapeDefinition.y + 3, cell.shapeDefinition.z + offsetZ,
+                    0, cell.shapeDefinition.angleRad, 0,
+                    cell.shapeDefinition.widthX, 2.65, cell.shapeDefinition.widthZ,
+                    "collisionTestCallback", self, self.mask, true, true, true, true)
+                if self.collisionhits > 0 then
+                    cell.hasCollision = true
+                    cell.isRestricted = true
+                    PathFinderModule.debugMsg(self.vehicle, "PFM:isDriveableAstar trailer sweep blocked xz %d,%d"
+                        , cell.x, cell.z
+                    )
+                end
+            end
         end
     end
 
@@ -2565,17 +2736,82 @@ function PathFinderModule:estimate_cost(node, goal_node)
     return self:get_cost(node, goal_node) * 1.5 + (node.cost + goal_node.cost) * 0.5
 end
 
+-- Binary min heap over the open set, ordered by f_score. Scanning the whole open set for the
+-- cheapest node on every expansion made the A* slower the further it searched, which is exactly
+-- when the pathfinder is already struggling.
+local function heapPush(heap, node, score)
+    local index = #heap + 1
+    heap[index] = {node = node, score = score}
+    while index > 1 do
+        local parent = math.floor(index / 2)
+        if heap[parent].score <= heap[index].score then
+            break
+        end
+        heap[parent], heap[index] = heap[index], heap[parent]
+        index = parent
+    end
+end
+
+local function heapPop(heap)
+    local size = #heap
+    if size == 0 then
+        return nil
+    end
+    local top = heap[1]
+    heap[1] = heap[size]
+    heap[size] = nil
+    size = size - 1
+    local index = 1
+    while true do
+        local left = index * 2
+        local right = left + 1
+        local smallest = index
+        if left <= size and heap[left].score < heap[smallest].score then
+            smallest = left
+        end
+        if right <= size and heap[right].score < heap[smallest].score then
+            smallest = right
+        end
+        if smallest == index then
+            break
+        end
+        heap[smallest], heap[index] = heap[index], heap[smallest]
+        index = smallest
+    end
+    return top
+end
+
+-- The set answers the membership tests of the A* loop, the heap keeps the order. Both are only
+-- ever written here, so every open node has an entry with its current f_score in the heap.
+function PathFinderModule:push_open_node(node)
+    self.openset[node] = true
+    heapPush(self.openHeap, node, self.f_score[node])
+end
+
 -- current = self:pop_best_node(self.openset, self.f_score)
 -- return: node / nil
 -- self.openset, f_score
 function PathFinderModule:pop_best_node(set, score)
+    local heap = self.openHeap
+    if heap then
+        while #heap > 0 do
+            local entry = heapPop(heap)
+            -- lazy deletion: a node that got a cheaper score was pushed again, so entries that no
+            -- longer match the open set or the current score are outdated and simply dropped
+            if set[entry.node] and score[entry.node] == entry.score then
+                set[entry.node] = nil
+                return entry.node
+            end
+        end
+    end
+
+    -- the heap can only run dry with an empty open set, but a still filled set must never leave
+    -- the caller without a node to expand
     local best, node = math.huge, nil
-
-    for k, v in pairs(set) do
-        local s = score[k]
-
+    for k, _ in pairs(set) do
+        local s = score[k] or math.huge
         if s < best then
-            best  = s or math.huge
+            best = s
             node = k
         end
     end
@@ -2715,12 +2951,19 @@ end
 -- current, from_node, add_neighbor_fn
 function PathFinderModule:get_neighbors(node, fromNode, add_neighbor_fn)
     local x, z = node.x, node.z
+    -- fromNode is where we entered `node`, which is what decides the permitted directions out of
+    -- it - that use is correct.
     local directions = self:getDirections(fromNode, node)
     if directions then
         for i, offset in ipairs(directions) do
             local tnode = self:get_node(x + offset[1], z + offset[2])
             tnode.direction = offset.direction
-            tnode.from_node = fromNode
+            -- ...but the neighbour is reached from `node`, not from `fromNode`. This used to store
+            -- the grandparent, and since isDriveableAstar does "cell.incoming = cell.from_node",
+            -- every check that looks back one step measured across TWO cells instead of one: the
+            -- slope test, the other-vehicle path test and the trailer sweep all worked on a segment
+            -- that is not the one being driven.
+            tnode.from_node = node
             add_neighbor_fn(tnode)
         end
     end
@@ -2763,6 +3006,7 @@ function PathFinderModule:setupNew(behindStartCell, startCell, targetCell, userd
     )
     self.cachedNodes = {}
     self.openset = {}
+    self.openHeap = {}
     self.closedset = {}
     self.came_from = {}
     self.g_score = {}
@@ -2790,7 +3034,7 @@ function PathFinderModule:setupNew(behindStartCell, startCell, targetCell, userd
     self.f_score[self.nodeStart] = self.h_score[self.nodeStart]
     self.came_from[self.nodeStart] = self.nodeBehindStart
 
-    self.openset[self.nodeStart] = true
+    self:push_open_node(self.nodeStart)
     self.closedset[self.nodeBehindStart] = true
     self:isDriveableAstar(self.nodeStart)
     self:setBlockedGoal()
@@ -2934,11 +3178,15 @@ function PathFinderModule:isDriveableDubins(cell)
     return not(cell.isRestricted)
 end
 
+-- Checks the candidate curves in the same order as before - the shortest path first, then the six
+-- single word paths - and returns the first one that is driveable. Every candidate is sampled
+-- every meter and every sample costs a full drivability test, so the sweep is paced with the same
+-- budget the A* loop uses instead of testing all seven curves within one frame. A sweep that runs
+-- out of budget sets self.dubinsPending and resumes at the very same sample in the next frame.
 function PathFinderModule:getDubinsPath()
     PathFinderModule.debugMsg(self.vehicle, "PFM:getDubinsPath start")
     self.dubinsPath = nil
-    local result = ADDubins.EDUBNOPATH
-    self.dubinsNodes  = {}
+    self.dubinsPending = false
     local diffNetTime = netGetTime()
 
     local function get_node(x, z)
@@ -2949,79 +3197,95 @@ function PathFinderModule:getDubinsPath()
         return node
     end
 
-    local function checkPath()
-        local result = self.dubins:dubins_path_sample_many(ADDubins.DubinsPath, 1, self.dubins.createWayPoints)
-        PathFinderModule.debugMsg(self.vehicle, "PFM:getDubinsPath dubins_path_sample_many result %d"
-            , result
-        )
-        if result == ADDubins.EDUBOK then
-            PathFinderModule.debugMsg(self.vehicle, "PFM:getDubinsPath dubins_path_sample_many #self.dubins.outPath %d"
-            , #self.dubins.outPath
-            )
-            if self.dubins.outPath and #self.dubins.outPath > 0 then
-                local fromCell = nil
-                for i, wayPoint in ipairs(self.dubins.outPath) do
-                    local cell = get_node(wayPoint.x, wayPoint.z)
-                    cell.worldPos = {x = wayPoint.x, y = getTerrainHeightAtWorldPos(g_currentMission.terrainRootNode, wayPoint.x, 1, wayPoint.z), z = wayPoint.z}
-                    cell.t = wayPoint.t
-                    cell.incomming = fromCell
-                    fromCell = cell
-                    if not self:isDriveableDubins(cell) then
-                        result = ADDubins.EDUBNOPATH
-                        break
-                    end
-                end
+    if self.dubinsCandidate == nil then
+        -- start of a sweep: candidate 0 is the shortest path, 1 .. 6 the single word paths
+        self.dubinsCandidate = 0
+        self.dubinsSampleIndex = nil
+        self.dubinsFromCell = nil
+        self.dubinsNodes = {}
+    end
+
+    local budget = math.max(1, ADScheduler:getStepsPerFrame() * PathFinderModule.NEW_PF_STEP_FACTOR)
+    local checksThisFrame = 0
+
+    while self.dubinsCandidate <= 6 do
+        if self.dubinsSampleIndex == nil then
+            -- build and sample the curve of the current candidate
+            self.dubins.outPath = {}
+            self.dubinsFromCell = nil
+            local result
+            if self.dubinsCandidate == 0 then
+                result = self.dubins:dubins_shortest_path(ADDubins.DubinsPath, self.q0, self.q1, self.minTurnRadius)
             else
-                result = ADDubins.EDUBNOPATH
+                result = self.dubins:dubins_path(ADDubins.DubinsPath, self.q0, self.q1, self.minTurnRadius, self.dubinsCandidate)
             end
-        end
-        return result
-    end
-
-    self.dubins.outPath = {}
-    result = self.dubins:dubins_shortest_path(ADDubins.DubinsPath, self.q0, self.q1, self.minTurnRadius)
-    PathFinderModule.debugMsg(self.vehicle, "PFM:getDubinsPath dubins_shortest_path result %d"
-        , result
-    )
-    if result == ADDubins.EDUBOK then
-        result = checkPath()
-        if result == ADDubins.EDUBOK then
-            PathFinderModule.debugMsg(self.vehicle, "PFM:getDubinsPath found shortest path #self.dubins.outPath %d result %d"
-                , #self.dubins.outPath
+            if result == ADDubins.EDUBOK then
+                result = self.dubins:dubins_path_sample_many(ADDubins.DubinsPath, 1, self.dubins.createWayPoints)
+            end
+            PathFinderModule.debugMsg(self.vehicle, "PFM:getDubinsPath candidate %d result %d #self.dubins.outPath %d"
+                , self.dubinsCandidate
                 , result
+                , #self.dubins.outPath
             )
-            self.dubinsPath = self.dubins.outPath
-            return self.dubinsPath
+            if result == ADDubins.EDUBOK and #self.dubins.outPath > 0 then
+                self.dubinsSampleIndex = 1
+            else
+                self.dubinsCandidate = self.dubinsCandidate + 1
+            end
+        else
+            local outPath = self.dubins.outPath
+            local isDriveable = true
+            while self.dubinsSampleIndex <= #outPath do
+                if checksThisFrame >= budget then
+                    diffNetTime = netGetTime() - diffNetTime
+                    PathFinderModule.debugMsg(self.vehicle, "PFM:getDubinsPath out of budget candidate %d sample %d diffNetTime %d"
+                        , self.dubinsCandidate
+                        , self.dubinsSampleIndex
+                        , diffNetTime
+                    )
+                    self.dubinsPending = true
+                    return nil
+                end
+                local wayPoint = outPath[self.dubinsSampleIndex]
+                local cell = get_node(wayPoint.x, wayPoint.z)
+                cell.worldPos = {x = wayPoint.x, y = getTerrainHeightAtWorldPos(g_currentMission.terrainRootNode, wayPoint.x, 1, wayPoint.z), z = wayPoint.z}
+                cell.t = wayPoint.t
+                cell.incoming = self.dubinsFromCell
+                checksThisFrame = checksThisFrame + 1
+                if not self:isDriveableDubins(cell) then
+                    isDriveable = false
+                    break
+                end
+                self.dubinsFromCell = cell
+                self.dubinsSampleIndex = self.dubinsSampleIndex + 1
+            end
+            if isDriveable then
+                PathFinderModule.debugMsg(self.vehicle, "PFM:getDubinsPath found path candidate %d #self.dubins.outPath %d"
+                    , self.dubinsCandidate
+                    , #outPath
+                )
+                self.dubinsPath = outPath
+                self.dubinsCandidate = nil
+                self.dubinsSampleIndex = nil
+                diffNetTime = netGetTime() - diffNetTime
+                PathFinderModule.debugMsg(self.vehicle, "PFM:getDubinsPath end diffNetTime %d"
+                    , diffNetTime
+                )
+                return self.dubinsPath
+            end
+            self.dubinsCandidate = self.dubinsCandidate + 1
+            self.dubinsSampleIndex = nil
         end
     end
 
-    for i = 1, 6, 1 do
-        self.dubins.outPath = {}
-        result = self.dubins:dubins_path(ADDubins.DubinsPath, self.q0, self.q1, self.minTurnRadius, i)
-        PathFinderModule.debugMsg(self.vehicle, "PFM:getDubinsPath dubins_path i %d result %d"
-            , i
-            , result
-        )
-        if result == ADDubins.EDUBOK then
-            result = checkPath()
-        end
-        if result == ADDubins.EDUBOK then
-            break
-        end
-    end
-    PathFinderModule.debugMsg(self.vehicle, "PFM:getDubinsPath #self.dubins.outPath %d result %d"
-        , #self.dubins.outPath
-        , result
-    )
-    if result == ADDubins.EDUBOK then
-        self.dubinsPath = self.dubins.outPath
-    end
-
+    -- no candidate is driveable, the next call starts a new sweep
+    self.dubinsCandidate = nil
+    self.dubinsSampleIndex = nil
     diffNetTime = netGetTime() - diffNetTime
-    PathFinderModule.debugMsg(self.vehicle, "PFM:getDubinsPath end diffNetTime %d"
+    PathFinderModule.debugMsg(self.vehicle, "PFM:getDubinsPath end no path diffNetTime %d"
         , diffNetTime
     )
-    return self.dubinsPath
+    return nil
 end
 
 function PathFinderModule:collisionTestCallback(transformId)
