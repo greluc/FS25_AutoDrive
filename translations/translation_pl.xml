@@ -146,6 +146,8 @@
 		<text name="gui_ad_notifications_tooltip"						text="Czas wyświetlania powiadomień" />
 		<text name="gui_ad_exitField"									text="Wyjazd z pola" />
 		<text name="gui_ad_exitField_tooltip"							text="Strategia wyjazdu z pola do rozładunku" />
+		<text name="gui_ad_waitingPosition"							text="Keep waiting spot clear" />
+		<text name="gui_ad_waitingPosition_tooltip"							text="A waiting unloader parked on the way point network - a collection route along the field border, say - moves clear so it does not block full trailers." />
 		<text name="gui_ad_default"									text="Domyślna" />
 		<text name="gui_ad_after_start"								text="Za punktem początkowym" />
 		<text name="gui_ad_closest"									text="Najbliższy punkt" />
@@ -368,6 +370,7 @@
 		<text name="AD_task_stop_and_disable"							text="Zatrzymanie" />
 		<text name="AD_task_drive_to_unload_point"						text="Przejazd do punktu rozładunku" />
 		<text name="AD_task_wait_for_call"								text="Oczekiwanie na wezwanie" />
+		<text name="AD_task_making_way"								text="Making way" />
 		<text name="AD_task_chasing_combine"							text="Podążanie za kombajnem" />
 		<text name="AD_task_wait_for_combine_pass_by"					text="Przepuszczanie kombajnu" />
 		<text name="AD_task_catching_chase_side"						text="Wykrywanie strony podążania" />

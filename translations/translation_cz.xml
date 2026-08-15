@@ -146,6 +146,8 @@
 		<text name="gui_ad_notifications_tooltip"						text="Doba pro zobrazení oznámení" />
 		<text name="gui_ad_exitField"									text="Výjezd z pole" />
 		<text name="gui_ad_exitField_tooltip"							text="Způsob napojení na trasu při výjezdu z pole" />
+		<text name="gui_ad_waitingPosition"							text="Keep waiting spot clear" />
+		<text name="gui_ad_waitingPosition_tooltip"							text="A waiting unloader parked on the way point network - a collection route along the field border, say - moves clear so it does not block full trailers." />
 		<text name="gui_ad_default"									text="Výchozí" />
 		<text name="gui_ad_after_start"								text="Začátek trasy" />
 		<text name="gui_ad_closest"									text="Nejbližší bod trasy" />
@@ -368,6 +370,7 @@
 		<text name="AD_task_stop_and_disable"							text="Zastavení" />
 		<text name="AD_task_drive_to_unload_point"						text="Jedu k bodu vykládky" />
 		<text name="AD_task_wait_for_call"								text="Čekám na zavolání" />
+		<text name="AD_task_making_way"								text="Making way" />
 		<text name="AD_task_chasing_combine"							text="Sleduji kombajn" />
 		<text name="AD_task_wait_for_combine_pass_by"					text="Nechat kombajn projet" />
 		<text name="AD_task_catching_chase_side"						text="Chytání strany" />

@@ -46,6 +46,12 @@
 				<Text profile="fs25_settingsMultiTextOptionTitle" text="$l10n_gui_ad_restrictToField"/>
 			</Bitmap>
 			<Bitmap profile="fs25_multiTextOptionContainer" onCreate="onCreateAutoDriveSettingRow">
+				<BinaryOption profile="fs25_settingsBinaryOption" onClick="onOptionChange" onCreate="onCreateAutoDriveSetting" name="waitingPosition" id="waitingPosition">
+					<Text profile="fs25_multiTextOptionTooltip" name="ignore" text="$l10n_gui_ad_waitingPosition_tooltip"/>
+				</BinaryOption>
+				<Text profile="fs25_settingsMultiTextOptionTitle" text="$l10n_gui_ad_waitingPosition"/>
+			</Bitmap>
+			<Bitmap profile="fs25_multiTextOptionContainer" onCreate="onCreateAutoDriveSettingRow">
 				<BinaryOption profile="fs25_settingsBinaryOption" onClick="onOptionChange" onCreate="onCreateAutoDriveSetting" name="followOnlyOnField" id="followOnlyOnField">
 					<Text profile="fs25_multiTextOptionTooltip" name="ignore" text="$l10n_gui_ad_followOnlyOnField_tooltip"/>
 				</BinaryOption>

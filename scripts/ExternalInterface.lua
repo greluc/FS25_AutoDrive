@@ -434,7 +434,102 @@ function AutoDrive:requestBackupForReversingCombine(unloader, combine)
     if unloader.ad.specialDrivingModule ~= nil then
         unloader.ad.specialDrivingModule:releaseVehicle()
     end
+
+    -- An unloader that is waiting for a call is not running the reverse handling above - it is
+    -- parked, and reverseForCombineRequest reaches nobody there. Ask it to move out of the way
+    -- instead, which is the same intent expressed in the terms that task understands.
+    AutoDrive:requestMakeWay(unloader, combine)
     return true
+end
+
+------------------------------------------------------------------------------------------------------------------------
+--- Asking a parked vehicle to move
+---
+--- A vehicle waiting for its next job stops where it happens to stand, which on a field is often
+--- somewhere another vehicle needs to be. Nothing used to move it: the blocked vehicle either
+--- routed around it or, after fifteen seconds, reversed out and tried again from somewhere else.
+---
+--- This is the other half of that. The blocked party asks, the parked one moves a short distance
+--- and parks again. Used by AutoDrive itself and, through requestBackupForReversingCombine, by
+--- Courseplay.
+------------------------------------------------------------------------------------------------------------------------
+
+--- Ask a vehicle to clear the spot it is standing on. Returns whether the request was taken.
+function AutoDrive:requestMakeWay(blocker, requester)
+    if blocker == nil or requester == nil or blocker == requester
+        or requester.components == nil or requester.components[1] == nil then
+        return false
+    end
+    if blocker.ad == nil or blocker.ad.stateModule == nil or not blocker.ad.stateModule:isActive() then
+        return false
+    end
+    -- Only a vehicle that is parked can be asked. One that is driving is following a path it was
+    -- given, and pushing it off that path is the pathfinder's business, not ours.
+    local activeTask = blocker.ad.taskModule ~= nil and blocker.ad.taskModule:getActiveTask() or nil
+    if activeTask == nil or activeTask.canMakeWay ~= true then
+        return false
+    end
+
+    local rx, _, rz = getWorldTranslation(requester.components[1].node)
+    AutoDrive.setMakeWayRequest(blocker, rx, rz)
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_VEHICLEINFO) then
+        AutoDrive.debugPrint(blocker, AutoDrive.DC_VEHICLEINFO, "AutoDrive:requestMakeWay asked by %s",
+            tostring(requester.getName and requester:getName()))
+    end
+    return true
+end
+
+--- Record what to move away from as a plain point rather than as the vehicle that asked.
+---
+--- Not every reason to move is a vehicle - a driver parked on a collection route has to clear it
+--- with nobody having complained yet - and a stored position cannot go stale the way a reference to
+--- a vehicle that has since driven off or been deleted can.
+function AutoDrive.setMakeWayRequest(blocker, awayFromX, awayFromZ)
+    if blocker == nil or blocker.ad == nil then
+        return false
+    end
+    blocker.ad.makeWayRequest = { time = g_time, awayFromX = awayFromX, awayFromZ = awayFromZ }
+    return true
+end
+
+--- The live request for a vehicle, or nil. Requests expire so that a vehicle whose asker has long
+--- since driven off - or been deleted - does not keep shuffling about.
+function AutoDrive.getMakeWayRequest(vehicle)
+    if vehicle == nil or vehicle.ad == nil or vehicle.ad.makeWayRequest == nil then
+        return nil
+    end
+    if (g_time - vehicle.ad.makeWayRequest.time) > AutoDrive.MAKE_WAY_VALID_TIME then
+        vehicle.ad.makeWayRequest = nil
+        return nil
+    end
+    return vehicle.ad.makeWayRequest
+end
+
+function AutoDrive.clearMakeWayRequest(vehicle)
+    if vehicle ~= nil and vehicle.ad ~= nil then
+        vehicle.ad.makeWayRequest = nil
+    end
+end
+
+--- Ask every parked AutoDrive vehicle near us to move. Returns how many took the request.
+function AutoDrive:askNearbyVehiclesToMakeWay(vehicle)
+    if vehicle == nil or vehicle.components == nil or vehicle.components[1] == nil then
+        return 0
+    end
+    local x, _, z = getWorldTranslation(vehicle.components[1].node)
+    local asked = 0
+    for _, other in pairs(AutoDrive.getAllVehicles()) do
+        if other ~= vehicle and other.components ~= nil and other.components[1] ~= nil
+            and not AutoDrive:checkIsConnected(vehicle, other) then
+            local ox, _, oz = getWorldTranslation(other.components[1].node)
+            if MathUtil.vector2Length(ox - x, oz - z) < AutoDrive.MAKE_WAY_ASK_RANGE then
+                if AutoDrive:requestMakeWay(other, vehicle) then
+                    asked = asked + 1
+                end
+            end
+        end
+    end
+    return asked
 end
 
 function AutoDrive:getIsCPActive(vehicle)

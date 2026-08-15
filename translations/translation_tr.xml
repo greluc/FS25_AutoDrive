@@ -146,6 +146,8 @@
 		<text name="gui_ad_notifications_tooltip"						text="Bildirimler için görüntüleme süresi: görüntüleme yok / ca. 2,5s / 5s / 10s / 25s / Kullanıcı kapatana kadar göster" />
 		<text name="gui_ad_exitField"									text="Tarladan çıkış" />
 		<text name="gui_ad_exitField_tooltip"							text="Boşaltma için tarladan çıkış stratejisi" />
+		<text name="gui_ad_waitingPosition"							text="Keep waiting spot clear" />
+		<text name="gui_ad_waitingPosition_tooltip"							text="A waiting unloader parked on the way point network - a collection route along the field border, say - moves clear so it does not block full trailers." />
 		<text name="gui_ad_default"									text="Varsayılan" />
 		<text name="gui_ad_after_start"								text="Başlangıç ​​Arkasında" />
 		<text name="gui_ad_closest"									text="En yakın nokta" />
@@ -368,6 +370,7 @@
 		<text name="AD_task_stop_and_disable"							text="Durduruluyor" />
 		<text name="AD_task_drive_to_unload_point"						text="Boşaltma noktasına sürün" />
 		<text name="AD_task_wait_for_call"								text="Çağrı bekleniyor" />
+		<text name="AD_task_making_way"								text="Making way" />
 		<text name="AD_task_chasing_combine"							text="Biçerdöveri takip et" />
 		<text name="AD_task_wait_for_combine_pass_by"					text="Biçerdöverin geçmesine izin ver" />
 		<text name="AD_task_catching_chase_side"						text="Alıcı tarafı yakala" />

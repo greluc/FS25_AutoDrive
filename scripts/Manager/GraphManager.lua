@@ -1097,6 +1097,22 @@ function ADGraphManager:forEachWayPointNear(point, radius, callback)
     end
 end
 
+--- The way point nearest to a position, or nil if the network keeps its distance.
+---
+--- Used to tell whether a spot is on the network at all - a parked vehicle on a collection route
+--- blocks everything using it - so the answer only has to be found within a radius, which is what
+--- makes it cheap enough to ask on a network of fifty thousand way points.
+function ADGraphManager:getNearestWayPointWithin(point, radius)
+    local nearest, nearestDistance = nil, radius
+    self:forEachWayPointNear(point, radius, function(wp)
+        local distance = MathUtil.vector2Length(wp.x - point.x, wp.z - point.z)
+        if distance < nearestDistance then
+            nearest, nearestDistance = wp, distance
+        end
+    end)
+    return nearest, nearestDistance
+end
+
 function ADGraphManager:getWayPointsInRange(point, rangeMin, rangeMax)
     local inRange = {}
     local visited = 0

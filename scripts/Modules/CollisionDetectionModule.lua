@@ -1,5 +1,9 @@
 ADCollisionDetectionModule = {}
 
+--- Anything slower than this counts as standing still. The same figure the stuck detection in
+--- SpecialDrivingModule uses, so the two agree on what "not moving" means.
+ADCollisionDetectionModule.MOVING_SPEED = 0.00028
+
 function ADCollisionDetectionModule:new(vehicle)
     local o = {}
     setmetatable(o, self)
@@ -124,7 +128,13 @@ function ADCollisionDetectionModule:detectAdTrafficOffRoute()
     for _, other in pairs(AutoDrive.getAllVehicles()) do
         if other ~= self.vehicle and other.ad ~= nil and other.ad.stateModule ~= nil
             and other.ad.stateModule:isActive() and other.ad.drivePathModule ~= nil
-            and not AutoDrive:checkIsConnected(self.vehicle, other) then
+            and not AutoDrive:checkIsConnected(self.vehicle, other)
+            -- Giving way means letting the other one through first, which is only worth anything if
+            -- it is going anywhere. A vehicle that is standing still will not clear the point we
+            -- both want, so waiting for it turns one stopped vehicle into two. It gets asked to
+            -- move instead - see AutoDrive:requestMakeWay - and our own sensors still stop us short
+            -- of it in the meantime.
+            and (other.lastSpeedReal == nil or other.lastSpeedReal > ADCollisionDetectionModule.MOVING_SPEED) then
 
             local otherPoints, otherDistances = self:getUpcomingPathPoints(other)
             if otherPoints ~= nil and #otherPoints >= 2 then
@@ -134,13 +144,7 @@ function ADCollisionDetectionModule:detectAdTrafficOffRoute()
                         if (dx * dx + dz * dz) < (AutoDrive.AD_TRAFFIC_CONFLICT_RANGE * AutoDrive.AD_TRAFFIC_CONFLICT_RANGE) then
                             -- both reach roughly this point; the one still further away gives way
                             if ownDistances[i] > otherDistances[j] then
-                                self.detectedOffRouteTraffic = true
-                                self.trafficVehicle = other
-                                if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_SENSORINFO) then
-                                    AutoDrive.debugMsg(self.vehicle, "CDM: detectAdTrafficOffRoute yielding to %s at %.1f m (it is %.1f m away)"
-                                    , tostring(other.getName and other:getName()), ownDistances[i], otherDistances[j])
-                                end
-                                return true
+                                return self:holdOffRouteYield(other, ownDistances[i], otherDistances[j])
                             end
                         end
                     end
@@ -149,7 +153,37 @@ function ADCollisionDetectionModule:detectAdTrafficOffRoute()
         end
     end
 
+    self.offRouteYieldStart = nil
     return false
+end
+
+--- Whether to keep giving way, given that we have found somebody with the right of way.
+---
+--- Giving way has to be able to end. The rule itself cannot deadlock - of two vehicles heading for
+--- the same point only the one further from it yields - but that says nothing about a vehicle stuck
+--- on something else entirely: a closed gate, a tree, a player parked across the track. Waiting for
+--- it would be indefinite, so the wait is capped. Afterwards we drive on and let the ordinary
+--- collision detection deal with whatever is actually there.
+function ADCollisionDetectionModule:holdOffRouteYield(other, ownDistance, otherDistance)
+    if self.offRouteYieldStart == nil then
+        self.offRouteYieldStart = g_time
+    end
+
+    if (g_time - self.offRouteYieldStart) > AutoDrive.AD_TRAFFIC_YIELD_TIMEOUT then
+        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_SENSORINFO) then
+            AutoDrive.debugMsg(self.vehicle, "CDM: detectAdTrafficOffRoute gave way to %s for %d ms without it clearing - driving on"
+            , tostring(other.getName and other:getName()), g_time - self.offRouteYieldStart)
+        end
+        return false
+    end
+
+    self.detectedOffRouteTraffic = true
+    self.trafficVehicle = other
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_SENSORINFO) then
+        AutoDrive.debugMsg(self.vehicle, "CDM: detectAdTrafficOffRoute yielding to %s at %.1f m (it is %.1f m away)"
+        , tostring(other.getName and other:getName()), ownDistance, otherDistance)
+    end
+    return true
 end
 
 -- The next stretch of a vehicle's path, as world points plus how far along the path each one is.

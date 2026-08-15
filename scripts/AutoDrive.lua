@@ -48,6 +48,33 @@ AutoDrive.SHARED_TARGET_RANGE = 30
 AutoDrive.AD_TRAFFIC_LOOKAHEAD = 25
 AutoDrive.AD_TRAFFIC_CONFLICT_RANGE = 8
 
+-- Giving way to an approaching vehicle means standing still, which only helps if the other one
+-- actually gets moving. When it does not - because it is stuck on something else - the wait has to
+-- end, or one blocked vehicle quietly turns into two.
+AutoDrive.AD_TRAFFIC_YIELD_TIMEOUT = 10000
+
+-- A vehicle waiting on the field can be asked to move out of somebody's way. How long such a
+-- request stays live, how far the asked vehicle moves, and how far away we look for someone to ask.
+AutoDrive.MAKE_WAY_VALID_TIME = 15000
+AutoDrive.MAKE_WAY_DISTANCE = 18
+AutoDrive.MAKE_WAY_ASK_RANGE = 35
+
+-- Joining the way point network. How far to look for an entry point, how close another vehicle has
+-- to be before that point counts as occupied, and how many alternatives to weigh up before giving
+-- up - each one costs a graph search. Way points sit roughly four metres apart on a recorded route,
+-- so the range covers a good stretch of a collection route running along the field border.
+AutoDrive.NETWORK_ENTRY_SEARCH_RANGE = 60
+AutoDrive.NETWORK_ENTRY_CLEARANCE = 9
+AutoDrive.NETWORK_ENTRY_MAX_TRIES = 8
+
+-- How far a parked vehicle keeps away from the way point network, and how many attempts it makes to
+-- get there. Many networks have a collection route running along the inside of the field border, so
+-- a driver that parks on the network blocks every full trailer leaving the field. The attempts are
+-- capped because on a densely recorded field the clearance may not be reachable at all, and a
+-- vehicle shuffling across the field looking for it would be worse than one parked slightly awkwardly.
+AutoDrive.WAITING_NETWORK_CLEARANCE = 10
+AutoDrive.WAITING_CLEARANCE_MAX_TRIES = 2
+
 AutoDrive.DC_NONE = 0
 AutoDrive.DC_VEHICLEINFO = 1
 AutoDrive.DC_COMBINEINFO = 2

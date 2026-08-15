@@ -146,6 +146,8 @@
 		<text name="gui_ad_notifications_tooltip"						text="Час показу сповіщення: не показувати / біля 2,5/5/10/25 сек/ Показувати, поки не закриє користувач." />
 		<text name="gui_ad_exitField"									text="Виїзд з поля" />
 		<text name="gui_ad_exitField_tooltip"							text="Спосіб виїзду з поля під час розвантаження." />
+		<text name="gui_ad_waitingPosition"							text="Keep waiting spot clear" />
+		<text name="gui_ad_waitingPosition_tooltip"							text="A waiting unloader parked on the way point network - a collection route along the field border, say - moves clear so it does not block full trailers." />
 		<text name="gui_ad_default"									text="звичайний" />
 		<text name="gui_ad_after_start"								text="за стартом" />
 		<text name="gui_ad_closest"									text="найближча точка" />
@@ -368,6 +370,7 @@
 		<text name="AD_task_stop_and_disable"							text="Зупиняється" />
 		<text name="AD_task_drive_to_unload_point"						text="Рухається до точки розвантаження" />
 		<text name="AD_task_wait_for_call"								text="Очікує виклику" />
+		<text name="AD_task_making_way"								text="Making way" />
 		<text name="AD_task_chasing_combine"							text="Слідує за комбайном" />
 		<text name="AD_task_wait_for_combine_pass_by"					text="Дає можливість комбайну пройти мимо" />
 		<text name="AD_task_catching_chase_side"						text="Сторона отримання" />

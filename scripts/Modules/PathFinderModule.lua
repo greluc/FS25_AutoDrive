@@ -235,12 +235,82 @@ function PathFinderModule:startPathPlanningToNetwork(destinationId)
             tostring(destinationId)
         )
     )
-    local closest = self.vehicle:getClosestWayPoint()
-    self:startPathPlanningToWayPoint(closest, destinationId)
+    local entryId, entryPath = self:selectNetworkEntryPoint(destinationId)
+    self:startPathPlanningToWayPoint(entryId, destinationId, entryPath)
     self.goingToNetwork = true
 end
 
-function PathFinderModule:startPathPlanningToWayPoint(wayPointId, destinationId)
+--- Which way point to join the network at.
+---
+--- This used to be the closest one, full stop. On a field that closest point is regularly on a
+--- collection route running along the inside of the field border - and during the first headland
+--- pass the harvester is driving on exactly that route. A full unloader waiting behind it then
+--- planned to a way point the harvester was standing on, found no path, and stayed put; the next
+--- unloader could not get to the harvester past the full one, and the field came to a halt.
+---
+--- So the closest point is now only the first candidate. One that another vehicle is standing on is
+--- skipped in favour of the next one along, which on a collection route is a few metres further and
+--- leads to the same place.
+---
+--- Returns the way point id and the network path from it, so the caller does not search the graph
+--- for the same path a second time.
+function PathFinderModule:selectNetworkEntryPoint(destinationId)
+    local closest = self.vehicle:getClosestWayPoint()
+    local x, _, z = getWorldTranslation(self.vehicle.components[1].node)
+
+    local candidates = {}
+    ADGraphManager:forEachWayPointNear({x = x, z = z}, AutoDrive.NETWORK_ENTRY_SEARCH_RANGE, function(wp)
+        -- a way point with no way in is an exit only and cannot be joined
+        if wp.incoming == nil or #wp.incoming > 0 then
+            candidates[#candidates + 1] = {wp = wp, distance = MathUtil.vector2Length(wp.x - x, wp.z - z)}
+        end
+    end)
+    table.sort(candidates, function(a, b) return a.distance < b.distance end)
+
+    -- Graph searches are the expensive part, so the cheap occupancy test runs first and the search
+    -- stops at the first candidate that survives it. When nothing is in the way - the normal case -
+    -- that is the closest point and exactly one search, the same as before.
+    local tried = 0
+    for i = 1, #candidates do
+        local wp = candidates[i].wp
+        if not self:isNetworkEntryOccupied(wp) then
+            local wayPoints = ADGraphManager:pathFromTo(wp.id, destinationId)
+            if wayPoints ~= nil and #wayPoints > 1 then
+                if wp.id ~= closest and AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+                    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO,
+                        "PFM selectNetworkEntryPoint: closest %s is occupied, joining at %s instead (%.1f m)",
+                        tostring(closest), tostring(wp.id), candidates[i].distance)
+                end
+                return wp.id, wayPoints
+            end
+            tried = tried + 1
+            if tried >= AutoDrive.NETWORK_ENTRY_MAX_TRIES then
+                break
+            end
+        end
+    end
+
+    -- Nothing usable found - fall back to what this did before rather than refusing to drive.
+    return closest, nil
+end
+
+--- Whether another vehicle is sitting on a way point. Deliberately a plain distance test against
+--- the vehicle origin: the alternative is a box overlap per candidate, and this runs while the
+--- driver is waiting to set off.
+function PathFinderModule:isNetworkEntryOccupied(wayPoint)
+    for _, other in pairs(AutoDrive.getAllVehicles()) do
+        if other ~= self.vehicle and other.components ~= nil and other.components[1] ~= nil
+            and not AutoDrive:checkIsConnected(self.vehicle, other) then
+            local ox, _, oz = getWorldTranslation(other.components[1].node)
+            if MathUtil.vector2Length(ox - wayPoint.x, oz - wayPoint.z) < AutoDrive.NETWORK_ENTRY_CLEARANCE then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function PathFinderModule:startPathPlanningToWayPoint(wayPointId, destinationId, precomputedPath)
     PathFinderModule.debugMsg(self.vehicle, "PathFinderModule:startPathPlanningToWayPoint destinationId %s"
         , tostring(destinationId)
     )
@@ -250,7 +320,9 @@ function PathFinderModule:startPathPlanningToWayPoint(wayPointId, destinationId)
         )
     )
     local targetNode = ADGraphManager:getWayPointById(wayPointId)
-    local wayPoints = ADGraphManager:pathFromTo(wayPointId, destinationId)
+    -- selectNetworkEntryPoint already searched the graph to establish this entry point is usable;
+    -- searching again for the same path would double the cost of every departure.
+    local wayPoints = precomputedPath or ADGraphManager:pathFromTo(wayPointId, destinationId)
     if wayPoints ~= nil and #wayPoints > 1 then
         local vecToNextPoint = {x = wayPoints[2].x - targetNode.x, z = wayPoints[2].z - targetNode.z}
         self:startPathPlanningTo(targetNode, vecToNextPoint)

@@ -93,13 +93,33 @@ function CombineUnloaderMode:monitorTasks(dt)
     end
     --We are stuck
     if self.failedPathFinder >= 5 or ((self.vehicle.ad.specialDrivingModule:shouldStopMotor() or self.vehicle.ad.specialDrivingModule.stoppedTimer:done()) and self.vehicle.ad.specialDrivingModule.isBlocked) then
-        CombineUnloaderMode.debugMsg(self.vehicle, "CombineUnloaderMode:monitorTasks() - detected stuck vehicle - try reversing out of it now")
-        self.vehicle.ad.specialDrivingModule:releaseVehicle()
-        self.vehicle.ad.taskModule:abortAllTasks()
-        self.activeTask = ReverseFromBadLocationTask:new(self.vehicle)
-        self.state = self.STATE_REVERSE_FROM_BAD_LOCATION
-        self.vehicle.ad.taskModule:addTask(self.activeTask)
-        self.failedPathFinder = 0
+        -- Before backing out: if what we are stuck behind is one of our own vehicles parked with
+        -- nothing to do, asking it to move is both cheaper and likelier to help than reversing and
+        -- approaching again from somewhere else - the parked one would still be there.
+        --
+        -- Once per stuck episode. A vehicle stuck on a tree must still reach the reverse manoeuvre,
+        -- and asking again every frame would keep resetting its own stuck detection forever.
+        if not self.askedNearbyVehiclesForWay and AutoDrive:askNearbyVehiclesToMakeWay(self.vehicle) > 0 then
+            CombineUnloaderMode.debugMsg(self.vehicle, "CombineUnloaderMode:monitorTasks() - stuck, asked parked vehicles to make way")
+            self.askedNearbyVehiclesForWay = true
+            -- restarts the stuck detection, giving the asked vehicles time to actually move
+            self.vehicle.ad.specialDrivingModule:releaseVehicle()
+            self.failedPathFinder = 0
+        else
+            CombineUnloaderMode.debugMsg(self.vehicle, "CombineUnloaderMode:monitorTasks() - detected stuck vehicle - try reversing out of it now")
+            self.vehicle.ad.specialDrivingModule:releaseVehicle()
+            self.vehicle.ad.taskModule:abortAllTasks()
+            self.activeTask = ReverseFromBadLocationTask:new(self.vehicle)
+            self.state = self.STATE_REVERSE_FROM_BAD_LOCATION
+            self.vehicle.ad.taskModule:addTask(self.activeTask)
+            self.failedPathFinder = 0
+            self.askedNearbyVehiclesForWay = false
+        end
+    end
+
+    -- Moving again means the episode is over and the next one may ask afresh.
+    if self.vehicle.lastSpeedReal > 0.0013 then
+        self.askedNearbyVehiclesForWay = false
     end
 
     if self.vehicle.lastSpeedReal > 0.0013 then

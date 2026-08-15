@@ -180,6 +180,28 @@ function setTranslation(node, x, y, z)
     MockEngine.nodePositions[node] = { x = x, y = y, z = z }
 end
 
+--- Every node is axis aligned and faces +Z, so a local coordinate is the world one minus the node
+--- origin. Rotation is deliberately not modelled: a test that needs a turned vehicle would be
+--- asserting against this mock's trigonometry rather than against AutoDrive, and the geometry that
+--- matters here - in front of / behind / how far - survives the simplification intact.
+function localToWorld(node, x, y, z)
+    local p = MockEngine.nodePositions[node] or { x = 0, y = 0, z = 0 }
+    return p.x + x, p.y + y, p.z + z
+end
+
+function worldToLocal(node, x, y, z)
+    local p = MockEngine.nodePositions[node] or { x = 0, y = 0, z = 0 }
+    return x - p.x, y - p.y, z - p.z
+end
+
+function localToLocal(fromNode, toNode, x, y, z)
+    return worldToLocal(toNode, localToWorld(fromNode, x, y, z))
+end
+
+function localDirectionToWorld(_, x, y, z) return x, y, z end
+function worldDirectionToLocal(_, x, y, z) return x, y, z end
+function getTerrainNormalAtWorldPos() return 0, 1, 0 end
+
 function getTerrainHeightAtWorldPos() return MockEngine.terrainHeight end
 function createTransformGroup(name) return 'node:' .. tostring(name) end
 function link() end

@@ -526,6 +526,23 @@ AutoDrive.settings.exitField = {
     isVehicleSpecific = true
 }
 
+-- Where an unloader with nothing to do parks itself.
+--
+-- It used to simply stop wherever it happened to be, which on a field is regularly on a collection
+-- route running along the inside of the field border - and a vehicle parked there blocks every full
+-- trailer trying to leave. With this on, a vehicle that comes to rest on the network moves clear of
+-- it before parking.
+AutoDrive.settings.waitingPosition = {
+    values = {false, true},
+    texts = {"gui_ad_no", "gui_ad_yes"},
+    default = 2,
+    current = 2,
+    text = "gui_ad_waitingPosition",
+    tooltip = "gui_ad_waitingPosition_tooltip",
+    translate = true,
+    isVehicleSpecific = true
+}
+
 AutoDrive.settings.showHelp = {
     values = {false, true},
     texts = {"gui_ad_no", "gui_ad_yes"},

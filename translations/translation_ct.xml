@@ -146,6 +146,8 @@
 		<text name="gui_ad_notifications_tooltip"						text="通知的顯示時間：無顯示/大約。 2,5s / 5s / 10s / 25s / 顯示直到用戶關閉" />
 		<text name="gui_ad_exitField"									text="退出田地" />
 		<text name="gui_ad_exitField_tooltip"							text="卸載車輛的離開田地行動方式" />
+		<text name="gui_ad_waitingPosition"							text="Keep waiting spot clear" />
+		<text name="gui_ad_waitingPosition_tooltip"							text="A waiting unloader parked on the way point network - a collection route along the field border, say - moves clear so it does not block full trailers." />
 		<text name="gui_ad_default"									text="默認" />
 		<text name="gui_ad_after_start"								text="後面開始" />
 		<text name="gui_ad_closest"									text="最近點" />
@@ -368,6 +370,7 @@
 		<text name="AD_task_stop_and_disable"							text="停止" />
 		<text name="AD_task_drive_to_unload_point"						text="前往卸載點" />
 		<text name="AD_task_wait_for_call"								text="等待呼叫" />
+		<text name="AD_task_making_way"								text="Making way" />
 		<text name="AD_task_chasing_combine"							text="接近收割機" />
 		<text name="AD_task_wait_for_combine_pass_by"					text="讓收割機通過" />
 		<text name="AD_task_catching_chase_side"						text="查找位置" />

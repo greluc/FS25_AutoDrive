@@ -146,6 +146,8 @@
 		<text name="gui_ad_notifications_tooltip"						text="Tempo de exibição para notificações: sem exibição/ ca. 2,5s / 5s / 10s / 25s / Show until user close" />
 		<text name="gui_ad_exitField"									text="Saída de campo" />
 		<text name="gui_ad_exitField_tooltip"							text="Estratégia de saída de campo para descarregador" />
+		<text name="gui_ad_waitingPosition"							text="Keep waiting spot clear" />
+		<text name="gui_ad_waitingPosition_tooltip"							text="A waiting unloader parked on the way point network - a collection route along the field border, say - moves clear so it does not block full trailers." />
 		<text name="gui_ad_default"									text="Padrão" />
 		<text name="gui_ad_after_start"								text="Atrás do início" />
 		<text name="gui_ad_closest"									text="Ponto mais próximo" />
@@ -368,6 +370,7 @@
 		<text name="AD_task_stop_and_disable"							text="Parando" />
 		<text name="AD_task_drive_to_unload_point"						text="Dirigir até o ponto de descarga" />
 		<text name="AD_task_wait_for_call"								text="Aguardando chamada" />
+		<text name="AD_task_making_way"								text="Making way" />
 		<text name="AD_task_chasing_combine"							text="Seguindo colheitadeira" />
 		<text name="AD_task_wait_for_combine_pass_by"					text="Deixar colheitadeira passar" />
 		<text name="AD_task_catching_chase_side"						text="Lado de captura" />

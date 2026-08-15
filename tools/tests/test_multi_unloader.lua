@@ -119,6 +119,8 @@ local function unloaderOnPath(id, x, z, points, onNetwork)
         getWayPoints = function() return points, 1 end,
         isOnRoadNetwork = function() return onNetwork == true end,
     }
+    -- moving, because giving way to somebody who is standing still is not a thing any more
+    v.lastSpeedReal = 0.002
     return v
 end
 
@@ -135,6 +137,10 @@ end
 
 function TestOffRouteLookAhead:setUp()
     TestSetup.reset()
+    g_time = 10000
+    -- luaunit shares the class table between tests, so a scene left over from the previous
+    -- one would silently become part of this one
+    self.vehicles = nil
     AutoDrive.getAllVehicles = function() return self.vehicles or {} end
     AutoDrive.checkIsConnected = function() return false end
 end
@@ -176,6 +182,60 @@ function TestOffRouteLookAhead:testTheCloserVehicleKeepsGoing()
 
     lu.assertFalse(detectsTrafficFor(near),
         'only one of the two may stop, otherwise nothing moves again')
+end
+
+--- Giving way means letting the other one through first, which only helps if it is going
+--- anywhere. A vehicle that is standing still will not clear the point we both want, so waiting for
+--- it would turn one stopped vehicle into two - it gets asked to move out of the way instead.
+function TestOffRouteLookAhead:testWeDoNotGiveWayToAStandingVehicle()
+    local near, far = convergingPair()
+    near.lastSpeedReal = 0
+    self.vehicles = { near, far }
+
+    lu.assertFalse(detectsTrafficFor(far),
+        'waiting for a vehicle that is not moving would leave both of them standing')
+end
+
+--- The rule itself cannot deadlock: of two vehicles heading for one point only the further one
+--- yields. But that says nothing about a vehicle stuck on something else - a gate, a tree, a parked
+--- player - so the wait is capped and we drive on afterwards.
+function TestOffRouteLookAhead:testTheYieldEndsAfterTheTimeout()
+    local near, far = convergingPair()
+    self.vehicles = { near, far }
+
+    local yields, module = detectsTrafficFor(far)
+    lu.assertTrue(yields)
+
+    g_time = g_time + AutoDrive.AD_TRAFFIC_YIELD_TIMEOUT + 1
+    lu.assertFalse(module:detectAdTrafficOffRoute(),
+        'giving way has to end, or a vehicle stuck on something else blocks us indefinitely')
+end
+
+function TestOffRouteLookAhead:testTheYieldHoldsUntilTheTimeout()
+    local near, far = convergingPair()
+    self.vehicles = { near, far }
+
+    local _, module = detectsTrafficFor(far)
+
+    g_time = g_time + AutoDrive.AD_TRAFFIC_YIELD_TIMEOUT - 1
+    lu.assertTrue(module:detectAdTrafficOffRoute())
+end
+
+--- The clock belongs to one conflict, not to the vehicle. Once the paths no longer meet, the next
+--- encounter gets the full wait again rather than inheriting a spent one.
+function TestOffRouteLookAhead:testAClearedConflictRestartsTheClock()
+    local near, far = convergingPair()
+    self.vehicles = { near, far }
+    local _, module = detectsTrafficFor(far)
+
+    g_time = g_time + AutoDrive.AD_TRAFFIC_YIELD_TIMEOUT - 1
+    self.vehicles = { far }
+    lu.assertFalse(module:detectAdTrafficOffRoute(), 'test setup: alone there is nothing to yield to')
+
+    self.vehicles = { near, far }
+    g_time = g_time + 2
+    lu.assertTrue(module:detectAdTrafficOffRoute(),
+        'a fresh conflict must get the full wait, not the remains of the previous one')
 end
 
 function TestOffRouteLookAhead:testPathsThatDoNotMeetAreIgnored()
