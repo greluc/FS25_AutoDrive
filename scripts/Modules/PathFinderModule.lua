@@ -242,15 +242,25 @@ end
 
 --- Which way point to join the network at.
 ---
---- This used to be the closest one, full stop. On a field that closest point is regularly on a
---- collection route running along the inside of the field border - and during the first headland
---- pass the harvester is driving on exactly that route. A full unloader waiting behind it then
---- planned to a way point the harvester was standing on, found no path, and stayed put; the next
---- unloader could not get to the harvester past the full one, and the field came to a halt.
+--- This used to be the closest one, full stop.
 ---
---- So the closest point is now only the first candidate. One that another vehicle is standing on is
---- skipped in favour of the next one along, which on a collection route is a few metres further and
---- leads to the same place.
+--- The case that breaks: an unloader has been driving in the first headland right behind the
+--- harvester to be filled, and is now full and wants to leave. Its route out is the collection route
+--- along the field border, which in the first headland is the very lane both of them are standing
+--- in - and the harvester is directly in front of it, between it and everywhere that route goes.
+--- The unloader stayed put, the next unloader could not get past it to the harvester, and the field
+--- came to a halt.
+---
+--- Two things follow, and the second is the one that actually matters here:
+---
+---  * the way point the unloader joins at has to be free, and
+---  * the route onward from it has to be free too. The harvester is rarely standing on the closest
+---    way point - with points a few metres apart it is on the one after next, or later still - so
+---    checking only the joining point finds it clear and then routes straight into the harvester.
+---
+--- Both are checked, so the candidate that wins is one whose onward route is clear: on a collection
+--- route that means joining it past the harvester. Getting there is the path search's problem, and
+--- it can solve it, because a vehicle is an obstacle its grid knows how to go around.
 ---
 --- Returns the way point id and the network path from it, so the caller does not search the graph
 --- for the same path a second time.
@@ -275,10 +285,10 @@ function PathFinderModule:selectNetworkEntryPoint(destinationId)
         local wp = candidates[i].wp
         if not self:isNetworkEntryOccupied(wp) then
             local wayPoints = ADGraphManager:pathFromTo(wp.id, destinationId)
-            if wayPoints ~= nil and #wayPoints > 1 then
+            if wayPoints ~= nil and #wayPoints > 1 and not self:isNetworkPathBlocked(wayPoints) then
                 if wp.id ~= closest and AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
                     AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO,
-                        "PFM selectNetworkEntryPoint: closest %s is occupied, joining at %s instead (%.1f m)",
+                        "PFM selectNetworkEntryPoint: closest %s is no good, joining at %s instead (%.1f m)",
                         tostring(closest), tostring(wp.id), candidates[i].distance)
                 end
                 return wp.id, wayPoints
@@ -294,15 +304,51 @@ function PathFinderModule:selectNetworkEntryPoint(destinationId)
     return closest, nil
 end
 
---- Whether another vehicle is sitting on a way point. Deliberately a plain distance test against
---- the vehicle origin: the alternative is a box overlap per candidate, and this runs while the
---- driver is waiting to set off.
+--- Whether the first stretch of a network route runs into a vehicle.
+---
+--- The joining point being free says nothing about the lane beyond it. A harvester a few metres
+--- ahead sits on the second or third way point, not the first, and a route that joins in front of it
+--- and drives straight at it is no better than one that could not be planned at all.
+---
+--- Only the first stretch: further out the situation will have changed by the time the vehicle gets
+--- there, and treating a distant vehicle as a permanent obstacle would rule out routes that are
+--- perfectly fine.
+function PathFinderModule:isNetworkPathBlocked(wayPoints)
+    local travelled = 0
+    for i = 1, #wayPoints do
+        local wp = wayPoints[i]
+        if wp == nil then
+            break
+        end
+        if i > 1 then
+            travelled = travelled + MathUtil.vector2Length(wp.x - wayPoints[i - 1].x, wp.z - wayPoints[i - 1].z)
+            if travelled > AutoDrive.NETWORK_ENTRY_PATH_CHECK then
+                break
+            end
+        end
+        if self:isNetworkEntryOccupied(wp) then
+            return true
+        end
+    end
+    return false
+end
+
+--- Whether another vehicle is sitting on a way point.
+---
+--- A plain distance test rather than a box overlap: this runs for several candidates and several
+--- points each while the driver is waiting to set off. What it does take into account is how long
+--- the other vehicle is, because the thing this exists to notice - a harvester with a header on -
+--- reaches a long way past the point its own origin sits at.
 function PathFinderModule:isNetworkEntryOccupied(wayPoint)
     for _, other in pairs(AutoDrive.getAllVehicles()) do
         if other ~= self.vehicle and other.components ~= nil and other.components[1] ~= nil
             and not AutoDrive:checkIsConnected(self.vehicle, other) then
             local ox, _, oz = getWorldTranslation(other.components[1].node)
-            if MathUtil.vector2Length(ox - wayPoint.x, oz - wayPoint.z) < AutoDrive.NETWORK_ENTRY_CLEARANCE then
+            local reach = AutoDrive.NETWORK_ENTRY_CLEARANCE
+            if other.size ~= nil and other.size.length ~= nil then
+                reach = reach + (other.size.length / 2)
+            end
+            if MathUtil.vector2Length(ox - wayPoint.x, oz - wayPoint.z) < reach then
                 return true
             end
         end

@@ -67,6 +67,12 @@ AutoDrive.NETWORK_ENTRY_SEARCH_RANGE = 60
 AutoDrive.NETWORK_ENTRY_CLEARANCE = 9
 AutoDrive.NETWORK_ENTRY_MAX_TRIES = 8
 
+-- How far along the route leading away from a candidate entry point to check for vehicles. A
+-- harvester a few metres ahead does not stand on the way point being joined but on one after it, so
+-- a route can be planned into it while the joining point itself looks perfectly clear. Only the
+-- first stretch is checked: further out the situation has changed by the time anyone arrives.
+AutoDrive.NETWORK_ENTRY_PATH_CHECK = 40
+
 -- How far a parked vehicle keeps away from the way point network, and how many attempts it makes to
 -- get there. Many networks have a collection route running along the inside of the field border, so
 -- a driver that parks on the network blocks every full trailer leaving the field. The attempts are
