@@ -100,12 +100,40 @@ function ADDrawingManager.initObject(id)
     return itemId
 end
 
+-- Per frame cache for the two settings every draw task reads.
+--
+-- addLineTask / addArrowTask / addSphereTask and friends each called AutoDrive.getSetting twice.
+-- The way point draw loop in Specialization.lua issues 43 draw tasks per way point, so with a few
+-- hundred points in draw distance that was several thousand setting lookups per frame - and
+-- getSetting is not a pure read: when the stored index is out of range it WRITES the setting back
+-- (Settings.lua), so this was also a mutating call in the hot draw path.
+--
+-- Keyed on g_updateLoopIndex so it refreshes exactly once per frame without needing a hook, and
+-- a settings change still takes effect on the very next frame.
+function ADDrawingManager:refreshFrameSettings()
+    if self.settingsFrame ~= g_updateLoopIndex then
+        self.settingsFrame = g_updateLoopIndex
+        self.cachedScaleLines = AutoDrive.getSetting("scaleLines") or 1
+        self.cachedLineHeight = AutoDrive.getSetting("lineHeight") or 0
+    end
+end
+
+function ADDrawingManager:getScaleLines()
+    self:refreshFrameSettings()
+    return self.cachedScaleLines
+end
+
+function ADDrawingManager:getYOffset()
+    self:refreshFrameSettings()
+    return AutoDrive.drawHeight + self.cachedLineHeight
+end
+
 function ADDrawingManager:addLineTask(sx, sy, sz, ex, ey, ez, scale, r, g, b)
     -- storing task
     -- local hash = 0
     -- table.insert(self.lines.tasks, {sx = sx, sy = sy, sz = sz, ex = ex, ey = ey, ez = ez, scale = scale, r = r, g = g, b = b, hash = hash})
-    local scaleLine = (AutoDrive.getSetting("scaleLines") or 1) * (scale or 1)
-    self.yOffset = AutoDrive.drawHeight + AutoDrive.getSetting("lineHeight")
+    local scaleLine = self:getScaleLines() * (scale or 1)
+    self.yOffset = self:getYOffset()
     self.lines.currentTask = self.lines.currentTask + 1
     if self.lines.tasks[self.lines.currentTask] == nil then
         -- add new task
@@ -142,8 +170,8 @@ end
 
 function ADDrawingManager:addArrowTask(sx, sy, sz, ex, ey, ez, scale, position, r, g, b)
     -- storing task
-    local scaleLine = (AutoDrive.getSetting("scaleLines") or 1) * (scale or 1)
-    self.yOffset = AutoDrive.drawHeight + AutoDrive.getSetting("lineHeight")
+    local scaleLine = self:getScaleLines() * (scale or 1)
+    self.yOffset = self:getYOffset()
     -- local hash = 0
     -- table.insert(self.arrows.tasks, {sx = sx, sy = sy, sz = sz, ex = ex, ey = ey, ez = ez, scale = scale, r = r, g = g, b = b, position = position, hash = hash})
     self.arrows.currentTask = self.arrows.currentTask + 1
@@ -187,7 +215,7 @@ function ADDrawingManager:addSmallSphereTask(x, y, z, r, g, b)
     -- local hash = 0
     -- table.insert(self.sSphere.tasks, {x = x, y = y, z = z, r = r, g = g, b = b, hash = hash})
     self.sSphere.currentTask = self.sSphere.currentTask + 1
-    self.yOffset = AutoDrive.drawHeight + AutoDrive.getSetting("lineHeight")
+    self.yOffset = self:getYOffset()
     if self.sSphere.tasks[self.sSphere.currentTask] == nil then
         -- add new task
         table.insert(self.sSphere.tasks, {x = x, y = y + self.yOffset, z = z, r = r, g = g, b = b, taskChanged = true})
@@ -218,7 +246,7 @@ function ADDrawingManager:addMarkerTask(x, y, z)
     -- local hash = 0
     -- table.insert(self.markers.tasks, {x = x, y = y, z = z, hash = hash})
     self.markers.currentTask = self.markers.currentTask + 1
-    self.yOffset = AutoDrive.drawHeight + AutoDrive.getSetting("lineHeight")
+    self.yOffset = self:getYOffset()
     if self.markers.tasks[self.markers.currentTask] == nil then
         -- add new task
         table.insert(self.markers.tasks, {x = x, y = y + self.yOffset, z = z, taskChanged = true})
@@ -242,7 +270,7 @@ function ADDrawingManager:addCrossTask(x, y, z, scale)
     -- storing task
     -- local hash = 0
     -- table.insert(self.cross.tasks, {x = x, y = y, z = z, scale = scale, hash = hash})
-    local scaleLine = (AutoDrive.getSetting("scaleLines") or 1) * (scale or 1)
+    local scaleLine = self:getScaleLines() * (scale or 1)
     self.cross.currentTask = self.cross.currentTask + 1
     if self.cross.tasks[self.cross.currentTask] == nil then
         -- add new task
@@ -270,7 +298,7 @@ function ADDrawingManager:addSphereTask(x, y, z, scale, r, g, b, a)
     -- local hash = 0
     -- table.insert(self.sphere.tasks, {x = x, y = y, z = z, r = r, g = g, b = b, a = a, scale = scale, hash = hash})
     scale = scale or 1
-    self.yOffset = AutoDrive.drawHeight + AutoDrive.getSetting("lineHeight")
+    self.yOffset = self:getYOffset()
     a = a or 0
     self.sphere.currentTask = self.sphere.currentTask + 1
     if self.sphere.tasks[self.sphere.currentTask] == nil then

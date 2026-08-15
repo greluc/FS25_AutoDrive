@@ -94,7 +94,7 @@ function ADMessagesManager:addMessage(vehicle, messageType, text, duration)
     end
     exists =
         exists or
-        table.f_contains(
+        ADTable.f_contains(
             self.messages:GetItems(),
             function(i)
                 return i.messageType == messageType and i.text == text
@@ -115,7 +115,7 @@ function ADMessagesManager:addNotification(vehicle, messageType, text, duration)
         end
         exists =
             exists or
-            table.f_contains(
+            ADTable.f_contains(
                 self.notifications:GetItems(),
                 function(i)
                     return i.messageType == messageType and i.text == text and i.vehicle == vehicle

@@ -117,6 +117,19 @@ function ADTaskModule:update(dt)
     end
 end
 
+-- The harvester and follower references live on the unload mode, not on the task module. Clearing
+-- them on the module left the mode pointing at a combine the vehicle has just walked away from.
+function ADTaskModule:clearCombineAssignment()
+    local unloaderMode = nil
+    if self.vehicle.ad.modes ~= nil then
+        unloaderMode = self.vehicle.ad.modes[AutoDrive.MODE_UNLOAD]
+    end
+    if unloaderMode ~= nil then
+        unloaderMode.followingUnloader = nil
+        unloaderMode.combine = nil
+    end
+end
+
 function ADTaskModule:hasToRefuel()
     local ret = false
     if AutoDrive.getSetting("autoRefuel", self.vehicle) or self.vehicle.ad.onRouteToRefuel then
@@ -134,8 +147,7 @@ function ADTaskModule:RefuelIfNeeded()
         local refuelDestinationMarkerID = ADTriggerManager.getClosestRefuelDestination(self.vehicle, self.vehicle.ad.onRouteToRefuel)
         if refuelDestinationMarkerID ~= nil then
             ADHarvestManager:unregisterAsUnloader(self.vehicle)
-            self.followingUnloader = nil
-            self.combine = nil
+            self:clearCombineAssignment()
             self.vehicle.ad.onRouteToRefuel = true
             self.activeTask = RefuelTask:new(self.vehicle, ADGraphManager:getMapMarkerById(refuelDestinationMarkerID).id)
         else
@@ -168,8 +180,7 @@ function ADTaskModule:RepairIfNeeded()
         local repairDestinationMarkerNodeID = AutoDrive:getClosestRepairTrigger(self.vehicle)
         if repairDestinationMarkerNodeID ~= nil then
             ADHarvestManager:unregisterAsUnloader(self.vehicle)
-            self.followingUnloader = nil
-            self.combine = nil
+            self:clearCombineAssignment()
             self.activeTask = RepairTask:new(self.vehicle, repairDestinationMarkerNodeID.marker)
         else
             --self.vehicle.ad.isStoppingWithError = true

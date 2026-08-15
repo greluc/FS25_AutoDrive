@@ -191,7 +191,9 @@ function ADTrailerModule:update(dt)
 
     -- self:handleTrailerReversing()
     self.lastFillLevel = self.fillLevel
-    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:update end lastFillLevel %s", tostring(self.lastFillLevel))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAILERINFO) then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:update end lastFillLevel %s", tostring(self.lastFillLevel))
+    end
 end
 
 function ADTrailerModule:handleTrailerCovers()
@@ -211,7 +213,9 @@ function ADTrailerModule:updateStates()
         self.lastFillLevel = self.fillLevel
     end
     self.blocked = self.lastFillLevel <= self.fillLevel
-    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:updateStates start self.isLoading %s self.isUnloading %s self.lastFillLevel %.1f self.fillLevel %.1f self.blocked %s", tostring(self.isLoading), tostring(self.isUnloading), self.lastFillLevel, self.fillLevel, tostring(self.blocked))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAILERINFO) then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:updateStates start self.isLoading %s self.isUnloading %s self.lastFillLevel %.1f self.fillLevel %.1f self.blocked %s", tostring(self.isLoading), tostring(self.isUnloading), self.lastFillLevel, self.fillLevel, tostring(self.blocked))
+    end
     for _, trailer in pairs(self.trailers) do
         local tipState = Trailer.TIPSTATE_CLOSED
         if trailer.getTipState ~= nil then
@@ -223,7 +227,9 @@ function ADTrailerModule:updateStates()
     if not self.unloadRotate then
         self.lastUnloadRotateTrigger = nil
     end
-    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:updateStates end self.isLoading %s self.isUnloading %s self.fillUnits %s self.blocked %s", tostring(self.isLoading), tostring(self.isUnloading), tostring(self.fillUnits), tostring(self.blocked))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAILERINFO) then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:updateStates end self.isLoading %s self.isUnloading %s self.fillUnits %s self.blocked %s", tostring(self.isLoading), tostring(self.isUnloading), tostring(self.fillUnits), tostring(self.blocked))
+    end
 end
 
 
@@ -285,7 +291,9 @@ end
 function ADTrailerModule:updateLoad(dt)
     self.count =  self.count + dt
 
-    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:updateLoad start self.trigger %s", tostring(self.trigger))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAILERINFO) then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:updateLoad start self.trigger %s", tostring(self.trigger))
+    end
     local fillUnitFull = AutoDrive.getIsFillUnitFull(self.isLoadingToTrailer, self.isLoadingToFillUnitIndex)
     local fillFound = false
     local checkForContinue = false
@@ -293,7 +301,9 @@ function ADTrailerModule:updateLoad(dt)
 
     -- update trigger timer
     if self.trigger ~= nil and self.trigger.stoppedTimer ~= nil then
-        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:updateLoad update trigger timer self.trigger.isLoading %s", tostring(self.trigger.isLoading))
+        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAILERINFO) then
+            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:updateLoad update trigger timer self.trigger.isLoading %s", tostring(self.trigger.isLoading))
+        end
         self.trigger.stoppedTimer:timer(not self.trigger.isLoading,300,dt)
         if self.trigger.isLoading then
             -- if still loading reset retry timer
@@ -308,18 +318,24 @@ function ADTrailerModule:updateLoad(dt)
 
     if self.trigger == nil and not fillUnitFull then
 
-        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:updateLoad search for load self.trigger %s", tostring(self.trigger))
+        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAILERINFO) then
+            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:updateLoad search for load self.trigger %s", tostring(self.trigger))
+        end
 
         -- look for triggers with requested fill type
         local loadPairs = AutoDrive.getTriggerAndTrailerPairs(self.vehicle, dt)
         local index = 0
         for _, pair in pairs(loadPairs) do
             index = index + 1
-            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:updateLoad pair.hasFill %s", tostring(pair.hasFill))
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAILERINFO) then
+                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:updateLoad pair.hasFill %s", tostring(pair.hasFill))
+            end
 
             if pair.hasFill then
                 -- initiate load only if fill is available
-                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:updateLoad Try loading at trigger now pair.fillUnitIndex %s", tostring(pair.fillUnitIndex))
+                if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAILERINFO) then
+                    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:updateLoad Try loading at trigger now pair.fillUnitIndex %s", tostring(pair.fillUnitIndex))
+                end
                 fillFound = true
                 -- start loading
 
@@ -374,7 +390,9 @@ function ADTrailerModule:updateLoad(dt)
             end
         end
     end
-    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:updateLoad check for load done self.trigger %s", tostring(self.trigger))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAILERINFO) then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:updateLoad check for load done self.trigger %s", tostring(self.trigger))
+    end
     if self.trigger ~= nil and self.trigger.stoppedTimer ~= nil and self.trigger.stoppedTimer:done() then
         -- load from trigger
         AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:updateLoad loading finished - check fill level...")
@@ -402,7 +420,9 @@ function ADTrailerModule:updateLoad(dt)
             self.trigger = nil
             self.isLoadingToFillUnitIndex = 0
             self.isLoadingToTrailer = nil
-            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:updateLoad fillUnitFull %s", tostring(fillUnitFull))
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAILERINFO) then
+                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:updateLoad fillUnitFull %s", tostring(fillUnitFull))
+            end
             return
         else
             checkForContinue = true
@@ -466,7 +486,9 @@ function ADTrailerModule:updateUnload(dt)
         -- Check if we can unload at some trigger
             for _, trailer in pairs(self.trailers) do
                 local unloadTrigger = self:lookForPossibleUnloadTrigger(trailer)
-                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:updateUnload not self.isUnloading unloadTrigger %s", tostring(unloadTrigger))
+                if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAILERINFO) then
+                    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:updateUnload not self.isUnloading unloadTrigger %s", tostring(unloadTrigger))
+                end
                 if unloadTrigger ~= nil then
                     if trailer.unloadDelayTimer == nil then
                         trailer.unloadDelayTimer = AutoDriveTON:new()
@@ -494,7 +516,9 @@ function ADTrailerModule:updateUnload(dt)
         self.unloadDelayTimer:timer(self.isUnloading, 250, dt)
         self.stuckInBunkerTimer:timer((self.vehicle.lastSpeedReal * 3600 < 1), 500, dt)
         if self.unloadDelayTimer:done() then
-            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:updateUnload Monitor unloading unloadDelayTimer:done areAllTrailersClosed %s", tostring(allTrailersClosed))
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAILERINFO) then
+                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:updateUnload Monitor unloading unloadDelayTimer:done areAllTrailersClosed %s", tostring(allTrailersClosed))
+            end
             self.unloadRetryTimer:timer(self.isUnloading, ADTrailerModule.UNLOAD_RETRY_TIME, dt)
 
             if allTrailersClosed and (fillUnitEmpty or self.unloadRotate) then
@@ -531,7 +555,9 @@ function ADTrailerModule:updateUnload(dt)
 end
 
 function ADTrailerModule:tryLoadingAtTrigger(trailer, trigger, fillUnitIndex)
-    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:tryLoadingAtTrigger start self.count %s", tostring(self.count))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAILERINFO) then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:tryLoadingAtTrigger start self.count %s", tostring(self.count))
+    end
     self.count = 0
 
     AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:tryLoadingAtTrigger start")
@@ -541,7 +567,9 @@ function ADTrailerModule:tryLoadingAtTrigger(trailer, trigger, fillUnitIndex)
     if not isFillUnitFull and (not trigger.isLoading) then
         -- activate load trigger
         local trailerIsInRange = AutoDrive.trailerIsInTriggerList(trailer, trigger, fillUnitIndex)
-        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:tryLoadingAtTrigger trailerIsInRange %s", tostring(trailerIsInRange))
+        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAILERINFO) then
+            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:tryLoadingAtTrigger trailerIsInRange %s", tostring(trailerIsInRange))
+        end
         if trailerIsInRange then --and not self.isLoading then
             if #fillUnits > 1 then
                 --print("startLoadingCorrectFillTypeAtTrigger now - " .. fillUnitIndex)
@@ -566,7 +594,9 @@ function ADTrailerModule:startLoadingCorrectFillTypeAtTrigger(trailer, trigger, 
             AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:startLoadingCorrectFillTypeAtTrigger fillTypeName %s", fillTypeName)
             local fillTypeIndex = g_fillTypeManager:getFillTypeIndexByName(fillTypeName)
             -- self.vehicle.ad.stateModule:setFillType(fillTypeIndex)
-            if AutoDrive.fillTypesMatch(self.vehicle, trigger, trailer, nil, fillUnitIndex) then
+            -- the candidate has to be passed as allowedFillTypes, otherwise this repeats the very
+            -- check that already failed above and the fallback can never fire
+            if AutoDrive.fillTypesMatch(self.vehicle, trigger, trailer, {fillTypeIndex}, fillUnitIndex) then
                 self:startLoadingAtTrigger(trigger, fillTypeIndex, fillUnitIndex, trailer)
                 -- self.vehicle.ad.stateModule:setFillType(storedFillType)
                 AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:startLoadingCorrectFillTypeAtTrigger found fillType 'SEEDS','FERTILIZER','LIQUIDFERTILIZER' - return")
@@ -582,11 +612,15 @@ function ADTrailerModule:startLoadingCorrectFillTypeAtTrigger(trailer, trigger, 
 end
 
 function ADTrailerModule:startLoadingAtTrigger(trigger, fillType, fillUnitIndex, trailer)
-    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:startLoadingAtTrigger start trigger %s fillUnitIndex %s", tostring(trigger), tostring(fillUnitIndex))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAILERINFO) then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:startLoadingAtTrigger start trigger %s fillUnitIndex %s", tostring(trigger), tostring(fillUnitIndex))
+    end
     trigger.autoStart = true
     trigger.selectedFillType = fillType
     trigger:onFillTypeSelection(fillType)
-    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:startLoadingAtTrigger trigger.isLoading %s", tostring(trigger.isLoading))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAILERINFO) then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:startLoadingAtTrigger trigger.isLoading %s", tostring(trigger.isLoading))
+    end
     if trigger.isLoading then
         trigger.selectedFillType = fillType
         g_effectManager:setEffectTypeInfo(trigger.effects, trigger.selectedFillType)
@@ -599,7 +633,9 @@ function ADTrailerModule:startLoadingAtTrigger(trigger, fillType, fillUnitIndex,
         self.isLoadingToFillUnitIndex = fillUnitIndex
         self.isLoadingToTrailer = trailer
         self.countLoading = self.countLoading + 1
-        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:startLoadingAtTrigger self.trigger %s", tostring(self.trigger))
+        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAILERINFO) then
+            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:startLoadingAtTrigger self.trigger %s", tostring(self.trigger))
+        end
     end
 
     AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "ADTrailerModule:startLoadingAtTrigger end")
@@ -656,7 +692,9 @@ function ADTrailerModule:startUnloadingIntoTrigger(trailer, trigger)
 
     if trigger.bunkerSiloArea == nil then
         -- tip trigger
-        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "Start unloading - fillUnitIndex: %s", tostring(trailer:getCurrentDischargeNode().fillUnitIndex))
+        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAILERINFO) then
+            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "Start unloading - fillUnitIndex: %s", tostring(trailer:getCurrentDischargeNode().fillUnitIndex))
+        end
         trailer:setDischargeState(Dischargeable.DISCHARGE_STATE_OBJECT)
 
         if self.unloadRotate then
@@ -671,7 +709,9 @@ function ADTrailerModule:startUnloadingIntoTrigger(trailer, trigger)
         -- bunker silo
         if (not self.vehicle.ad.drivePathModule:getIsReversing() and not (self.vehicle.lastSpeedReal * 3600 < 1)) -- forward through bunker silo
             or (self.vehicle.ad.drivePathModule:getIsReversing() and self.vehicle:getLastSpeed() < 1) then -- reverse into bunker silo
-            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "Start unloading into bunkersilo - fillUnitIndex: %s", tostring(trailer:getCurrentDischargeNode().fillUnitIndex))
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAILERINFO) then
+                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAILERINFO, "Start unloading into bunkersilo - fillUnitIndex: %s", tostring(trailer:getCurrentDischargeNode().fillUnitIndex))
+            end
             trailer:setDischargeState(Dischargeable.DISCHARGE_STATE_GROUND)
             self.isUnloading = true
             self.unloadingToBunkerSilo = true

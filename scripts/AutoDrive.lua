@@ -27,6 +27,17 @@ AutoDrive.MODE_LOAD = 4
 AutoDrive.MODE_UNLOAD = 5
 AutoDrive.MODE_BGA = 6
 
+-- Version of the interface AutoDrive offers to other mods, Courseplay above all.
+--
+-- Counted up independently of the mod version, because the mod version moves for reasons that
+-- have nothing to do with this contract. Courseplay reads it once at load time and logs which
+-- capabilities were negotiated, so every bug report carries the combination it was produced with.
+-- Before this existed the two mods probed each other function by function and a rename simply
+-- meant a feature stopped working, silently.
+--
+-- 1: requestCourseplayProximity, requestBackupForReversingCombine, onCpHarvesterStateChanged
+AutoDrive.INTERFACE_VERSION = 1
+
 AutoDrive.DC_NONE = 0
 AutoDrive.DC_VEHICLEINFO = 1
 AutoDrive.DC_COMBINEINFO = 2
@@ -312,6 +323,7 @@ function AutoDrive:drawBaseMission()
         if not AutoDrive.hasMapCache then
             AutoDrive.hasMapCache = true
             AutoDrive.aiNetworkOnMapCache = nil
+            AutoDrive.aiNetworkOnMapScreenCache = nil
 		end
 		if isWorkerListTab then
 			AutoDrive:drawRouteOnMap()
@@ -331,6 +343,7 @@ function AutoDrive:drawBaseMission()
 	else
         AutoDrive.hasMapCache = false
 		AutoDrive.aiNetworkOnMapCache = nil
+		AutoDrive.aiNetworkOnMapScreenCache = nil
 	end
 end
 
@@ -456,23 +469,58 @@ function AutoDrive.drawNetworkOnMap()
 	end
 
 	AutoDrive.createNetworkOnMapCache()
-	
-	local dx2D, dy2D, length
+
 	local lineThickness = 2 / g_screenHeight
 
+	-- Projecting the network into screen space costs two map lookups per connection and used to run
+	-- on every frame the map was open, which is the whole road network several dozen times a second.
+	-- The projection only changes when the player pans or zooms, and the mapping is affine, so two
+	-- probe points describe it completely: as long as both land where they did last frame the
+	-- projected lines are still valid. The frame counter is a safety net for the case where the map
+	-- keeps the probes in place, so a moving view can never stay stale for more than a few frames.
+	local probeX1, probeY1 = AutoDrive.getScreenPosFromScaledWorldPos(0.25, 0.25)
+	local probeX2, probeY2 = AutoDrive.getScreenPosFromScaledWorldPos(0.75, 0.75)
+	local frame = (AutoDrive.aiNetworkOnMapScreenFrame or 0) + 1
+	AutoDrive.aiNetworkOnMapScreenFrame = frame
 
-	for _, item in pairs(AutoDrive.aiNetworkOnMapCache) do
-		local startX, startY, startVisible = AutoDrive.getScreenPosFromScaledWorldPos(item.startX, item.startY)
-		local endX, endY, endVisible = AutoDrive.getScreenPosFromScaledWorldPos(item.endX, item.endY)
-		if startVisible and endVisible then
-			dx2D = endX - startX;
-			dy2D = (endY - startY) / g_screenAspectRatio;
-			length = MathUtil.vector2Length(dx2D, dy2D);
+	local screenCache = AutoDrive.aiNetworkOnMapScreenCache
+	if screenCache == nil
+		or screenCache.source ~= AutoDrive.aiNetworkOnMapCache
+		or screenCache.aspectRatio ~= g_screenAspectRatio
+		or screenCache.probeX1 ~= probeX1 or screenCache.probeY1 ~= probeY1
+		or screenCache.probeX2 ~= probeX2 or screenCache.probeY2 ~= probeY2
+		or frame % AutoDrive.PERF_FRAMES_HIGH == 0 then
 
-			setOverlayColor(AutoDrive.courseOverlayId, item.r, item.g, item.b, item.a)
-			setOverlayRotation(AutoDrive.courseOverlayId, item.rotation, 0, 0)
-			renderOverlay(AutoDrive.courseOverlayId, startX, startY, length, lineThickness)
+		local dx2D, dy2D
+		screenCache = {
+			source = AutoDrive.aiNetworkOnMapCache,
+			aspectRatio = g_screenAspectRatio,
+			probeX1 = probeX1, probeY1 = probeY1,
+			probeX2 = probeX2, probeY2 = probeY2,
+			lines = {}
+		}
+
+		for _, item in pairs(AutoDrive.aiNetworkOnMapCache) do
+			local startX, startY, startVisible = AutoDrive.getScreenPosFromScaledWorldPos(item.startX, item.startY)
+			local endX, endY, endVisible = AutoDrive.getScreenPosFromScaledWorldPos(item.endX, item.endY)
+			if startVisible and endVisible then
+				dx2D = endX - startX;
+				dy2D = (endY - startY) / g_screenAspectRatio;
+
+				table.insert(screenCache.lines, {
+					startX = startX, startY = startY, length = MathUtil.vector2Length(dx2D, dy2D),
+					rotation = item.rotation, r = item.r, g = item.g, b = item.b, a = item.a
+				})
+			end
 		end
+
+		AutoDrive.aiNetworkOnMapScreenCache = screenCache
+	end
+
+	for _, line in pairs(screenCache.lines) do
+		setOverlayColor(AutoDrive.courseOverlayId, line.r, line.g, line.b, line.a)
+		setOverlayRotation(AutoDrive.courseOverlayId, line.rotation, 0, 0)
+		renderOverlay(AutoDrive.courseOverlayId, line.startX, line.startY, line.length, lineThickness)
 	end
 end
 

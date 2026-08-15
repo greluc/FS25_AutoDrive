@@ -66,7 +66,9 @@ function ADCollisionDetectionModule:detectObstacle()
         end
     end
 
-    if (g_updateLoopIndex % AutoDrive.PERF_FRAMES == 0) then
+    -- offset by vehicle id, otherwise every AutoDrive vehicle runs its all-vehicle scan on the very
+    -- same frame and the cost arrives as a periodic spike instead of spread over PERF_FRAMES
+    if ((g_updateLoopIndex + self.vehicle.id) % AutoDrive.PERF_FRAMES == 0) then
         local excludedList = self.vehicle.ad.taskModule:getActiveTask():getExcludedVehiclesForCollisionCheck()
 
         local box = self.vehicle.ad.sensors.frontSensorDynamicLong:getBoxShape()
@@ -89,7 +91,8 @@ end
 function ADCollisionDetectionModule:detectAdTrafficOnRoute()
     local wayPoints, currentWayPoint = self.vehicle.ad.drivePathModule:getWayPoints()
     if self.vehicle.ad.stateModule:isActive() and wayPoints ~= nil and self.vehicle.ad.drivePathModule:isOnRoadNetwork() then
-        if (g_updateLoopIndex % AutoDrive.PERF_FRAMES == 0) then
+        -- offset by vehicle id, see detectObstacle
+        if ((g_updateLoopIndex + self.vehicle.id) % AutoDrive.PERF_FRAMES == 0) then
             self.trafficVehicle = nil
             local idToCheck = 0
             local alreadyOnDualRoute = false
@@ -196,7 +199,8 @@ end
 function ADCollisionDetectionModule:detectTrafficOnUpcomingReverseSection()
     local wayPoints, currentWayPoint = self.vehicle.ad.drivePathModule:getWayPoints()
     if self.vehicle.ad.stateModule:isActive() and wayPoints ~= nil and self.vehicle.ad.drivePathModule:isOnRoadNetwork() then
-        if (g_updateLoopIndex % AutoDrive.PERF_FRAMES == 0) then
+        -- offset by vehicle id, see detectObstacle
+        if ((g_updateLoopIndex + self.vehicle.id) % AutoDrive.PERF_FRAMES == 0) then
             self.lastReverseCheck = false
             local idToCheck = 1
 
@@ -321,9 +325,15 @@ function ADCollisionDetectionModule:checkReverseCollision()
     local trailers, trailerCount = AutoDrive.getAllUnits(self.vehicle)
     local mostBackImplement = AutoDrive.getMostBackImplementOf(self.vehicle)
 
+    -- vehicle.trailer is the controlable reverse attachable picked by ADSpecialDrivingModule:getReverseNode().
+    -- That module clears the field to an empty table instead of to nil, so a bare nil check is always
+    -- true and the rear sensor ended up on the last fill unit even when no reverse attachable was
+    -- identified. Only an implement getReverseNode accepted carries wheels, so ask for those.
+    local reverseAttachable = self.vehicle.trailer
+    local hasReverseAttachable = reverseAttachable ~= nil and reverseAttachable ~= self.vehicle and reverseAttachable.spec_wheels ~= nil
+
     local trailer = nil
-    if trailers and trailerCount > 1 and self.vehicle.trailer ~= nil and self.vehicle.trailer ~= self.vehicle then
-        -- vehicle.trailer is the controlable reverse attachable
+    if trailers and trailerCount > 1 and hasReverseAttachable then
         trailer = trailers[trailerCount]
     elseif mostBackImplement ~= nil then
         trailer = mostBackImplement

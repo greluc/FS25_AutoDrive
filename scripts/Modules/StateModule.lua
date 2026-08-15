@@ -629,15 +629,17 @@ end
 function ADStateModule:previousMode()
     if self.mode > AutoDrive.MODE_DRIVETO then
         self.mode = self.mode - 1
-        if self.vehicle.spec_locomotive and self.mode == AutoDrive.MODE_UNLOAD then
-            -- skip harvester mode for train
-            self.mode = self.mode - 1
-            if self.mode <= ADStateModule.MODE_DRIVETO then
-                self.mode = AutoDrive.HIGHEST_MODE
-            end
-        end
     else
         self.mode = ADStateModule.HIGHEST_MODE
+    end
+    -- MODE_UNLOAD is the highest mode, so stepping down can never land on it - only the wrap around
+    -- can. The check therefore has to run after both branches, not inside the decrement branch.
+    if self.vehicle.spec_locomotive and self.mode == AutoDrive.MODE_UNLOAD then
+        -- skip harvester mode for train
+        self.mode = self.mode - 1
+        if self.mode < AutoDrive.MODE_DRIVETO then
+            self.mode = AutoDrive.MODE_DRIVETO
+        end
     end
     self:setAutomaticPickupTarget(false) -- disable automatic target on mode change
     self:setAutomaticUnloadTarget(false) -- disable automatic target on mode change
@@ -944,7 +946,7 @@ function ADStateModule:setFillType(fillType)
     if fillType > 0 and self.fillType ~= fillType then
         self.fillType = fillType
         AutoDrive:setALFillType(self.vehicle, fillType)
-        if not table.contains(self.selectedFillTypes, fillType) then
+        if not ADTable.contains(self.selectedFillTypes, fillType) then
             self.selectedFillTypes = {fillType}
         end
         self:raiseDirtyFlag()
@@ -955,15 +957,15 @@ function ADStateModule:toggleFillTypeSelection(fillType)
     if fillType > 0 and self.fillType ~= AutoDrive.UAL_FILLTYPE_ALL and fillType ~= AutoDrive.UAL_FILLTYPE_ALL then 
         -- AutoDrive.UAL_FILLTYPE_ALL is for all fillTypes in UAL
         -- do not toggle UAL_FILLTYPE_ALL or additional fillTypes to UAL_FILLTYPE_ALL
-        if table.contains(self.selectedFillTypes, fillType) then
-            table.removeValue(self.selectedFillTypes, fillType)
+        if ADTable.contains(self.selectedFillTypes, fillType) then
+            ADTable.removeValue(self.selectedFillTypes, fillType)
             if self.fillType == fillType and #self.selectedFillTypes > 0 then
                 -- the deselected filltype was the active filltype -> select the first remaining item
                 self.fillType = self.selectedFillTypes[1]
             end
         else
             table.insert(self.selectedFillTypes, fillType)
-            if not table.contains(self.selectedFillTypes, self.fillType) then
+            if not ADTable.contains(self.selectedFillTypes, self.fillType) then
                 -- selectedFillTypes was empty, select the new fillType
                 self.fillType = fillType
             end
@@ -978,7 +980,7 @@ function ADStateModule:toggleAllFillTypeSelections(fillType)
         -- do not toggle fillType AutoDrive.UAL_FILLTYPE_ALL!
         if supportedFillTypes and #supportedFillTypes > 0 then
             for _, selected in pairs(supportedFillTypes) do
-                if not table.contains(self.selectedFillTypes, selected) then
+                if not ADTable.contains(self.selectedFillTypes, selected) then
                     -- at least one supported fillType not yet selected. Select all
                     self.fillType = selected
                     self.selectedFillTypes = supportedFillTypes
@@ -1025,7 +1027,7 @@ function ADStateModule:selectPreferredFillTypeFromFillLevels(fillLevels)
     end
     table.sort(fillLevelList)  -- sort it
     local requiredFillLevel = fillLevelList[#fillLevelList]
-    local idx = table.indexOf(self.selectedFillTypes, self.fillType) or 0 -- starting point
+    local idx = ADTable.indexOf(self.selectedFillTypes, self.fillType) or 0 -- starting point
     local loopsLeft = #self.selectedFillTypes
     local pickNextNonEmpty = requiredFillLevel == -1 or not self.loadByFillLevel
     if idx == nil or requiredFillLevel == nil then
@@ -1187,7 +1189,7 @@ end
 function ADStateModule:updateNeighborPoint()
     -- Find all candidate points, no further away than 15 units from vehicle
     local candidateNeighborPoints =
-        table.f_filter(
+        ADTable.f_filter(
         self.vehicle:getWayPointsDistance(),
         function(elem)
             return elem.distance <= 15

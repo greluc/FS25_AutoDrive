@@ -5,7 +5,9 @@ AutoDrive.destinationListeners = {}
 --destinationID: ID of marker to find path to
 --options (optional): options.minDistance, options.maxDistance (default 1m, 20m) define boundaries between the first AutoDrive waypoint and the starting location.
 function AutoDrive:GetPath(startX, startZ, startYRot, destinationID, options)
-    AutoDrive.debugPrint(nil, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:GetPath(%s, %s, %s, %s, %s)", startX, startZ, startYRot, destinationID, options)
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+        AutoDrive.debugPrint(nil, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:GetPath(%s, %s, %s, %s, %s)", startX, startZ, startYRot, destinationID, options)
+    end
     if startX == nil or startZ == nil or startYRot == nil or destinationID == nil or ADGraphManager:getMapMarkerById(destinationID) == nil then
         return
     end
@@ -34,7 +36,9 @@ function AutoDrive:GetPath(startX, startZ, startYRot, destinationID, options)
 end
 
 function AutoDrive:GetPathVia(startX, startZ, startYRot, viaID, destinationID, options)
-    AutoDrive.debugPrint(nil, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:GetPathVia(%s, %s, %s, %s, %s, %s)", startX, startZ, startYRot, viaID, destinationID, options)
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+        AutoDrive.debugPrint(nil, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:GetPathVia(%s, %s, %s, %s, %s, %s)", startX, startZ, startYRot, viaID, destinationID, options)
+    end
     if startX == nil or startZ == nil or startYRot == nil or destinationID == nil or ADGraphManager:getMapMarkerById(destinationID) == nil or viaID == nil or ADGraphManager:getMapMarkerById(viaID) == nil then
         return
     end
@@ -82,7 +86,9 @@ function AutoDrive:GetDriverName(vehicle)
 end
 
 function AutoDrive:GetAvailableDestinations()
-    AutoDrive.debugPrint(nil, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:GetAvailableDestinations()")
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+        AutoDrive.debugPrint(nil, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:GetAvailableDestinations()")
+    end
     local destinations = {}
     for markerID, marker in pairs(ADGraphManager:getMapMarkers()) do
         local point = ADGraphManager:getWayPointById(marker.id)
@@ -94,9 +100,11 @@ function AutoDrive:GetAvailableDestinations()
 end
 
 function AutoDrive:GetClosestPointToLocation(x, z, minDistance)
-    AutoDrive.debugPrint(nil, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:GetClosestPointToLocation(%s, %s, %s)", x, z, minDistance)
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+        AutoDrive.debugPrint(nil, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:GetClosestPointToLocation(%s, %s, %s)", x, z, minDistance)
+    end
     local closest = -1
-    if ADGraphManager:getWayPointsCount() < 1 then
+    if ADGraphManager:getWayPointsCount() >= 1 then
         local distance = math.huge
 
         for i in pairs(ADGraphManager:getWayPoints()) do
@@ -112,7 +120,9 @@ function AutoDrive:GetClosestPointToLocation(x, z, minDistance)
 end
 
 function AutoDrive:StartDriving(vehicle, destinationID, unloadDestinationID, callBackObject, callBackFunction, callBackArg)
-    AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:StartDriving(%s, %s, %s, %s, %s)", destinationID, unloadDestinationID, callBackObject, callBackFunction, callBackArg)
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+        AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:StartDriving(%s, %s, %s, %s, %s)", destinationID, unloadDestinationID, callBackObject, callBackFunction, callBackArg)
+    end
     if vehicle ~= nil and vehicle.ad ~= nil and not vehicle.ad.stateModule:isActive() then
         vehicle.ad.callBackObject = callBackObject
         vehicle.ad.callBackFunction = callBackFunction
@@ -161,7 +171,9 @@ function AutoDrive:StartDriving(vehicle, destinationID, unloadDestinationID, cal
 end
 
 function AutoDrive:StartDrivingWithPathFinder(vehicle, destinationID, unloadDestinationID, callBackObject, callBackFunction, callBackArg)
-    AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:StartDrivingWithPathFinder(%s, %s, %s, %s, %s)", destinationID, unloadDestinationID, callBackObject, callBackFunction, callBackArg)
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+        AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:StartDrivingWithPathFinder(%s, %s, %s, %s, %s)", destinationID, unloadDestinationID, callBackObject, callBackFunction, callBackArg)
+    end
     if vehicle ~= nil and vehicle.ad ~= nil and not vehicle.ad.stateModule:isActive() then
         if unloadDestinationID < -1 then
             if unloadDestinationID == -3 then --park
@@ -176,7 +188,9 @@ function AutoDrive:StartDrivingWithPathFinder(vehicle, destinationID, unloadDest
 end
 
 function AutoDrive:GetParkDestination(vehicle)
-    AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:GetParkDestination()")
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+        AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:GetParkDestination()")
+    end
     if vehicle ~= nil and vehicle.ad ~= nil and vehicle.ad.stateModule ~= nil then
         local parkDestinationAtJobFinished = vehicle.ad.stateModule:getParkDestinationAtJobFinished()
         if parkDestinationAtJobFinished >= 1 then
@@ -187,31 +201,39 @@ function AutoDrive:GetParkDestination(vehicle)
 end
 
 function AutoDrive:registerDestinationListener(callBackObject, callBackFunction)
-    AutoDrive.debugPrint(nil, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:registerDestinationListener(%s, %s)", callBackObject, callBackFunction)
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+        AutoDrive.debugPrint(nil, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:registerDestinationListener(%s, %s)", callBackObject, callBackFunction)
+    end
     if AutoDrive.destinationListeners[callBackObject] == nil then
         AutoDrive.destinationListeners[callBackObject] = callBackFunction
     end
 end
 
 function AutoDrive:unRegisterDestinationListener(callBackObject)
-    AutoDrive.debugPrint(nil, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:unRegisterDestinationListener(%s)", callBackObject)
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+        AutoDrive.debugPrint(nil, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:unRegisterDestinationListener(%s)", callBackObject)
+    end
     if AutoDrive.destinationListeners[callBackObject] ~= nil then
         AutoDrive.destinationListeners[callBackObject] = nil
     end
 end
 
 function AutoDrive:notifyDestinationListeners()
-    AutoDrive.debugPrint(nil, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:notifyDestinationListeners()")
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+        AutoDrive.debugPrint(nil, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:notifyDestinationListeners()")
+    end
     for object, callBackFunction in pairs(AutoDrive.destinationListeners) do
         callBackFunction(object, true)
     end
 end
 
 function AutoDrive:combineIsCallingDriver(combine)	--only for CoursePlay
-    AutoDrive.debugPrint(combine, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:combineIsCallingDriver hasHarvesterAvailableUnloader %s getIsCPWaitingForUnload %s"
-    , tostring(ADHarvestManager:hasHarvesterAvailableUnloader(combine))
-    , tostring(AutoDrive:getIsCPWaitingForUnload(combine))
-    )
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+        AutoDrive.debugPrint(combine, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:combineIsCallingDriver hasHarvesterAvailableUnloader %s getIsCPWaitingForUnload %s"
+        , tostring(ADHarvestManager:hasHarvesterAvailableUnloader(combine))
+        , tostring(AutoDrive:getIsCPWaitingForUnload(combine))
+        )
+    end
     return combine ~=nil and AutoDrive:getIsCPWaitingForUnload(combine) and ADHarvestManager:hasHarvesterAvailableUnloader(combine)
 end
 
@@ -273,7 +295,10 @@ function AutoDrive:StopCP(vehicle)
                 AutoDrive.debugPrint(vehicleToCheck, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:StopCP - deactivate CP button")
                 vehicleToCheck.ad.stateModule:setStartHelper(false)
             end
-            vehicleToCheck.ad.restartCP = false -- do not continue CP course
+            if vehicleToCheck.ad ~= nil then
+                -- CP vehicles without AutoDrive data have no course to continue
+                vehicleToCheck.ad.restartCP = false -- do not continue CP course
+            end
         else
             AutoDrive.debugPrint(vehicleToCheck, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:StopCP - Not possible. CP interface not found")
         end
@@ -291,26 +316,125 @@ function AutoDrive:logCPStatus(vehicle, functionName)
     if vehicle == nil then
         return false
     end
+    -- The channel has to be tested BEFORE the calls below, not inside debugPrint. Lua evaluates
+    -- arguments first, so every one of these queries ran on the way into a debugPrint that then
+    -- decided to print nothing - and each one walks the Courseplay drive strategy. That doubled
+    -- the cost of the very queries this function exists to observe.
+    if not AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+        return false
+    end
     if (g_updateLoopIndex % 60) == 0 then
         local vehicleToCheck = vehicle.getRootVehicle and vehicle:getRootVehicle()
         if vehicleToCheck then
             if vehicleToCheck.getIsCpActive then
-                AutoDrive.debugPrint(vehicleToCheck, AutoDrive.DC_EXTERNALINTERFACEINFO, "%s getIsCpActive %s", functionName, tostring(vehicleToCheck:getIsCpActive()))
+                if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+                    AutoDrive.debugPrint(vehicleToCheck, AutoDrive.DC_EXTERNALINTERFACEINFO, "%s getIsCpActive %s", functionName, tostring(vehicleToCheck:getIsCpActive()))
+                end
             end
             if vehicleToCheck.getIsCpHarvesterWaitingForUnload then
-                AutoDrive.debugPrint(vehicleToCheck, AutoDrive.DC_EXTERNALINTERFACEINFO, "%s getIsCpHarvesterWaitingForUnload %s", functionName, tostring(vehicleToCheck:getIsCpHarvesterWaitingForUnload()))
+                if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+                    AutoDrive.debugPrint(vehicleToCheck, AutoDrive.DC_EXTERNALINTERFACEINFO, "%s getIsCpHarvesterWaitingForUnload %s", functionName, tostring(vehicleToCheck:getIsCpHarvesterWaitingForUnload()))
+                end
             end
             if  vehicleToCheck.getIsCpHarvesterWaitingForUnloadInPocket then
-                AutoDrive.debugPrint(vehicleToCheck, AutoDrive.DC_EXTERNALINTERFACEINFO, "%s getIsCpHarvesterWaitingForUnloadInPocket %s", functionName, tostring(vehicleToCheck:getIsCpHarvesterWaitingForUnloadInPocket()))
+                if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+                    AutoDrive.debugPrint(vehicleToCheck, AutoDrive.DC_EXTERNALINTERFACEINFO, "%s getIsCpHarvesterWaitingForUnloadInPocket %s", functionName, tostring(vehicleToCheck:getIsCpHarvesterWaitingForUnloadInPocket()))
+                end
             end
             if vehicleToCheck.getIsCpHarvesterWaitingForUnloadAfterPulledBack then
-                AutoDrive.debugPrint(vehicleToCheck, AutoDrive.DC_EXTERNALINTERFACEINFO, "%s getIsCpHarvesterWaitingForUnloadAfterPulledBack %s", functionName, tostring(vehicleToCheck:getIsCpHarvesterWaitingForUnloadAfterPulledBack()))
+                if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+                    AutoDrive.debugPrint(vehicleToCheck, AutoDrive.DC_EXTERNALINTERFACEINFO, "%s getIsCpHarvesterWaitingForUnloadAfterPulledBack %s", functionName, tostring(vehicleToCheck:getIsCpHarvesterWaitingForUnloadAfterPulledBack()))
+                end
             end
             if  vehicleToCheck.getIsCpHarvesterManeuvering then
-                AutoDrive.debugPrint(vehicleToCheck, AutoDrive.DC_EXTERNALINTERFACEINFO, "%s getIsCpHarvesterManeuvering %s", functionName, tostring(vehicleToCheck:getIsCpHarvesterManeuvering()))
+                if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+                    AutoDrive.debugPrint(vehicleToCheck, AutoDrive.DC_EXTERNALINTERFACEINFO, "%s getIsCpHarvesterManeuvering %s", functionName, tostring(vehicleToCheck:getIsCpHarvesterManeuvering()))
+                end
             end
         end
     end
+end
+
+-- C1: ask a Courseplay harvester to tolerate our unloader close to it.
+--
+-- A Courseplay harvester only lets a vehicle near if that vehicle registered itself, and the only
+-- caller of that registration was Courseplay's own unloader. An AutoDrive unloader was therefore
+-- treated as a generic obstacle by the very harvester it had come to empty: the harvester slowed
+-- down and eventually stopped for it.
+--
+-- The registration expires after about a second on the Courseplay side, so this has to be called
+-- while the unloader still wants to be tolerated - which is why it sits in the chase path rather
+-- than being fired once. Returns false when the other side does not offer the function, i.e. when
+-- the player runs a Courseplay without this interface; nothing breaks, we are simply back to the
+-- old behaviour.
+-- C4: cache of the harvester state Courseplay pushes to us.
+--
+-- The four getIsCP* functions below used to ask Courseplay every frame, for every vehicle, each
+-- walking getRootVehicle first. All four are pure functions of two variables on Courseplay's
+-- drive strategy, so Courseplay now raises onCpHarvesterStateChanged whenever any of them flips -
+-- including once when the strategy starts and once when it ends, so a cached state cannot outlive
+-- the job it belongs to.
+function AutoDrive:onCpHarvesterStateChanged(state)
+    if self.ad == nil then
+        return
+    end
+    self.ad.cpState = state
+    self.ad.cpStateIsPushed = true
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+        AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO,
+            "AutoDrive:onCpHarvesterStateChanged active %s waitingForUnload %s inPocket %s maneuvering %s",
+            tostring(state and state.active), tostring(state and state.waitingForUnload),
+            tostring(state and state.inPocket), tostring(state and state.maneuvering))
+    end
+end
+
+-- Returns the pushed state for this vehicle, or nil when Courseplay is not pushing.
+-- The nil case is the signal for the callers to poll, so a mixed installation keeps working.
+function AutoDrive:getPushedCpState(vehicle)
+    local root = vehicle ~= nil and vehicle.getRootVehicle and vehicle:getRootVehicle() or vehicle
+    if root == nil or root.ad == nil or not root.ad.cpStateIsPushed then
+        return nil
+    end
+    return root.ad.cpState
+end
+
+function AutoDrive:requestCourseplayProximity(unloader, harvester)
+    if unloader == nil or harvester == nil then
+        return false
+    end
+    local harvesterRoot = harvester.getRootVehicle and harvester:getRootVehicle() or harvester
+    if harvesterRoot == nil or harvesterRoot.cpRequestToIgnoreProximity == nil then
+        return false
+    end
+    return harvesterRoot:cpRequestToIgnoreProximity(unloader) == true
+end
+
+-- C2: Courseplay calls this when one of its harvesters cannot reverse because one of our
+-- unloaders is behind it.
+--
+-- Courseplay's checkBlockingUnloader looks for a Courseplay drive strategy on the blocking
+-- vehicle and asks it to back up. An AutoDrive unloader has no such strategy, so the request
+-- reached nobody: the harvester could not reverse out of its turn, the unloader never learned it
+-- was in the way, and the pair sat there until something else timed out.
+--
+-- Kept deliberately small: it hands the unloader to the existing reverse handling rather than
+-- inventing a second one, and does nothing when the vehicle is not one of ours.
+function AutoDrive:requestBackupForReversingCombine(unloader, combine)
+    if unloader == nil or unloader.ad == nil or unloader.ad.stateModule == nil then
+        return false
+    end
+    if not unloader.ad.stateModule:isActive() then
+        return false
+    end
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+        AutoDrive.debugPrint(unloader, AutoDrive.DC_EXTERNALINTERFACEINFO,
+            "AutoDrive:requestBackupForReversingCombine requested by %s", tostring(combine and combine.getName and combine:getName()))
+    end
+    unloader.ad.reverseForCombineRequest = g_time
+    if unloader.ad.specialDrivingModule ~= nil then
+        unloader.ad.specialDrivingModule:releaseVehicle()
+    end
+    return true
 end
 
 function AutoDrive:getIsCPActive(vehicle)
@@ -360,6 +484,11 @@ function AutoDrive:getIsCPCombineInPocket(vehicle)
 
     AutoDrive:logCPStatus(vehicleToCheck, "getIsCPCombineInPocket")
 
+    local pushed = AutoDrive:getPushedCpState(vehicleToCheck)
+    if pushed ~= nil then
+        return pushed.active == true and pushed.inPocket == true
+    end
+
     if vehicleToCheck and AutoDrive:getIsCPActive(vehicleToCheck) 
         and
         (
@@ -386,6 +515,11 @@ function AutoDrive:getIsCPWaitingForUnload(vehicle)
 
     AutoDrive:logCPStatus(vehicleToCheck, "getIsCPWaitingForUnload")
 
+    local pushed = AutoDrive:getPushedCpState(vehicleToCheck)
+    if pushed ~= nil then
+        return pushed.active == true and pushed.waitingForUnload == true
+    end
+
     if vehicleToCheck and AutoDrive:getIsCPActive(vehicleToCheck)
         and
         (
@@ -411,6 +545,11 @@ function AutoDrive:getIsCPTurning(vehicle)
 
     AutoDrive:logCPStatus(vehicleToCheck, "getIsCPTurning")
 
+    local pushed = AutoDrive:getPushedCpState(vehicleToCheck)
+    if pushed ~= nil then
+        return pushed.active == true and pushed.maneuvering == true
+    end
+
     if vehicleToCheck and AutoDrive:getIsCPActive(vehicleToCheck) 
         and 
         (
@@ -429,7 +568,9 @@ end
 
 -- CP event handler
 function AutoDrive:onCpFinished()
-    AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:onCpFinished start... enableParkAtJobFinished %s", AutoDrive.getSetting("enableParkAtJobFinished", self))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+        AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:onCpFinished start... enableParkAtJobFinished %s", AutoDrive.getSetting("enableParkAtJobFinished", self))
+    end
     if self.isServer then
         if self.ad and self.ad.stateModule and self.startAutoDrive and AutoDrive.getSetting("enableParkAtJobFinished", self) then
             self.ad.onRouteToRefuel = false
@@ -442,9 +583,13 @@ function AutoDrive:onCpFinished()
                 local trailers, _ = AutoDrive.getAllUnits(self)
                 local fillLevel, _, _ = AutoDrive.getAllFillLevels(trailers)
                 if self.ad.stateModule:getMode() == AutoDrive.MODE_PICKUPANDDELIVER and fillLevel > 0 then
-                    AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:onCpFinished fillLevel > 0 %s", tostring(fillLevel))
+                    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+                        AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:onCpFinished fillLevel > 0 %s", tostring(fillLevel))
+                    end
                     -- unload before going to park
-                    AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:onCpFinished unload before going to park - fillLevel %s", tostring(fillLevel))
+                    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+                        AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:onCpFinished unload before going to park - fillLevel %s", tostring(fillLevel))
+                    end
                     self.ad.stateModule:setMode(AutoDrive.MODE_DELIVERTO)
                     self.ad.stateModule:setFirstMarker(self.ad.stateModule:getSecondMarkerId())
                 else
@@ -480,7 +625,7 @@ function AutoDrive:handleCPFieldWorker(vehicle)
             if not vehicle.ad.stateModule:isActive() then
                 if vehicle.ad.stateModule:getStartHelper() and vehicle.ad.stateModule:getUsedHelper() == ADStateModule.HELPER_CP then
                     -- CP button active
-                    if table.contains(AutoDrive.modesToStartFromCP, vehicle.ad.stateModule:getMode()) then
+                    if ADTable.contains(AutoDrive.modesToStartFromCP, vehicle.ad.stateModule:getMode()) then
                         -- mode allowed to activate
                         vehicle.ad.restartCP = true
                         AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:handleCPFieldWorker start AD")
@@ -505,39 +650,47 @@ end
 function AutoDrive:onCpEmpty()
     AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:onCpEmpty start...")
     local rootVehicle = self.getRootVehicle and self:getRootVehicle()
-    if rootVehicle then
-        if rootVehicle.ad == nil then
-            rootVehicle.ad = {}
-        end
-        rootVehicle.ad.isCpEmpty = true
+    if not rootVehicle or rootVehicle.ad == nil then
+        -- without AutoDrive data there is no state to record - creating a stub ad table would let
+        -- every later 'ad ~= nil' check pass while stateModule and settings are missing
+        AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:onCpEmpty - no AutoDrive data, nothing to do")
+        return
     end
+    rootVehicle.ad.isCpEmpty = true
     AutoDrive:handleCPFieldWorker(self)
 end
 
 function AutoDrive:onCpFull()
     AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:onCpFull start...")
     local rootVehicle = self.getRootVehicle and self:getRootVehicle()
-    if rootVehicle then
-        if rootVehicle.ad == nil then
-            rootVehicle.ad = {}
-        end
-        rootVehicle.ad.isCpFull = true
+    if not rootVehicle or rootVehicle.ad == nil then
+        -- without AutoDrive data there is no state to record - creating a stub ad table would let
+        -- every later 'ad ~= nil' check pass while stateModule and settings are missing
+        AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:onCpFull - no AutoDrive data, nothing to do")
+        return
     end
+    rootVehicle.ad.isCpFull = true
     AutoDrive:handleCPFieldWorker(self)
 end
 
 function AutoDrive:onCpFuelEmpty() -- refuel
-    AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:onCpFuelEmpty start... autoRefuel %s", AutoDrive.getSetting("autoRefuel", self))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+        AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:onCpFuelEmpty start... autoRefuel %s", AutoDrive.getSetting("autoRefuel", self))
+    end
     if self.isServer then
         self.ad.restartCP = false
         if self.ad and self.ad.stateModule and self.startAutoDrive and AutoDrive.getSetting("autoRefuel", self) then
 
             local refuelDestination = ADTriggerManager.getClosestRefuelDestination(self, true)
-            AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:onCpFuelEmpty refuelDestination %s", tostring(refuelDestination))
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+                AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:onCpFuelEmpty refuelDestination %s", tostring(refuelDestination))
+            end
 
             if refuelDestination ~= nil and refuelDestination >= 1 then
                 if not self.ad.stateModule:isActive() then
-                    AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:onCpFuelEmpty getCurrentMode() start %s", tostring(self.ad.stateModule:getCurrentMode()))
+                    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+                        AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:onCpFuelEmpty getCurrentMode() start %s", tostring(self.ad.stateModule:getCurrentMode()))
+                    end
                     self.ad.onRouteToRefuel = true
                     self.ad.restartCP = true
                     self.ad.stateModule:getCurrentMode():start()
@@ -556,16 +709,22 @@ function AutoDrive:onCpFuelEmpty() -- refuel
 end
 
 function AutoDrive:onCpBroken() -- repair
-    AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:onCpBroken start... autoRepair %s", tostring(AutoDrive.getSetting("autoRepair", self)))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+        AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:onCpBroken start... autoRepair %s", tostring(AutoDrive.getSetting("autoRepair", self)))
+    end
 
     if self.isServer then
         self.ad.restartCP = false
         if self.ad and self.ad.stateModule and self.startAutoDrive and AutoDrive.getSetting("autoRepair", self) then
             local repairDestinationMarkerNodeID = AutoDrive:getClosestRepairTrigger(self)
-            AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO,"AutoDrive:onCpBroken repairDestinationMarkerNodeID %s", tostring(repairDestinationMarkerNodeID))
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+                AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO,"AutoDrive:onCpBroken repairDestinationMarkerNodeID %s", tostring(repairDestinationMarkerNodeID))
+            end
             if repairDestinationMarkerNodeID ~= nil then
                 if not self.ad.stateModule:isActive() then
-                    AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:onCpBroken getCurrentMode() start %s", tostring(self.ad.stateModule:getCurrentMode()))
+                    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+                        AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:onCpBroken getCurrentMode() start %s", tostring(self.ad.stateModule:getCurrentMode()))
+                    end
                     self.ad.onRouteToRepair = true
                     self.ad.restartCP = true
                     self.ad.stateModule:getCurrentMode():start()
@@ -732,10 +891,14 @@ function AutoDrive:unloadAL(object)
         }
 
         local unloadPositionSetting = AutoDrive.getSetting("ALUnload", rootVehicle)
-        AutoDrive.debugPrint(object, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:unloadAL spec_aPalletAutoLoader unloadPositionSetting %s", tostring(unloadPositionSetting))
+        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+            AutoDrive.debugPrint(object, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:unloadAL spec_aPalletAutoLoader unloadPositionSetting %s", tostring(unloadPositionSetting))
+        end
         if unloadPositionSetting ~= nil and unloadPositionSetting > 0 then
             local unloadPosition = unloadPositions[unloadPositionSetting]
-            AutoDrive.debugPrint(object, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:unloadAL spec_aPalletAutoLoader unloadPosition %s", tostring(unloadPosition))
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+                AutoDrive.debugPrint(object, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:unloadAL spec_aPalletAutoLoader unloadPosition %s", tostring(unloadPosition))
+            end
             if unloadPosition ~= nil then
                 -- should unload
                 AutoDrive.debugPrint(object, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:unloadAL spec_aPalletAutoLoader should unload")
@@ -743,7 +906,9 @@ function AutoDrive:unloadAL(object)
                     object:setAllTensionBeltsActive(false, false)
                 end
                 if object.SetTipside and object.unloadAll then
-                    AutoDrive.debugPrint(object, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:unloadAL spec_aPalletAutoLoader SetTipside unloadPosition %s", tostring(unloadPosition))
+                    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+                        AutoDrive.debugPrint(object, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:unloadAL spec_aPalletAutoLoader SetTipside unloadPosition %s", tostring(unloadPosition))
+                    end
                     if unloadPosition > 0 then
                         object:SetTipside(unloadPosition)
                     end
@@ -763,10 +928,14 @@ function AutoDrive:unloadAL(object)
             "right"
         }
         local unloadPositionSetting = AutoDrive.getSetting("ALUnload", rootVehicle)
-        AutoDrive.debugPrint(object, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:unloadAL spec_universalAutoload unloadPositionSetting %s", tostring(unloadPositionSetting))
+        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+            AutoDrive.debugPrint(object, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:unloadAL spec_universalAutoload unloadPositionSetting %s", tostring(unloadPositionSetting))
+        end
         if unloadPositionSetting ~= nil and unloadPositionSetting > 0 then
             local unloadPosition = unloadPositions[unloadPositionSetting]
-            AutoDrive.debugPrint(object, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:unloadAL spec_universalAutoload unloadPosition %s", tostring(unloadPosition))
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+                AutoDrive.debugPrint(object, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:unloadAL spec_universalAutoload unloadPosition %s", tostring(unloadPosition))
+            end
             if unloadPosition ~= nil and string.len(unloadPosition) > 0 then
                 if unloadPositionSetting == 1 then
                     -- center unload - unfasten belts only
@@ -792,7 +961,9 @@ function AutoDrive:unloadALAll(vehicle) -- used by UnloadAtDestinationTask
         return false
     end
     local trailers, trailerCount = AutoDrive.getAllUnits(vehicle)
-    AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:unloadALAll trailerCount %s", tostring(trailerCount))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+        AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:unloadALAll trailerCount %s", tostring(trailerCount))
+    end
     if trailers and trailerCount > 0 then
         for i=1, trailerCount do
             AutoDrive:unloadAL(trailers[i])
@@ -810,7 +981,9 @@ function AutoDrive:getALObjectFillLevels(object) -- used by getIsFillUnitEmpty, 
         Logging.error("[AD] AutoDrive.getALObjectFillLevels rootVehicle == nil")
         return 0, 0, false, 0
     end
-    AutoDrive.debugPrint(object, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:getALObjectFillLevels object.spec_aPalletAutoLoader %s object.spec_universalAutoload %s", tostring(object.spec_aPalletAutoLoader), tostring(object.spec_universalAutoload))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+        AutoDrive.debugPrint(object, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:getALObjectFillLevels object.spec_aPalletAutoLoader %s object.spec_universalAutoload %s", tostring(object.spec_aPalletAutoLoader), tostring(object.spec_universalAutoload))
+    end
     local fillCapacity = 0
     local fillLevel = 0
     local fillFreeCapacity = 0
@@ -824,10 +997,14 @@ function AutoDrive:getALObjectFillLevels(object) -- used by getIsFillUnitEmpty, 
             fillLevel = object:ualGetFillUnitFillLevel()
             fillFreeCapacity = object:ualGetFillUnitFreeCapacity()
         end
-        AutoDrive.debugPrint(object, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:getALObjectFillLevels fillCapacity %s fillLevel %s fillFreeCapacity %s", tostring(fillCapacity), tostring(fillLevel), tostring(fillFreeCapacity))
+        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+            AutoDrive.debugPrint(object, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:getALObjectFillLevels fillCapacity %s fillLevel %s fillFreeCapacity %s", tostring(fillCapacity), tostring(fillLevel), tostring(fillFreeCapacity))
+        end
     end
     local filledToUnload = AutoDrive.isUnloadFillLevelReached(rootVehicle, fillLevel, fillFreeCapacity, fillCapacity)
-    AutoDrive.debugPrint(object, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:getALObjectFillLevels filledToUnload %s ", tostring(filledToUnload))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+        AutoDrive.debugPrint(object, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:getALObjectFillLevels filledToUnload %s ", tostring(filledToUnload))
+    end
     return fillLevel, fillCapacity, filledToUnload, fillFreeCapacity
 end
 
@@ -841,8 +1018,8 @@ function AutoDrive:getALFillTypes(object) -- used by PullDownList, getSupportedF
     local spec = object.spec_aPalletAutoLoader
     if spec and AutoDrive:hasAL(object) and object.GetAutoloadTypes then
         local autoLoadTypes = object:GetAutoloadTypes()
-        if autoLoadTypes and table.count(autoLoadTypes) > 0 then
-            for i = 1, table.count(autoLoadTypes) do
+        if autoLoadTypes and ADTable.count(autoLoadTypes) > 0 then
+            for i = 1, ADTable.count(autoLoadTypes) do
                 if autoLoadTypes[i].nameTranslated then
                     table.insert(fillTypes, autoLoadTypes[i].nameTranslated)
                 end
@@ -859,7 +1036,9 @@ function AutoDrive:getALFillTypes(object) -- used by PullDownList, getSupportedF
             end
         end
     end
-    AutoDrive.debugPrint(object, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:getALFillTypes #fillTypes %s", tostring(#fillTypes))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+        AutoDrive.debugPrint(object, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:getALFillTypes #fillTypes %s", tostring(#fillTypes))
+    end
     return fillTypes
 end
 
@@ -902,7 +1081,9 @@ function AutoDrive:setALFillType(vehicle, fillTypeID) -- used by PullDownList
             -- spec_aPalletAutoLoader
             local spec = trailer.spec_aPalletAutoLoader
             if spec and AutoDrive:hasAL(trailer) and trailer.SetLoadingState and trailer.SetAutoloadType then
-                AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:setALFillType spec_aPalletAutoLoader fillTypeID %s", tostring(fillTypeID))
+                if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+                    AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:setALFillType spec_aPalletAutoLoader fillTypeID %s", tostring(fillTypeID))
+                end
                 -- set loading state off
                 trailer:SetLoadingState(1)
                 trailer:SetAutoloadType(fillTypeID)
@@ -940,7 +1121,9 @@ function AutoDrive.objectsToLoadAvailable(vehicle, trailers)
 end
 
 function AutoDrive:handleAIFinished(vehicle)
-    AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:handleAIFinished start... enableParkAtJobFinished %s", AutoDrive.getSetting("enableParkAtJobFinished", vehicle))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+        AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:handleAIFinished start... enableParkAtJobFinished %s", AutoDrive.getSetting("enableParkAtJobFinished", vehicle))
+    end
     if vehicle.isServer then
         if vehicle.ad and vehicle.ad.stateModule and vehicle.startAutoDrive and AutoDrive.getSetting("enableParkAtJobFinished", vehicle) then
             vehicle.ad.onRouteToRefuel = false
@@ -979,7 +1162,7 @@ function AutoDrive:handleAIFieldWorker(vehicle)
             if not vehicle.ad.stateModule:isActive() then
                 if vehicle.ad.stateModule:getStartHelper() then
                     -- AI button active
-                    if table.contains(AutoDrive.modesToStartFromCP, vehicle.ad.stateModule:getMode()) then
+                    if ADTable.contains(AutoDrive.modesToStartFromCP, vehicle.ad.stateModule:getMode()) then
                         -- mode allowed to activate
                         AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:handleAIFieldWorker start AD")
                         vehicle.ad.stateModule:getCurrentMode():start()

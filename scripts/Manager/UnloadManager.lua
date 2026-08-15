@@ -107,9 +107,9 @@ function ADUnloadManager:update(dt)
             vehicle.ad.isUnloadManaged = false
         end
     end
-    if table.count(self.unloadingTargets) > 0 then
+    if ADTable.count(self.unloadingTargets) > 0 then
         for destination, _ in pairs(self.unloadingTargets) do
-            if table.count(self.unloadingTargets[destination]) > 1 then
+            if ADTable.count(self.unloadingTargets[destination]) > 1 then
                 for i, vehicle in pairs(self.unloadingTargets[destination]) do
                     if i > 1 and vehicle and vehicle.ad and vehicle.ad.drivePathModule then
                         vehicle.ad.drivePathModule:setPaused()

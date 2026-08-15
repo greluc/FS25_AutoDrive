@@ -19,7 +19,7 @@ end
 function AutoDriveUserDataEvent:writeStream(streamId, connection)
     streamWriteFloat32(streamId, self.hudX)
     streamWriteFloat32(streamId, self.hudY)
-    streamWriteUInt16(streamId, table.count(self.settings))
+    streamWriteUInt16(streamId, ADTable.count(self.settings))
     for sn, sv in pairs(self.settings) do
         streamWriteString(streamId, sn)
         streamWriteUInt16(streamId, sv)

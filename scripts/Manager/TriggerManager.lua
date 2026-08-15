@@ -5,6 +5,7 @@ ADTriggerManager.bunkerSilos = {}
 ADTriggerManager.bunkerSilosResult = {}
 ADTriggerManager.siloTriggers = {}
 ADTriggerManager.repairTriggers = {}
+ADTriggerManager.refuelTriggerCandidates = nil
 
 ADTriggerManager.searchedForTriggers = false
 ADTriggerManager.maxBunkerSiloLength = 0
@@ -19,7 +20,7 @@ function ADTriggerManager.addItems(items)
     if items == nil then
         return
     end
-    if table.count(items) > 0 then
+    if ADTable.count(items) > 0 then
         for _, item in pairs(items) do
             local spec = nil
             local loadingStation = nil
@@ -36,14 +37,14 @@ function ADTriggerManager.addItems(items)
 
             if loadingStation and loadingStation.loadTriggers then
                 for _, loadTrigger in pairs(loadingStation.loadTriggers) do
-                    if not table.contains(ADTriggerManager.siloTriggers, loadTrigger) then
+                    if not ADTable.contains(ADTriggerManager.siloTriggers, loadTrigger) then
                         table.insert(ADTriggerManager.siloTriggers, loadTrigger)
                     end
                 end
             end
 
             if item.spec_chargingStation and item.spec_chargingStation.loadTrigger then
-                if not table.contains(ADTriggerManager.siloTriggers, item.spec_chargingStation.loadTrigger) then
+                if not ADTable.contains(ADTriggerManager.siloTriggers, item.spec_chargingStation.loadTrigger) then
                     table.insert(ADTriggerManager.siloTriggers, item.spec_chargingStation.loadTrigger)
                 end
             end
@@ -58,14 +59,14 @@ function ADTriggerManager.addItems(items)
 
             if unloadingStation and unloadingStation.unloadTriggers then
                 for _, unloadTrigger in pairs(unloadingStation.unloadTriggers) do
-                    if not table.contains(ADTriggerManager.tipTriggers, unloadTrigger) then
+                    if not ADTable.contains(ADTriggerManager.tipTriggers, unloadTrigger) then
                         table.insert(ADTriggerManager.tipTriggers, unloadTrigger)
                     end
                 end
             end
 
             if item.spec_husbandryFood and item.spec_husbandryFood.feedingTrough then
-                if not table.contains(ADTriggerManager.tipTriggers, item.spec_husbandryFood.feedingTrough) then
+                if not ADTable.contains(ADTriggerManager.tipTriggers, item.spec_husbandryFood.feedingTrough) then
                     table.insert(ADTriggerManager.tipTriggers, item.spec_husbandryFood.feedingTrough)
                 end
             end
@@ -99,6 +100,7 @@ function ADTriggerManager.loadAllTriggers()
     ADTriggerManager.bunkerSilosResult = {}
     ADTriggerManager.siloTriggers = {}
     ADTriggerManager.repairTriggers = {}
+    ADTriggerManager.invalidateRefuelTriggerCandidates()
 
     if g_currentMission.placeableSystem.placeables ~= nil then
         ADTriggerManager.addItems(g_currentMission.placeableSystem.placeables)
@@ -126,12 +128,12 @@ function ADTriggerManager.loadAllTriggers()
     if g_currentMission.nodeToObject ~= nil then
         for _, object in pairs(g_currentMission.nodeToObject) do
             if object.triggerNode ~= nil then
-                if not table.contains(ADTriggerManager.siloTriggers, object) then
+                if not ADTable.contains(ADTriggerManager.siloTriggers, object) then
                     table.insert(ADTriggerManager.siloTriggers, object)
                 end
             end
             -- if object.exactFillRootNode ~= nil then
-            --     if not table.contains(ADTriggerManager.tipTriggers, object) then
+            --     if not ADTable.contains(ADTriggerManager.tipTriggers, object) then
             --         table.insert(ADTriggerManager.tipTriggers, object)
             --     end
             -- end
@@ -173,35 +175,62 @@ function ADTriggerManager.getRepairTriggers()
     return ADTriggerManager.repairTriggers
 end
 
+--- Drops the cached refuel trigger scan. Called from everything that changes the load trigger set.
+function ADTriggerManager.invalidateRefuelTriggerCandidates()
+    ADTriggerManager.refuelTriggerCandidates = nil
+end
+
+--- The load triggers a vehicle could ever refuel at: a vehicle fill trigger with a fill level
+--- source behind it. Whether a trigger qualifies depends on its collision flags and on its station,
+--- neither of which changes while the trigger exists - only the fill level does. getRefuelTriggers
+--- runs once per frame for an active refuelling vehicle, so walking every load trigger on the map
+--- and asking each one for a freshly allocated fill level table is done once here instead.
+function ADTriggerManager.getRefuelTriggerCandidates()
+    if ADTriggerManager.refuelTriggerCandidates == nil then
+        local candidates = {}
+        for _, trigger in pairs(ADTriggerManager.getLoadTriggers()) do
+            if trigger.source and trigger.source.getAllFillLevels and trigger.triggerNode ~= nil and entityExists(trigger.triggerNode)
+                and CollisionFlag.getHasMaskFlagSet(trigger.triggerNode, CollisionFlag.FILLABLE)
+                and CollisionFlag.getHasGroupFlagSet(trigger.triggerNode, CollisionFlag.TRIGGER) then
+                table.insert(candidates, trigger)
+            end
+        end
+        ADTriggerManager.refuelTriggerCandidates = candidates
+    end
+    return ADTriggerManager.refuelTriggerCandidates
+end
+
 -- returns only suitable fuel triggers according to required fuel types
 function ADTriggerManager.getRefuelTriggers(vehicle, ignoreFillLevel)
     local refuelTriggers = {}
     local refuelFillTypes = AutoDrive.getRequiredRefuels(vehicle, ignoreFillLevel)
     if #refuelFillTypes > 0 then
+        local farmId = vehicle:getOwnerFarmId()
 
-        for _, trigger in pairs(ADTriggerManager.getLoadTriggers()) do
-            local fillLevels = {}
+        for _, trigger in pairs(ADTriggerManager.getRefuelTriggerCandidates()) do
+            -- fill levels change with every load and unload, so they are always read fresh
+            local fillLevels = trigger.source:getAllFillLevels(farmId)
 
-            if trigger.source and trigger.source.getAllFillLevels then
-                fillLevels, _ = trigger.source:getAllFillLevels(vehicle:getOwnerFarmId())
-            end
-
-            if table.count(fillLevels) > 0 then
-                local hasFill = false
+            if fillLevels ~= nil and ADTable.count(fillLevels) > 0 then
                 for _, refuelFillType in pairs(refuelFillTypes) do
-                    if trigger.fillTypes and trigger.fillTypes[refuelFillType] then
-                        hasFill = hasFill or (fillLevels[refuelFillType] and fillLevels[refuelFillType] > 0)
-                        if hasFill then
-                            local isVehicleTrigger = trigger.triggerNode and CollisionFlag.getHasMaskFlagSet(trigger.triggerNode, CollisionFlag.FILLABLE) and CollisionFlag.getHasGroupFlagSet(trigger.triggerNode, CollisionFlag.TRIGGER)
-                            AutoDrive.debugPrint(vehicle, AutoDrive.DC_VEHICLEINFO, "ADTriggerManager.getRefuelTriggers hasFill %s isVehicleTrigger %s", tostring(hasFill), tostring(isVehicleTrigger))
-                            if isVehicleTrigger then
-                                local triggerX, _, triggerZ = ADTriggerManager.getTriggerPos(trigger)
+                    local hasFill = trigger.fillTypes and trigger.fillTypes[refuelFillType]
+                        and fillLevels[refuelFillType] and fillLevels[refuelFillType] > 0
+                    if hasFill then
+                        -- isVehicleTrigger is no longer logged here: it is now an invariant of the
+                        -- candidate list rather than something decided per call
+                        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_VEHICLEINFO) then
+                            AutoDrive.debugPrint(vehicle, AutoDrive.DC_VEHICLEINFO, "ADTriggerManager.getRefuelTriggers hasFill %s fillType %s", tostring(hasFill), tostring(refuelFillType))
+                        end
+                        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_VEHICLEINFO) then
+                            local triggerX, _, triggerZ = ADTriggerManager.getTriggerPos(trigger)
+                            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_VEHICLEINFO) then
                                 AutoDrive.debugPrint(vehicle, AutoDrive.DC_VEHICLEINFO, "ADTriggerManager.getRefuelTriggers Pos: %s,%s", tostring(triggerX), tostring(triggerZ))
                             end
-                            if isVehicleTrigger and not table.contains(refuelTriggers, trigger) then
-                                table.insert(refuelTriggers, trigger)
-                            end
                         end
+                        if not ADTable.contains(refuelTriggers, trigger) then
+                            table.insert(refuelTriggers, trigger)
+                        end
+                        break -- trigger is collected, the remaining fill types cannot add it twice
                     end
                 end
             end
@@ -319,8 +348,9 @@ function ADTriggerManager:loadTriggerLoad(superFunc, ...)
     local result = superFunc(self, ...)
 
     if ADTriggerManager ~= nil and ADTriggerManager.siloTriggers ~= nil then
-        if not table.contains(ADTriggerManager.siloTriggers, self) then
+        if not ADTable.contains(ADTriggerManager.siloTriggers, self) then
             table.insert(ADTriggerManager.siloTriggers, self)
+            ADTriggerManager.invalidateRefuelTriggerCandidates()
         end
     end
 
@@ -329,7 +359,8 @@ end
 
 function ADTriggerManager:loadTriggerDelete(superFunc)
     if ADTriggerManager ~= nil and ADTriggerManager.siloTriggers ~= nil then
-        table.removeValue(ADTriggerManager.siloTriggers, self)
+        ADTable.removeValue(ADTriggerManager.siloTriggers, self)
+        ADTriggerManager.invalidateRefuelTriggerCandidates()
     end
     superFunc(self)
 end
@@ -644,7 +675,7 @@ end
 
 function ADTriggerManager.addBunkerSilo(bunkerSilo)
     local isSold = bunkerSilo.ad and bunkerSilo.ad.isSold
-    if table.contains(ADTriggerManager.bunkerSilos, bunkerSilo) or isSold then
+    if ADTable.contains(ADTriggerManager.bunkerSilos, bunkerSilo) or isSold then
         -- bunkerSilo already added or sold
         return
     end
@@ -674,7 +705,7 @@ function ADTriggerManager.addBunkerSilo(bunkerSilo)
                 if bunkerSiloConnected then
                     local length = MathUtil.vector2Length(bunkerSiloConnected.bunkerSiloArea.hx - bunkerSiloConnected.bunkerSiloArea.sx, bunkerSiloConnected.bunkerSiloArea.hz - bunkerSiloConnected.bunkerSiloArea.sz)
                     ADTriggerManager.maxBunkerSiloLength = math.max(ADTriggerManager.maxBunkerSiloLength, length)
-                    table.removeValue(ADTriggerManager.bunkerSilosResult, bunkerSiloResult)
+                    ADTable.removeValue(ADTriggerManager.bunkerSilosResult, bunkerSiloResult)
                     table.insert(ADTriggerManager.bunkerSilosResult, bunkerSiloConnected)
                     isConnected = true
                     break
@@ -690,17 +721,27 @@ function ADTriggerManager.addBunkerSilo(bunkerSilo)
     end
 end
 
-function AutoDrive:checkIfPathTraversedOverPosition(wayPoint, targetPosition, radius, maxSteps)
+function AutoDrive:checkIfPathTraversedOverPosition(wayPoint, targetPosition, radius, maxSteps, visited)
     local maxSearchSteps = maxSteps or 30
-    if maxSearchSteps <= 0 then
+    if wayPoint == nil or maxSearchSteps <= 0 then
         return false
     end
+    -- Two nodes that link to each other are walked into each other over and over without this,
+    -- which is 2^maxSteps calls on a dense network. Remembering the largest remaining step budget a
+    -- node was already expanded with prunes exactly the repeats: arriving with fewer steps left can
+    -- never reach anything the earlier visit did not already cover, so the result is unchanged.
+    visited = visited or {}
+    if visited[wayPoint.id] ~= nil and visited[wayPoint.id] >= maxSearchSteps then
+        return false
+    end
+    visited[wayPoint.id] = maxSearchSteps
+
     local distance = MathUtil.vector2Length(wayPoint.x - targetPosition.x, wayPoint.z - targetPosition.z)
     if distance < radius then
         return true
     end
     for _, incomingId in pairs(wayPoint.incoming) do
-        if AutoDrive:checkIfPathTraversedOverPosition(ADGraphManager:getWayPointById(incomingId), targetPosition, radius, maxSearchSteps - 1) then
+        if AutoDrive:checkIfPathTraversedOverPosition(ADGraphManager:getWayPointById(incomingId), targetPosition, radius, maxSearchSteps - 1, visited) then
             return true
         end
     end

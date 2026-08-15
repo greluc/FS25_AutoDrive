@@ -50,7 +50,7 @@ function AutoDriveMessageEvent:run(connection)
     if g_server ~= nil and connection:getIsServer() == false then
         -- If the event is coming from a client, server have only to broadcast
         if self.isNotification then
-            AutoDriveMessageEvent.sendNotification(self.messageType, self.text, self.duration, unpack(self.args))
+            AutoDriveMessageEvent.sendNotification(self.vehicle, self.messageType, self.text, self.duration, unpack(self.args))
         end
     else
         -- If the event is coming from the server

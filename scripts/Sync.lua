@@ -131,7 +131,7 @@ function AutoDriveSync.streamWriteGraph(streamId, wayPoints, mapMarkers, groups)
     end
 
     -- writing the amount of groups we are going to send
-    local groupsCount = table.count(groups)
+    local groupsCount = ADTable.count(groups)
     streamWriteUIntN(streamId, groupsCount, self.GC_SEND_NUM_BITS)
     self.print("[AutoDriveSync] Writing %s groups", groupsCount)
     -- writing groups
@@ -209,8 +209,11 @@ function AutoDriveSync.streamReadGraph(streamId)
             mapMarkers[i] = marker
         else
             Logging.error("[AutoDriveSync] Error receiving marker %s (%s)", AutoDrive.streamReadStringOrEmpty(streamId), markerId)
-            -- we have to read everything to keep the right reading order
+            -- we have to read everything to keep the right reading order: the writer emits
+            -- id, name, group and the isADDebug flag for every marker, so all four have to be
+            -- consumed here as well - otherwise everything behind this marker is off by one bit
             _ = AutoDrive.streamReadStringOrEmpty(streamId)
+            _ = streamReadBool(streamId)
         end
     end
 

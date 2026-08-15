@@ -87,7 +87,7 @@ function ADRoutesManager:import(name)
         return
     end
     local route =
-        table.f_find(
+        ADTable.f_find(
         self.routes,
         function(v)
             return v.name == name
@@ -117,7 +117,7 @@ function ADRoutesManager:export(name)
     local saveXml = -1
     local mapName = AutoDrive.loadedMap
     local routeIndex =
-        table.f_indexOf(
+        ADTable.f_indexOf(
         self.routes,
         function(v)
             return v.name == name and v.map == mapName
@@ -150,7 +150,7 @@ function ADRoutesManager:remove(name)
     end
     local mapName = AutoDrive.loadedMap
     local routeIndex =
-        table.f_indexOf(
+        ADTable.f_indexOf(
         self.routes,
         function(v)
             return v.name == name and v.map == mapName
@@ -165,10 +165,10 @@ function ADRoutesManager:remove(name)
 end
 
 function ADRoutesManager:getFileName()
-    local fileName = string.random(16)
+    local fileName = ADString.random(16)
     -- finding a not used file name
     while fileExists(self.routesFolder .. fileName .. ".xml") do
-        fileName = string.random(16)
+        fileName = ADString.random(16)
     end
     return fileName
 end
@@ -193,7 +193,7 @@ function ADRoutesManager:saveRoutes()
 end
 
 function ADRoutesManager:getRoutes(map)
-    return table.f_filter(
+    return ADTable.f_filter(
         self.routes,
         function(v)
             return v.map == map

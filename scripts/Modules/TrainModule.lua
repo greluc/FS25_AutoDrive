@@ -27,20 +27,25 @@ function ADTrainModule:reset()
     local spec = self.vehicle.spec_locomotive
     if AutoDrive:getIsEntered(self.vehicle) then
         if spec and spec.state ~= Locomotive.STATE_MANUAL_TRAVEL_ACTIVE then
-            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:reset setLocomotiveState STATE_MANUAL_TRAVEL_ACTIVE from %s", tostring(spec.state))
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAINS) then
+                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:reset setLocomotiveState STATE_MANUAL_TRAVEL_ACTIVE from %s", tostring(spec.state))
+            end
             self.vehicle:setLocomotiveState(Locomotive.STATE_MANUAL_TRAVEL_ACTIVE)
         end
     else
         if spec and spec.state ~= Locomotive.STATE_MANUAL_TRAVEL_INACTIVE then
-            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:reset setLocomotiveState STATE_MANUAL_TRAVEL_INACTIVE from %s", tostring(spec.state))
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAINS) then
+                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:reset setLocomotiveState STATE_MANUAL_TRAVEL_INACTIVE from %s", tostring(spec.state))
+            end
             self.vehicle:setLocomotiveState(Locomotive.STATE_MANUAL_TRAVEL_INACTIVE)
         end
     end
     
     if self.vehicle:getIsMotorStarted() and not AutoDrive:getIsEntered(self.vehicle) then
-        if self.setCruiseControlState then
-            self:setCruiseControlState(Drivable.CRUISECONTROL_STATE_OFF)
-            self:updateVehiclePhysics(0, 0, 0, 16)
+        -- cruise control and physics belong to the vehicle, not to this module
+        if self.vehicle.setCruiseControlState then
+            self.vehicle:setCruiseControlState(Drivable.CRUISECONTROL_STATE_OFF)
+            self.vehicle:updateVehiclePhysics(0, 0, 0, 16)
             self.vehicle:raiseActive()
         end
         self.vehicle:stopMotor()
@@ -65,13 +70,17 @@ function ADTrainModule:setUp()
 end
 
 function ADTrainModule:setPathTo(destinationID)
-    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:setPathTo destinationID %s", tostring(destinationID))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAINS) then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:setPathTo destinationID %s", tostring(destinationID))
+    end
 
     local destination = ADGraphManager:getMapMarkerByWayPointId(destinationID)
     self.vehicle.ad.stateModule:setCurrentDestination(destination)
     self:setUp()
     self.vehicle:raiseActive()
-    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:setPathTo self.destinationID %s", tostring(self.destinationID))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAINS) then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:setPathTo self.destinationID %s", tostring(self.destinationID))
+    end
 end
 
 function ADTrainModule:update(dt)
@@ -109,7 +118,9 @@ function ADTrainModule:update(dt)
     if distance < self.lastDistance then
         -- slow down when approaching to target
         if distance < brakeDistance then
-            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:update shouldBrake distance %s", tostring(distance))
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAINS) then
+                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:update shouldBrake distance %s", tostring(distance))
+            end
             shouldBrake = true
         end
     end
@@ -117,13 +128,17 @@ function ADTrainModule:update(dt)
 
     if distance < self.trainLength + ADTrainModule.TRAINLENGTH_ADDITION and speedReal > ADTrainModule.LOAD_UNLOAD_SPEED then
         -- slow down in destination range
-        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:update shouldBrake destination range distance %s", tostring(distance))
+        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAINS) then
+            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:update shouldBrake destination range distance %s", tostring(distance))
+        end
         shouldBrake = true
     end
 
     if shouldBrake then
         if (g_updateLoopIndex % (60) == 0) then
-            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:update shouldBrake speedReal %s", tostring(speedReal))
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAINS) then
+                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:update shouldBrake speedReal %s", tostring(speedReal))
+            end
         end
 
         if self.vehicle.movingDirection > 0 then
@@ -138,7 +153,9 @@ function ADTrainModule:update(dt)
         end
     else
         if (g_updateLoopIndex % (60) == 0) then
-            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:update drive forward speedReal %s", tostring(speedReal))
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAINS) then
+                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:update drive forward speedReal %s", tostring(speedReal))
+            end
         end
         -- drive forward
         self.vehicle:updateVehiclePhysics(1, 0, 0, dt)
@@ -151,7 +168,9 @@ function ADTrainModule:stopAndHoldVehicle(dt)
     local speedReal = spec.speed * 3.6
     local x, y, z = getWorldTranslation(self.vehicle.components[1].node) 
     local distance = 12345
-    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:stopAndHoldVehicle speedReal %s", tostring(speedReal))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAINS) then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:stopAndHoldVehicle speedReal %s", tostring(speedReal))
+    end
 
     local currentDestination = self.vehicle.ad.stateModule:getCurrentDestination()
     local currentDestinationID = currentDestination and currentDestination.id
@@ -163,7 +182,9 @@ function ADTrainModule:stopAndHoldVehicle(dt)
         if self.lastTrailer then
             local x, y, z = getWorldTranslation(self.lastTrailer.components[1].node)
             distance = MathUtil.vector2Length(wayPoint.x - x, wayPoint.z - z)
-            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:stopAndHoldVehicle distance %s", tostring(distance))
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAINS) then
+                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:stopAndHoldVehicle distance %s", tostring(distance))
+            end
         end
     end
 
@@ -179,10 +200,11 @@ function ADTrainModule:stopAndHoldVehicle(dt)
             if self.vehicle.ad.specialDrivingModule:shouldStopMotor() and self.vehicle:getIsMotorStarted() and (not g_currentMission.missionInfo.automaticMotorStartEnabled) then
                 AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:stopAndHoldVehicle stopMotor")
 
-                if self.setCruiseControlState then
-                    self:setCruiseControlState(Drivable.CRUISECONTROL_STATE_OFF)
-                    self:updateVehiclePhysics(0, 0, 0, 16)
-                    self:raiseActive()
+                -- cruise control and physics belong to the vehicle, not to this module
+                if self.vehicle.setCruiseControlState then
+                    self.vehicle:setCruiseControlState(Drivable.CRUISECONTROL_STATE_OFF)
+                    self.vehicle:updateVehiclePhysics(0, 0, 0, 16)
+                    self.vehicle:raiseActive()
                 end
                 self.vehicle:stopMotor()
             end
@@ -209,7 +231,9 @@ function ADTrainModule:isTargetReached()
             local x, y, z = getWorldTranslation(self.lastTrailer.components[1].node)
             local distance = MathUtil.vector2Length(wayPoint.x - x, wayPoint.z - z)
             if (g_updateLoopIndex % (60) == 0) then
-                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:isTargetReached distance %s", tostring(distance))
+                if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAINS) then
+                    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:isTargetReached distance %s", tostring(distance))
+                end
             end
             ret = distance < ADTrainModule.MIN_TARGET_DISTANCE
             if ret then
@@ -240,7 +264,9 @@ function ADTrainModule:isInRangeToLoadUnloadTarget()
             )
 
     if (g_updateLoopIndex % (60) == 0) then
-        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:isInRangeToLoadUnloadTarget ret %s", tostring(ret))
+        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAINS) then
+            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:isInRangeToLoadUnloadTarget ret %s", tostring(ret))
+        end
     end
 
     return ret
@@ -260,7 +286,9 @@ function ADTrainModule:getLastTrailer()
             end
             trainLength = trainLength + trailer.size.length * 1.5
         end
-        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:getLastTrailer trainLength %s", tostring(trainLength))
+        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_TRAINS) then
+            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_TRAINS, "ADTrainModule:getLastTrailer trainLength %s", tostring(trainLength))
+        end
     end
     return lastTrailer, trainLength
 end

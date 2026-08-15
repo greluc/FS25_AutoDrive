@@ -271,13 +271,17 @@ function AutoDrive.readFromXML(xmlFile)
 
     Logging.info("[AD] AutoDrive.readFromXML waypoints: %s", tostring(ADGraphManager:getWayPointsCount()))
     Logging.info("[AD] AutoDrive.readFromXML markers: %s", tostring(#ADGraphManager:getMapMarkers()))
-    Logging.info("[AD] AutoDrive.readFromXML groups: %s", tostring(table.count(ADGraphManager:getGroups())))
+    Logging.info("[AD] AutoDrive.readFromXML groups: %s", tostring(ADTable.count(ADGraphManager:getGroups())))
 end
 
 function AutoDrive.saveToXML(xmlFile)
 	local xmlFileName = AutoDrive.getXMLFile_new()
 	-- create empty xml file
 	local xmlFile = createXMLFile("AutoDrive_XML", xmlFileName, "AutoDrive") -- use the new file name onwards
+	if xmlFile == nil then
+		Logging.error("[AD] AutoDrive.saveToXML could not create ->%s<- !", tostring(xmlFileName))
+		return
+	end
 
 	setXMLString(xmlFile, "AutoDrive.version", AutoDrive.version)
 	setXMLString(xmlFile, "AutoDrive.MapName", AutoDrive.loadedMap)
@@ -357,10 +361,14 @@ function AutoDrive.saveToXML(xmlFile)
 	end
 
 	saveXMLFile(xmlFile)
+	-- the handle holds the whole graph document in memory, so it has to be released again -
+	-- without this every savegame save leaks one complete copy of the network
+	delete(xmlFile)
+
 	if g_client == nil then
 		Logging.info("[AD] AutoDrive.saveToXML waypoints: %s", tostring(ADGraphManager:getWayPointsCount()))
 		Logging.info("[AD] AutoDrive.saveToXML markers: %s", tostring(#ADGraphManager:getMapMarkers()))
-		Logging.info("[AD] AutoDrive.saveToXML groups: %s", tostring(table.count(ADGraphManager:getGroups())))
+		Logging.info("[AD] AutoDrive.saveToXML groups: %s", tostring(ADTable.count(ADGraphManager:getGroups())))
 	end
 end
 

@@ -87,11 +87,13 @@ function AutoDriveUpdateSettingsEvent:readStream(streamId, connection)
 
 	if streamReadBool(streamId) then
 		vehicle = NetworkUtil.getObject(streamReadInt32(streamId))
-		if vehicle ~= nil then
-			count = streamReadUInt16(streamId)
-			for i = 1, count do
-				local settingName = streamReadString(streamId)
-				local value = streamReadUInt16(streamId)
+		-- the vehicle may be unknown on this client, but the block still has to be read to the
+		-- end - skipping it would leave the userDefault values below reading the wrong bytes
+		count = streamReadUInt16(streamId)
+		for i = 1, count do
+			local settingName = streamReadString(streamId)
+			local value = streamReadUInt16(streamId)
+			if vehicle ~= nil then
 				vehicle.ad.settings[settingName].current = value
 				vehicle.ad.settings[settingName].new = value
 			end

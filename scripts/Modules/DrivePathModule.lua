@@ -43,7 +43,10 @@ function ADDrivePathModule:reset()
     self.isReversing = false
     self.vehicle:setTurnLightState(Lights.TURNLIGHT_OFF)
     self.distanceToTarget = math.huge
-    self.speedLimit = 0
+    -- followWaypoints only re-bases the limit every PERF_FRAMES_HIGH frames, so it has to start
+    -- out on the road limit - a 0 here would latch the brake hysteresis until the next gate frame
+    self.speedLimit = self.vehicle.ad.stateModule:getSpeedLimit()
+    self.maxSpeedDiff = ADDrivePathModule.MAX_SPEED_DEVIATION
     self.lastUsedWayPoint = nil
 
     -- increase steering speed
@@ -213,16 +216,20 @@ function ADDrivePathModule:isCloseToWaypoint()
     end
 
     if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
-        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "ADDrivePathModule:isCloseToWaypoint - start, wpIdx=%d, maxSkip=%d"
-        , self:getCurrentWayPointIndex(), maxSkipWayPoints)
+        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "ADDrivePathModule:isCloseToWaypoint - start, wpIdx=%d, maxSkip=%d"
+            , self:getCurrentWayPointIndex(), maxSkipWayPoints)
+        end
     end
 
     for i = 0, maxSkipWayPoints do
         if self.wayPoints[self:getCurrentWayPointIndex() + i] ~= nil then
             local distanceToCurrentWp = MathUtil.vector2Length(x - self.wayPoints[self:getCurrentWayPointIndex() + i].x, z - self.wayPoints[self:getCurrentWayPointIndex() + i].z)
             if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
-                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "ADDrivePathModule:isCloseToWaypoint(%d/%d) distanceToCurrentWp=%.1f min_distance=%.1f"
-                , i, maxSkipWayPoints, distanceToCurrentWp, self.min_distance)
+                if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+                    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "ADDrivePathModule:isCloseToWaypoint(%d/%d) distanceToCurrentWp=%.1f min_distance=%.1f"
+                    , i, maxSkipWayPoints, distanceToCurrentWp, self.min_distance)
+                end
             end
             if distanceToCurrentWp < self.min_distance then --and i == 0
                 if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
@@ -237,8 +244,10 @@ function ADDrivePathModule:isCloseToWaypoint()
 
                 if angle >= 135 then
                     if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
-                        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "ADDrivePathModule:isCloseToWaypoint(%d/%d) - true angle=%.1f"
-                        , i, maxSkipWayPoints+1, angle)
+                        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+                            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "ADDrivePathModule:isCloseToWaypoint(%d/%d) - true angle=%.1f"
+                            , i, maxSkipWayPoints+1, angle)
+                        end
                     end
                     return true
                 else
@@ -248,14 +257,18 @@ function ADDrivePathModule:isCloseToWaypoint()
                 end
             else
                 if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
-                    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "ADDrivePathModule:isCloseToWaypoint i %d  wp_ahead %s wp_ahead %s"
-                    , i, tostring(wp_ahead), tostring(wp_current))
+                    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+                        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "ADDrivePathModule:isCloseToWaypoint i %d  wp_ahead %s wp_ahead %s"
+                        , i, tostring(wp_ahead), tostring(wp_current))
+                    end
                 end
             end
         else
             if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
-                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "ADDrivePathModule:isCloseToWaypoint self.wayPoints[self:getCurrentWayPointIndex() + i] %s"
-                , tostring(self.wayPoints[self:getCurrentWayPointIndex() + i]))
+                if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+                    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "ADDrivePathModule:isCloseToWaypoint self.wayPoints[self:getCurrentWayPointIndex() + i] %s"
+                    , tostring(self.wayPoints[self:getCurrentWayPointIndex() + i]))
+                end
             end
         end
     end
@@ -271,12 +284,14 @@ function ADDrivePathModule:followWaypoints(dt)
         x, y, z = getWorldTranslation(self.vehicle:getAISteeringNode())
     end
 
-    local maxSpeedDiff = ADDrivePathModule.MAX_SPEED_DEVIATION
     self.acceleration = 1
     self.distanceToLookAhead = 8
 
-    self.speedLimit = self.vehicle.ad.stateModule:getSpeedLimit()
+    -- speedLimit and maxSpeedDiff are members so the refinement below survives the frames on which
+    -- the gate does not run - re-basing them every frame threw the corner and approach limits away
+    -- again on 3 of every 4 frames
     if ((g_updateLoopIndex + self.vehicle.id) % AutoDrive.PERF_FRAMES_HIGH == 0) then
+        self.maxSpeedDiff = ADDrivePathModule.MAX_SPEED_DEVIATION
         self.speedLimit = self.vehicle.ad.stateModule:getSpeedLimit()
         if AutoDrive.checkIsOnField(x, y, z) then
             self.speedLimit = self.vehicle.ad.stateModule:getFieldSpeedLimit() --math.min(self.vehicle.ad.stateModule:getFieldSpeedLimit(), self.speedLimit)
@@ -313,12 +328,12 @@ function ADDrivePathModule:followWaypoints(dt)
         if self.vehicle.ad.trailerModule:isUnloadingToBunkerSilo() then
             -- drive through bunker silo
             self.speedLimit = math.min(self.vehicle.ad.trailerModule:getBunkerSiloSpeed(), self.speedLimit)
-            maxSpeedDiff = 1
+            self.maxSpeedDiff = 1
         else
             if self.distanceToTarget < (ADTriggerManager.getMaxBunkerSiloLength() + AutoDrive.getMaxTriggerDistance(self.vehicle)) and AutoDrive.isVehicleInBunkerSiloArea(self.vehicle) then
                 -- vehicle enters drive through bunker silo
                 self.speedLimit = math.min(12, self.speedLimit)
-                maxSpeedDiff = 3
+                self.maxSpeedDiff = 3
             else
                 local isInRangeToLoadUnloadTarget = AutoDrive.isInRangeToLoadUnloadTarget(self.vehicle) and self.distanceToTarget <= AutoDrive.getMaxTriggerDistance(self.vehicle)
                 if isInRangeToLoadUnloadTarget == true then
@@ -356,7 +371,7 @@ function ADDrivePathModule:followWaypoints(dt)
         if speedDiff <= 0.25 then
             self.brakeHysteresisActive = false
         end
-        if (speedDiff > maxSpeedDiff) or self.brakeHysteresisActive then
+        if (speedDiff > self.maxSpeedDiff) or self.brakeHysteresisActive then
             self.brakeHysteresisActive = true
             
             self.acceleration = -math.min(0.6, speedDiff * 0.05)
@@ -812,8 +827,10 @@ function ADDrivePathModule:checkForReverseSection()
 
     if self.wayPoints == nil or self:getCurrentWayPointIndex() < 1 or #self.wayPoints <= self:getCurrentWayPointIndex() + 1 then
         if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
-            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "ADDrivePathModule:checkForReverseSection wpIdx=%d - first or last segment"
-            , self:getCurrentWayPointIndex())
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "ADDrivePathModule:checkForReverseSection wpIdx=%d - first or last segment"
+                , self:getCurrentWayPointIndex())
+            end
         end
         return self.isReversing, false, false
     end
@@ -845,8 +862,10 @@ function ADDrivePathModule:checkForReverseSection()
     local isLastReverseSection = isReverse and not aheadIsReverse and isSteepTurn
 
     if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
-        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO, "checkForReverseSection end - isReverse %s isLastForwardSection %s isLastReverseSection %s"
-        , tostring(isReverse), tostring(isLastForwardSection), tostring(isLastReverseSection))
+        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_VEHICLEINFO) then
+            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO, "checkForReverseSection end - isReverse %s isLastForwardSection %s isLastReverseSection %s"
+            , tostring(isReverse), tostring(isLastForwardSection), tostring(isLastReverseSection))
+        end
     end
     return isReverse, isLastForwardSection, isLastReverseSection
 end
