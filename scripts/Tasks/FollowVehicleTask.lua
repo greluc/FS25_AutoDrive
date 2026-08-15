@@ -102,7 +102,9 @@ function FollowVehicleTask:abort()
 end
 
 function FollowVehicleTask:finished(propagate)
-    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_COMBINEINFO, "FollowVehicleTask: FollowVehicleTask:finished()")
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_COMBINEINFO) then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_COMBINEINFO, "FollowVehicleTask: FollowVehicleTask:finished()")
+    end
     self.targetVehicle.ad.modes[AutoDrive.MODE_UNLOAD]:unregisterFollowingUnloader()
     self.vehicle.ad.taskModule:setCurrentTaskFinished(propagate)
 end

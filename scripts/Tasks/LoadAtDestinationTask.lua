@@ -42,7 +42,9 @@ function LoadAtDestinationTask:setUp()
     self.filledToUnload = false
     self.retryTime = LoadAtDestinationTask.LOAD_RETRY_TIME
     self.isReverseTriggerReached = false
-    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO, "LoadAtDestinationTask:setUp end self.state %s", tostring(self.state))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_VEHICLEINFO) then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO, "LoadAtDestinationTask:setUp end self.state %s", tostring(self.state))
+    end
 end
 
 function LoadAtDestinationTask:update(dt)
@@ -66,7 +68,9 @@ function LoadAtDestinationTask:update(dt)
         end
     else
         -- STATE_DRIVING
-        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO, "LoadAtDestinationTask:update self.state %s", tostring(self.state))
+        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_VEHICLEINFO) then
+            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO, "LoadAtDestinationTask:update self.state %s", tostring(self.state))
+        end
         if self.vehicle.ad.drivePathModule:isTargetReached() then
             --Check if we have actually loaded / tried to load
             AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO, "LoadAtDestinationTask:update isTargetReached")

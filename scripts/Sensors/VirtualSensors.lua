@@ -35,9 +35,49 @@ function ADSensor:handleSensors(vehicle, dt)
         ADSensor:addSensorsToVehicle(vehicle)
     end
 
+    -- Called from AutoDrive:onUpdate for EVERY AutoDrive capable vehicle, every frame - and
+    -- AutoDrive attaches to anything motorized, drivable and enterable. On a well stocked farm
+    -- that is a few thousand calls per frame that do nothing, because the sensors of an inactive
+    -- vehicle are all disabled and each call only reaches setTriggered(false).
+    --
+    -- Bail out early instead, but only when nothing can be looking at the sensors: the editor and
+    -- the sensor debug channel both draw them, and a sensor that was left triggered would keep
+    -- reporting a stale hit, so reset once on the way out.
+    if not ADSensor.shouldUpdateSensors(vehicle) then
+        if vehicle.ad.sensorsNeedReset then
+            for _, sensor in pairs(vehicle.ad.sensors) do
+                sensor:setTriggered(false)
+            end
+            vehicle.ad.sensorsNeedReset = false
+        end
+        return
+    end
+    vehicle.ad.sensorsNeedReset = true
+
     for _, sensor in pairs(vehicle.ad.sensors) do
         sensor:updateSensor(dt)
     end
+end
+
+-- Whether this vehicle's sensors have to run at all this frame.
+function ADSensor.shouldUpdateSensors(vehicle)
+    if vehicle.ad == nil then
+        return false
+    end
+    if vehicle.ad.stateModule ~= nil and vehicle.ad.stateModule:isActive() then
+        return true
+    end
+    -- Recording draws and evaluates sensors while the driver itself is not active
+    if vehicle.ad.recordingModule ~= nil and vehicle.ad.recordingModule.isRecording then
+        return true
+    end
+    if AutoDrive.isEditorModeEnabled ~= nil and AutoDrive.isEditorModeEnabled() then
+        return true
+    end
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_SENSORINFO) then
+        return true
+    end
+    return false
 end
 
 function ADSensor:addSensorsToVehicle(vehicle)
@@ -172,14 +212,41 @@ function ADSensor:init(vehicle, sensorType, sensorParameters)
     self:loadDynamicParameters(sensorParameters)
 end
 
+-- Width and length the sensors should be built from.
+--
+-- vehicle.size describes the TRACTOR only, taken from its vehicle definition. Every sensor used
+-- to be sized from it, so a trailer wider or longer than the tractor was invisible to obstacle
+-- detection - which is how a trailer ends up catching a tree the tractor cleared.
+--
+-- ADDimensionSensor already measures the real hull of the whole train and stores it in
+-- vehicle.ad.adDimensions (see AutoDrive.getVehicleDimensions in CollisionDetectionUtils.lua).
+-- Those numbers were only read in two places and never used to size the sensors. Prefer them,
+-- and fall back to the vehicle definition when nothing has been measured yet.
+function ADSensor.getTrainDimensions(vehicle)
+    local width, length = vehicle.size.width, vehicle.size.length
+    local dims = vehicle.ad ~= nil and vehicle.ad.adDimensions or nil
+    if dims ~= nil then
+        local left, right = dims.maxWidthLeft, dims.maxWidthRight
+        if left ~= nil and right ~= nil and (left + right) > width then
+            width = left + right
+        end
+        local front, back = dims.maxLengthFront, dims.maxLengthBack
+        if front ~= nil and back ~= nil and (front + back) > length then
+            length = front + back
+        end
+    end
+    return width, length
+end
+
 function ADSensor:loadBaseParameters()
     local vehicle = self.vehicle
     if vehicle ~= nil and vehicle.size.length ~= nil and vehicle.size.width ~= nil then
+        local trainWidth, trainLength = ADSensor.getTrainDimensions(vehicle)
         self.dynamicLength = true
         self.minDynamicLength = 2
         self.dynamicRotation = true
-        self.length = vehicle.size.length
-        self.width = vehicle.size.width * ADSensor.WIDTH_FACTOR
+        self.length = trainLength
+        self.width = trainWidth * ADSensor.WIDTH_FACTOR
         -- self.collisionMask = AIVehicleUtil.COLLISION_MASK
         self.position = ADSensor.POS_FRONT
         self.location = self:getLocationByPosition()

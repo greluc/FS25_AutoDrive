@@ -14,7 +14,7 @@ end
 
 function ADHarvestManager:registerHarvester(harvester)
     ADHarvestManager.debugMsg(harvester, "ADHarvestManager:registerHarvester")
-    if not table.contains(self.idleHarvesters, harvester) and not table.contains(self.harvesters, harvester) then
+    if not ADTable.contains(self.idleHarvesters, harvester) and not ADTable.contains(self.harvesters, harvester) then
         ADHarvestManager.debugMsg(harvester, "ADHarvestManager:registerHarvester - inserted")
         if harvester ~= nil and harvester.ad ~= nil then
             local rootVehicle = harvester:getRootVehicle()
@@ -33,13 +33,13 @@ function ADHarvestManager:unregisterHarvester(harvester)
         rootVehicle.ad.isRegisterdHarvester = false
     end
     if g_server ~= nil then
-        if table.contains(self.idleHarvesters, harvester) then
-            local index = table.indexOf(self.idleHarvesters, harvester)
+        if ADTable.contains(self.idleHarvesters, harvester) then
+            local index = ADTable.indexOf(self.idleHarvesters, harvester)
             local harvester = table.remove(self.idleHarvesters, index)
             ADHarvestManager.debugMsg(harvester, "ADHarvestManager:unregisterHarvester - removed - idleHarvesters")
         end
-        if table.contains(self.harvesters, harvester) then
-            local index = table.indexOf(self.harvesters, harvester)
+        if ADTable.contains(self.harvesters, harvester) then
+            local index = ADTable.indexOf(self.harvesters, harvester)
             local harvester = table.remove(self.harvesters, index)
             ADHarvestManager.debugMsg(harvester, "ADHarvestManager:unregisterHarvester - removed - harvesters")
         end
@@ -50,7 +50,7 @@ function ADHarvestManager:registerAsUnloader(vehicle)
     ADHarvestManager.debugMsg(vehicle, "ADHarvestManager:registerAsUnloader")
     --remove from active and idle list
     self:unregisterAsUnloader(vehicle)
-    if not table.contains(self.idleUnloaders, vehicle) then
+    if not ADTable.contains(self.idleUnloaders, vehicle) then
         ADHarvestManager.debugMsg(vehicle, "ADHarvestManager:registerAsUnloader - inserted")
         table.insert(self.idleUnloaders, vehicle)
     end
@@ -64,11 +64,11 @@ function ADHarvestManager:unregisterAsUnloader(vehicle)
             followingUnloder.ad.modes[AutoDrive.MODE_UNLOAD]:promoteFollowingUnloader(vehicle.ad.modes[AutoDrive.MODE_UNLOAD].combine)
         end
     end
-    if table.contains(self.idleUnloaders, vehicle) then
-        table.removeValue(self.idleUnloaders, vehicle)
+    if ADTable.contains(self.idleUnloaders, vehicle) then
+        ADTable.removeValue(self.idleUnloaders, vehicle)
     end
-    if table.contains(self.activeUnloaders, vehicle) then
-        table.removeValue(self.activeUnloaders, vehicle)
+    if ADTable.contains(self.activeUnloaders, vehicle) then
+        ADTable.removeValue(self.activeUnloaders, vehicle)
         local controlledVehicle = AutoDrive.getControlledVehicle()
         if controlledVehicle ~= nil and vehicle == controlledVehicle then
             --Give the player some time to reset/reposition the fired unloader
@@ -96,7 +96,13 @@ end
 
 function ADHarvestManager:update(dt)
     self.assignmentDelayTimer:timer(true, 10000, dt)
-    for _, idleHarvester in pairs(self.idleHarvesters) do
+
+    -- The three loops below all move harvesters out of the very table they walk. Removing an entry
+    -- shifts every later entry down one slot while the iterator moves on, so the harvester that
+    -- slid into the freed slot was never visited - it silently stayed idle until some later frame
+    -- happened to remove nothing. Each loop therefore only marks now and mutates after the walk.
+    local activatedHarvesters = {}
+    for _, idleHarvester in ipairs(self.idleHarvesters) do
         local vehicle = idleHarvester
         if vehicle.isTrailedHarvester then
             vehicle = vehicle.trailingVehicle
@@ -104,10 +110,15 @@ function ADHarvestManager:update(dt)
         if (vehicle.getIsAIActive ~= nil and vehicle:getIsAIActive()) or (AutoDrive:getIsEntered(vehicle:getRootVehicle()) and AutoDrive.isPipeOut(vehicle)) then
             -- ADHarvestManager.debugMsg(idleHarvester, "ADHarvestManager:update add to harvesters")
             table.insert(self.harvesters, idleHarvester)
-            table.removeValue(self.idleHarvesters, idleHarvester)
+            activatedHarvesters[idleHarvester] = true
         end
     end
-    for _, harvester in pairs(self.harvesters) do
+    if next(activatedHarvesters) ~= nil then
+        ADTable.removeAll(self.idleHarvesters, function(v) return activatedHarvesters[v] == true end)
+    end
+
+    local idledHarvesters = {}
+    for _, harvester in ipairs(self.harvesters) do
         local vehicle = harvester
         if vehicle.isTrailedHarvester then
             vehicle = vehicle.trailingVehicle
@@ -119,7 +130,7 @@ function ADHarvestManager:update(dt)
         then
             -- ADHarvestManager.debugMsg(harvester, "ADHarvestManager:update change to idleHarvesters")
             table.insert(self.idleHarvesters, harvester)
-            table.removeValue(self.harvesters, harvester)
+            idledHarvesters[harvester] = true
 
             if unloader ~= nil then
                 -- ADHarvestManager.debugMsg(harvester, "ADHarvestManager:update fireUnloader %s"
@@ -129,8 +140,12 @@ function ADHarvestManager:update(dt)
             end
         end
     end
+    if next(idledHarvesters) ~= nil then
+        ADTable.removeAll(self.harvesters, function(v) return idledHarvesters[v] == true end)
+    end
 
-    for _, harvester in pairs(self.harvesters) do
+    local staleHarvesters = {}
+    for _, harvester in ipairs(self.harvesters) do
         if harvester ~= nil and g_currentMission.nodeToObject[harvester.components[1].node] ~= nil and entityExists(harvester.components[1].node) then
             --if self.assignmentDelayTimer:done() then
                 if not self:alreadyAssignedUnloader(harvester) then
@@ -163,8 +178,11 @@ function ADHarvestManager:update(dt)
             --end
         else
             -- ADHarvestManager.debugMsg(harvester, "ADHarvestManager:update remove from harvesters")
-            table.removeValue(self.harvesters, harvester)
+            staleHarvesters[harvester] = true
         end
+    end
+    if next(staleHarvesters) ~= nil then
+        ADTable.removeAll(self.harvesters, function(v) return staleHarvesters[v] == true end)
     end
 
     local function updateMovementTimers(harvester)
@@ -304,7 +322,7 @@ function ADHarvestManager:assignUnloaderToHarvester(harvester)
         ADHarvestManager.debugMsg(closestUnloader, "ADHarvestManager:assignUnloaderToHarvester ")
         closestUnloader.ad.modes[AutoDrive.MODE_UNLOAD]:assignToHarvester(harvester)
         table.insert(self.activeUnloaders, closestUnloader)
-        table.removeValue(self.idleUnloaders, closestUnloader)
+        ADTable.removeValue(self.idleUnloaders, closestUnloader)
     end
 end
 
@@ -362,11 +380,18 @@ function ADHarvestManager:hasHarvesterAvailableUnloader(harvester)
     return false
 end
 
+--- Registered as a vehicle function in Specialization.lua, so self is the harvester, not the manager.
 function ADHarvestManager:adHasHarvesterAvailableUnloader()
-    AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO, "ADHarvestManager:adHasHarvesterAvailableUnloader hasHarvesterAvailableUnloader %s "
-    , tostring(ADHarvestManager:hasHarvesterAvailableUnloader(self))
-    )
-    return ADHarvestManager:hasHarvesterAvailableUnloader(self)
+    -- Evaluated once: Lua builds the whole argument list before debugPrint can decide the channel
+    -- is off, so passing the call inline made every Courseplay pipe query walk both unloader lists
+    -- a second time for a message nobody sees.
+    local hasAvailableUnloader = ADHarvestManager:hasHarvesterAvailableUnloader(self)
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
+        AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO, "ADHarvestManager:adHasHarvesterAvailableUnloader hasHarvesterAvailableUnloader %s "
+        , tostring(hasAvailableUnloader)
+        )
+    end
+    return hasAvailableUnloader
 end
 
 function ADHarvestManager:hasHarvesterPotentialUnloaders(harvester)
@@ -383,7 +408,12 @@ function ADHarvestManager:hasHarvesterPotentialUnloaders(harvester)
         end
     end
     for _, other in pairs(AutoDrive.getAllVehicles()) do
-        if other ~= self.vehicle and other.ad ~= nil and other.ad.stateModule ~= nil and other.ad.stateModule:isActive() and other.ad.stateModule:getFirstMarker() == harvester.ad.stateModule:getFirstMarker() and other.ad.stateModule:getMode() == AutoDrive.MODE_UNLOAD then
+        -- Was "other ~= self.vehicle". ADHarvestManager is a singleton manager and never had a
+        -- .vehicle field, so the guard was always true and filtered nothing; what it was meant to
+        -- skip cannot be recovered from the code. Excluding the harvester itself is the reading
+        -- that cannot corrupt the purpose of the function - a harvester is not its own unloader,
+        -- and every genuine unloader is still counted.
+        if other ~= harvester and other.ad ~= nil and other.ad.stateModule ~= nil and other.ad.stateModule:isActive() and other.ad.stateModule:getFirstMarker() == harvester.ad.stateModule:getFirstMarker() and other.ad.stateModule:getMode() == AutoDrive.MODE_UNLOAD then
             return true
         end
     end

@@ -22,7 +22,9 @@ function LoadMode:reset()
 end
 
 function LoadMode:start(user)
-	AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "LoadMode:start start self.state %s", tostring(self.state))
+	if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+	    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "LoadMode:start start self.state %s", tostring(self.state))
+	end
     if not self.vehicle.ad.stateModule:isActive() then
         self.vehicle:startAutoDrive()
     end
@@ -54,7 +56,9 @@ function LoadMode:stop()
 end
 
 function LoadMode:continue()
-	AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "LoadMode:continue start self.state %s", tostring(self.state))
+	if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+	    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "LoadMode:continue start self.state %s", tostring(self.state))
+	end
     local shouldChangeState = false
     if self.state == LoadMode.STATE_LOAD then
         shouldChangeState = true
@@ -63,7 +67,9 @@ function LoadMode:continue()
         shouldChangeState = true
     end
     if shouldChangeState == true then
-        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "LoadMode:continue changed to self.state %s", tostring(self.state))
+        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "LoadMode:continue changed to self.state %s", tostring(self.state))
+        end
         if self.activeTask ~= nil then
             self.vehicle.ad.taskModule:abortCurrentTask()
         end
@@ -77,7 +83,9 @@ function LoadMode:continue()
 end
 
 function LoadMode:getNextTask()
-	AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "LoadMode:getNextTask start self.state %s", tostring(self.state))
+	if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+	    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "LoadMode:getNextTask start self.state %s", tostring(self.state))
+	end
     local nextTask
 
 	local x, y, z = getWorldTranslation(self.vehicle.components[1].node)
@@ -93,7 +101,9 @@ function LoadMode:getNextTask()
     local _, _, filledToUnload = AutoDrive.getAllFillLevels(self.trailers)
 
 	if self.state == LoadMode.STATE_INIT then
-		AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "LoadMode:getNextTask STATE_INIT self.state %s distanceToStart %s", tostring(self.state), tostring(distanceToStart))
+		if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+		    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "LoadMode:getNextTask STATE_INIT self.state %s distanceToStart %s", tostring(self.state), tostring(distanceToStart))
+		end
 		if AutoDrive.checkIsOnField(x, y, z)  and distanceToStart > 30 then
 			-- is activated on a field - use ExitFieldTask to leave field according to setting
 			AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "LoadMode:getNextTask set STATE_EXIT_FIELD")
@@ -106,7 +116,9 @@ function LoadMode:getNextTask()
 			AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "LoadMode:getNextTask set STATE_TO_TARGET")
 			self.state = LoadMode.STATE_TO_TARGET
 		end
-		AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "LoadMode:getNextTask STATE_INIT end self.state %s", tostring(self.state))
+		if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+		    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "LoadMode:getNextTask STATE_INIT end self.state %s", tostring(self.state))
+		end
 	end
 
 	if self.state == LoadMode.STATE_TO_TARGET then

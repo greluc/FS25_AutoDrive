@@ -5,6 +5,9 @@ UnloadAtDestinationTask.STATE_DRIVING = 2
 UnloadAtDestinationTask.STATE_WAIT_FOR_AL_UNLOAD = 3
 UnloadAtDestinationTask.WAIT_FOR_BALE_UNLOAD = 20000
 UnloadAtDestinationTask.BALE_UNLOAD_DISTANCE = 5
+--- How often the pathfinder may come back empty before the driver gives up. The retries exist
+--- because a blocked exit or a vehicle in the way usually clears itself within a few attempts.
+UnloadAtDestinationTask.MAX_FAILED_PATHFINDER = 5
 
 function UnloadAtDestinationTask:new(vehicle, destinationID)
     local o = UnloadAtDestinationTask:create()
@@ -17,6 +20,7 @@ function UnloadAtDestinationTask:new(vehicle, destinationID)
     o.waitForBaleUnloadTimer = AutoDriveTON:new()
     o.isReverseTriggerReached = false
     o.trailers = nil
+    o.failedPathFinder = 0
     return o
 end
 
@@ -56,6 +60,7 @@ function UnloadAtDestinationTask:setUp()
     end
     self.baleUnloadForwardsTarget = nil
     self.isReverseTriggerReached = false
+    self.failedPathFinder = 0
 end
 
 function UnloadAtDestinationTask:update(dt)
@@ -64,7 +69,14 @@ function UnloadAtDestinationTask:update(dt)
         if self.vehicle.ad.pathFinderModule:hasFinished() then
             self.wayPoints = self.vehicle.ad.pathFinderModule:getPath()
             if self.wayPoints == nil or #self.wayPoints == 0 then
-                if self.vehicle.ad.pathFinderModule:isTargetBlocked() then
+                self.failedPathFinder = self.failedPathFinder + 1
+                if self.failedPathFinder > UnloadAtDestinationTask.MAX_FAILED_PATHFINDER then
+                    -- retried often enough - the destination really cannot be reached from here
+                    Logging.error("[AutoDrive] Could not calculate path - shutting down")
+                    self.vehicle.ad.taskModule:abortAllTasks()
+                    self.vehicle:stopAutoDrive()
+                    AutoDriveMessageEvent.sendMessageOrNotification(self.vehicle, ADMessagesManager.messageTypes.ERROR, "$l10n_AD_Driver_of; %s $l10n_AD_cannot_find_path;", 5000, self.vehicle.ad.stateModule:getName())
+                elseif self.vehicle.ad.pathFinderModule:isTargetBlocked() then
                     -- If the selected field exit isn't reachable, try the closest one
                     self.vehicle.ad.pathFinderModule:reset()
                     self.vehicle.ad.pathFinderModule:startPathPlanningToNetwork(self.vehicle.ad.stateModule:getSecondWayPoint())
@@ -78,11 +90,6 @@ function UnloadAtDestinationTask:update(dt)
                     self.vehicle.ad.pathFinderModule:reset()
                     self.vehicle.ad.pathFinderModule:startPathPlanningToNetwork(self.vehicle.ad.stateModule:getSecondWayPoint())
                 end
-
-                Logging.error("[AutoDrive] Could not calculate path - shutting down")
-                self.vehicle.ad.taskModule:abortAllTasks()
-                self.vehicle:stopAutoDrive()
-                AutoDriveMessageEvent.sendMessageOrNotification(self.vehicle, ADMessagesManager.messageTypes.ERROR, "$l10n_AD_Driver_of; %s $l10n_AD_cannot_find_path;", 5000, self.vehicle.ad.stateModule:getName())
             else
                 self.vehicle.ad.drivePathModule:setWayPoints(self.wayPoints)
                 --self.vehicle.ad.drivePathModule:appendPathTo(self.wayPoints[#self.wayPoints], self.destinationID)

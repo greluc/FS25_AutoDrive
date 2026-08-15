@@ -129,6 +129,9 @@ function EmptyHarvesterTask:update(dt)
                 self.vehicle.ad.modes[AutoDrive.MODE_UNLOAD].lastBreadCrumb = nil
                 self.vehicle.ad.taskModule:addTask(FollowCombineTask:new(self.vehicle, self.combine))
                 self.vehicle.ad.taskModule:setCurrentTaskFinished(ADTaskModule.DONT_PROPAGATE)
+                -- setCurrentTaskFinished already made the FollowCombineTask the active one.
+                -- Running on would let the code below finish that new task instead of this one.
+                return
             end
         end
 

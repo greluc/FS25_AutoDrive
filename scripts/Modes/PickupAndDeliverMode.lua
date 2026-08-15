@@ -28,7 +28,9 @@ function PickupAndDeliverMode:reset()
 end
 
 function PickupAndDeliverMode:start(user)
-    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:start start self.state %s", tostring(self.state))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:start start self.state %s", tostring(self.state))
+    end
 
     if not self.vehicle.ad.stateModule:isActive() then
         self.vehicle:startAutoDrive()
@@ -44,7 +46,9 @@ function PickupAndDeliverMode:start(user)
     if self.activeTask ~= nil then
         self.vehicle.ad.taskModule:addTask(self.activeTask)
     end
-    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:start end self.state %s", tostring(self.state))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:start end self.state %s", tostring(self.state))
+    end
 end
 
 function PickupAndDeliverMode:monitorTasks(dt)
@@ -80,7 +84,9 @@ end
 
 function PickupAndDeliverMode:getNextTask(forced)
     local nextTask
-    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask start forced %s self.state %s", tostring(forced), tostring(self.state))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask start forced %s self.state %s", tostring(forced), tostring(self.state))
+    end
 
     local x, y, z = getWorldTranslation(self.vehicle.components[1].node)
     local point = nil
@@ -92,7 +98,9 @@ function PickupAndDeliverMode:getNextTask(forced)
         end
     end
     local fillLevel, _, filledToUnload = AutoDrive.getAllFillLevels(self.trailers)
-    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask filledToUnload %s isCpFull %s", tostring(filledToUnload), tostring(self.vehicle.ad.isCpFull))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask filledToUnload %s isCpFull %s", tostring(filledToUnload), tostring(self.vehicle.ad.isCpFull))
+    end
     filledToUnload = filledToUnload or self.vehicle.ad.isCpFull
 
     local setPickupTarget = function()
@@ -104,9 +112,13 @@ function PickupAndDeliverMode:getNextTask(forced)
             local nextTarget = ADMultipleTargetsManager:getNextPickup(self.vehicle, forced)
             if nextTarget ~= nil then
                 self.vehicle.ad.stateModule:setFirstMarker(nextTarget)
-                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:setPickupTarget setFirstMarker -> nextTarget getFirstMarkerName() %s", tostring(self.vehicle.ad.stateModule:getFirstMarkerName()))
+                if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+                    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:setPickupTarget setFirstMarker -> nextTarget getFirstMarkerName() %s", tostring(self.vehicle.ad.stateModule:getFirstMarkerName()))
+                end
             end
-            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:setPickupTarget getFirstMarkerName() %s", tostring(self.vehicle.ad.stateModule:getFirstMarkerName()))
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:setPickupTarget getFirstMarkerName() %s", tostring(self.vehicle.ad.stateModule:getFirstMarkerName()))
+            end
         elseif self.vehicle.ad.stateModule:getAutomaticPickupTarget() then
             local pickupStation = ADTriggerManager:getBestPickupLocationFor(self.vehicle, self.trailers, self.vehicle.ad.stateModule:getFillType())
             if pickupStation ~= nil then
@@ -127,9 +139,13 @@ function PickupAndDeliverMode:getNextTask(forced)
             local nextTarget = ADMultipleTargetsManager:getNextTarget(self.vehicle, forced)
             if nextTarget ~= nil then
                 self.vehicle.ad.stateModule:setSecondMarker(nextTarget)
-                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:setDeliverTarget setSecondMarker -> nextTarget getSecondMarkerName() %s", tostring(self.vehicle.ad.stateModule:getSecondMarkerName()))
+                if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+                    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:setDeliverTarget setSecondMarker -> nextTarget getSecondMarkerName() %s", tostring(self.vehicle.ad.stateModule:getSecondMarkerName()))
+                end
             end
-            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:setDeliverTarget getSecondMarkerName() %s", tostring(self.vehicle.ad.stateModule:getSecondMarkerName()))
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:setDeliverTarget getSecondMarkerName() %s", tostring(self.vehicle.ad.stateModule:getSecondMarkerName()))
+            end
         else
             if self.vehicle.ad.stateModule:getAutomaticUnloadTarget() then
                 local sellingStation = ADTriggerManager:getHighestPayingSellStation(self.vehicle.ad.stateModule:getFillType())
@@ -144,7 +160,9 @@ function PickupAndDeliverMode:getNextTask(forced)
     end
 
     if self.state == PickupAndDeliverMode.STATE_INIT then
-        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask STATE_INIT self.state %s distanceToStart %s", tostring(self.state), tostring(distanceToStart))
+        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask STATE_INIT self.state %s distanceToStart %s", tostring(self.state), tostring(distanceToStart))
+        end
         if (AutoDrive.checkIsOnField(x, y, z) and ADGraphManager:getDistanceFromNetwork(self.vehicle) > 30) or AutoDrive:getIsCPActive(self.vehicle) then
             -- is activated on a field - use ExitFieldTask to leave field according to setting
             AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask set STATE_EXIT_FIELD")
@@ -158,7 +176,9 @@ function PickupAndDeliverMode:getNextTask(forced)
             AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask set STATE_DELIVER")
             self.state = PickupAndDeliverMode.STATE_DELIVER
         end
-        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask STATE_INIT end self.state %s", tostring(self.state))
+        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask STATE_INIT end self.state %s", tostring(self.state))
+        end
     end
 
     if self.state == PickupAndDeliverMode.STATE_PICKUP_FROM_NEXT_TARGET then
@@ -188,16 +208,22 @@ function PickupAndDeliverMode:getNextTask(forced)
 
     if self.state == PickupAndDeliverMode.STATE_DELIVER then
         -- STATE_DELIVER - drive to load destination
-        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask STATE_DELIVER loopsDone %s", tostring(self.vehicle.ad.stateModule:getLoopsDone()))
+        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask STATE_DELIVER loopsDone %s", tostring(self.vehicle.ad.stateModule:getLoopsDone()))
+        end
         -- if self.vehicle.ad.stateModule:getLoopCounter() == 0 or self.vehicle.ad.stateModule:getLoopsDone() < self.vehicle.ad.stateModule:getLoopCounter() or ((AutoDrive.getSetting("rotateTargets", self.vehicle) == AutoDrive.RT_ONLYPICKUP or AutoDrive.getSetting("rotateTargets", self.vehicle) == AutoDrive.RT_PICKUPANDDELIVER) and AutoDrive.getSetting("useFolders")) then
         if self.vehicle.ad.stateModule:getLoopCounter() == 0 or self.vehicle.ad.stateModule:getLoopsDone() < self.vehicle.ad.stateModule:getLoopCounter() then
             -- until loops not finished or 0 - drive to load destination
             setPickupTarget()   -- if rotateTargets is set, set the next pickup target
-            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask LoadAtDestinationTask... getFirstMarkerName() %s", tostring(self.vehicle.ad.stateModule:getFirstMarkerName()))
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask LoadAtDestinationTask... getFirstMarkerName() %s", tostring(self.vehicle.ad.stateModule:getFirstMarkerName()))
+            end
             nextTask = LoadAtDestinationTask:new(self.vehicle, self.vehicle.ad.stateModule:getFirstMarker().id)
             AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask set STATE_PICKUP_FROM_NEXT_TARGET")
             self.state = PickupAndDeliverMode.STATE_PICKUP_FROM_NEXT_TARGET
-            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask loopsDone %s", tostring(self.vehicle.ad.stateModule:getLoopsDone()))
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask loopsDone %s", tostring(self.vehicle.ad.stateModule:getLoopsDone()))
+            end
         else
             -- if loops are finished - drive to park destination and stop AD
             AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask DriveToDestinationTask...")
@@ -208,7 +234,9 @@ function PickupAndDeliverMode:getNextTask(forced)
     elseif self.state == PickupAndDeliverMode.STATE_PICKUP then
         -- STATE_PICKUP - drive to unload destination
         setDeliverTarget()      -- if rotateTargets is set, set the next deliver target
-        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask STATE_PICKUP UnloadAtDestinationTask... getSecondMarkerName() %s", tostring(self.vehicle.ad.stateModule:getSecondMarkerName()))
+        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask STATE_PICKUP UnloadAtDestinationTask... getSecondMarkerName() %s", tostring(self.vehicle.ad.stateModule:getSecondMarkerName()))
+        end
         nextTask = UnloadAtDestinationTask:new(self.vehicle, self.vehicle.ad.stateModule:getSecondMarker().id)
         self.vehicle.ad.isCpFull = false
         AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask set STATE_DELIVER_TO_NEXT_TARGET")
@@ -242,14 +270,18 @@ function PickupAndDeliverMode:getNextTask(forced)
         -- message for reached park position send by ParkTask as only there the correct destination is known
     else
         -- error path - should never appear!
-        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask self.state %s NO nextTask assigned !!!", tostring(self.state))
+        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask self.state %s NO nextTask assigned !!!", tostring(self.state))
+        end
         self.vehicle.ad.stateModule:setLoopsDone(0)
         nextTask = StopAndDisableADTask:new(self.vehicle, ADTaskModule.DONT_PROPAGATE)
         self.state = PickupAndDeliverMode.STATE_FINISHED
         AutoDriveMessageEvent.sendMessageOrNotification(self.vehicle, ADMessagesManager.messageTypes.ERROR, "$l10n_AD_Driver_of; %s $l10n_AD_has_reached; %s", 5000, self.vehicle.ad.stateModule:getName(), "???")
     end
 
-    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask end loopsDone %s self.state %s", tostring(self.vehicle.ad.stateModule:getLoopsDone()), tostring(self.state))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "PickupAndDeliverMode:getNextTask end loopsDone %s self.state %s", tostring(self.vehicle.ad.stateModule:getLoopsDone()), tostring(self.state))
+    end
     return nextTask
 end
 

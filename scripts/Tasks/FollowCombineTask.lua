@@ -13,10 +13,25 @@ FollowCombineTask.STATE_GENERATE_UTURN_PATH = {}
 FollowCombineTask.STATE_DRIVE_UTURN_PATH = {}
 
 FollowCombineTask.MAX_REVERSE_DISTANCE = 20
+FollowCombineTask.RETREAT_DISTANCE = 6
 FollowCombineTask.MIN_COMBINE_DISTANCE = 25
+FollowCombineTask.COMBINE_DISTANCE_MARGIN = 3
 FollowCombineTask.MAX_REVERSE_TIME = 30000
 FollowCombineTask.MAX_TURN_TIME = 60000
-FollowCombineTask.MAX_STUCK_TIME = 60000
+--- The stuck criterion is "commanded to drive but standing still", which cannot be triggered by
+--- waiting for the harvester. That makes a short timeout safe - the old 60 s only existed because
+--- "standing still" alone could not tell being stuck from deliberately waiting.
+FollowCombineTask.MAX_STUCK_TIME = 8000
+FollowCombineTask.MIN_STUCK_TIME = 3000
+FollowCombineTask.STUCK_SPEED = 0.0002
+FollowCombineTask.MIN_COMMANDED_SPEED = 1
+-- Beyond this angle the chase point lies behind the unloader; driving to it during a turn
+-- means turning into the harvester. 90 degrees is "no longer ahead of us at all".
+FollowCombineTask.MAX_TURN_CHASE_ANGLE = 90
+-- How long a backup request from a reversing Courseplay harvester stays valid. Long enough to
+-- survive a frame or two of latency, short enough that a stale request cannot make the
+-- unloader retreat from a harvester that has long since driven off.
+FollowCombineTask.BACKUP_REQUEST_VALID_TIME = 3000
 FollowCombineTask.WAIT_BEFORE_FINISH_TIME = 8000
 
 function FollowCombineTask:new(vehicle, combine)
@@ -36,6 +51,10 @@ function FollowCombineTask:new(vehicle, combine)
     o.startedChasing = false
     o.reverseTimer = AutoDriveTON:new()
     o.waitTimer = AutoDriveTON:new()
+    o.waitForChasePos = false
+    o.stuckReactions = 0
+    o.reverseDistance = FollowCombineTask.MAX_REVERSE_DISTANCE
+    o.resumeChasingAfterReverse = false
     o.chasePos, o.chaseSide = vehicle.ad.modes[AutoDrive.MODE_UNLOAD]:getPipeChasePosition()
     o.angleToCombineHeading = vehicle.ad.modes[AutoDrive.MODE_UNLOAD]:getAngleToCombineHeading()
     o.angleToCombine = vehicle.ad.modes[AutoDrive.MODE_UNLOAD]:getAngleToCombine()
@@ -50,6 +69,7 @@ function FollowCombineTask:setUp()
     FollowCombineTask.debugMsg(self.vehicle, "FollowCombineTask setUp")
     self.lastChaseSide = self.chaseSide
     self.trailers, _ = AutoDrive.getAllUnits(self.vehicle)
+    self.tractorTrainLength = AutoDrive.getTractorTrainLength(self.vehicle, true, false)
     self.activeUnloading = AutoDrive.getSetting("activeUnloading", self.combineRootVehicle)
     AutoDrive.setTrailerCoverOpen(self.vehicle, self.trailers, true)
 end
@@ -68,7 +88,9 @@ function FollowCombineTask:update(dt)
         self:resetAllTimers()
     end
 
-    local checkForStuck = (self.vehicle.lastSpeedReal <= 0.0002) and (
+    -- standing still is only being stuck while the driver is actually asked to move - the wait
+    -- states park the vehicle on purpose and must not feed the stuck timer
+    local checkForStuck = self:isCommandedToDrive() and (self.vehicle.lastSpeedReal <= self.STUCK_SPEED) and (
         self.state == FollowCombineTask.STATE_CHASING
         or self.state == FollowCombineTask.STATE_WAIT_FOR_TURN
         or self.state == FollowCombineTask.STATE_WAIT_FOR_COMBINE_TO_PASS_BY
@@ -76,23 +98,38 @@ function FollowCombineTask:update(dt)
         or self.state == FollowCombineTask.STATE_DRIVE_UTURN_PATH
     )
 
-    self.stuckTimer:timer(checkForStuck, self.MAX_STUCK_TIME, dt)
-    if self.stuckTimer:done()
-        -- or AutoDrive.getDistanceBetween(self.vehicle, self.combine) < self.MIN_COMBINE_DISTANCE 
-        then
-        -- got stuck or to close to combine -> reverse
-        FollowCombineTask.debugMsg(self.vehicle, "FollowCombineTask:update - STATE_DRIVING stuck")
-        local x, y, z = getWorldTranslation(self.vehicle.components[1].node)
-        self.reverseStartLocation = {x = x, y = y, z = z}
-        if self.combine.ad.isChopper then
-            self.state = FollowCombineTask.STATE_REVERSING_FROM_CHOPPER
-        else
-            self.state = FollowCombineTask.STATE_REVERSING -- reverse to get room from harvester
-        end
+    -- inside the harvester's safety distance there is nothing to gain from waiting the full
+    -- timeout - we are grinding against it, so react quickly
+    local stuckTime = self.MAX_STUCK_TIME
+    if self.distanceToCombine < self:getMinCombineDistance() then
+        stuckTime = self.MIN_STUCK_TIME
+    end
+
+    self.stuckTimer:timer(checkForStuck, stuckTime, dt)
+    if self.stuckTimer:done() then
+        self:reactToBeingStuck()
+    end
+
+    -- C2: a Courseplay harvester cannot reverse out of its turn because we are behind it.
+    --
+    -- Courseplay looks for a Courseplay drive strategy on the blocking vehicle and asks it to back
+    -- up. We have no such strategy, so before this the request reached nobody: the harvester could
+    -- not reverse, we never learned we were in the way, and both sat there until something else
+    -- timed out. AutoDrive:requestBackupForReversingCombine records the request, this acts on it.
+    if self:hasPendingBackupRequest() then
+        self:startBackupForReversingCombine()
     end
 
     if self.state == FollowCombineTask.STATE_CHASING then
         self.chaseTimer:timer(true, 4000, dt)
+
+        -- C1: tell a Courseplay harvester it may let us close.
+        --
+        -- Without this the harvester treats its own unloader as a generic obstacle: it slows down
+        -- and eventually stops for the very vehicle that came to empty it. The registration on the
+        -- Courseplay side expires after about a second, so it has to be repeated while we still
+        -- want to be tolerated - which is exactly the duration of the chase.
+        AutoDrive:requestCourseplayProximity(self.vehicle, self.combine)
 
         if self.combine.ad.isChopper then
             if self.filled and self.chaseSide ~= nil and self.chaseSide ~= AutoDrive.CHASEPOS_REAR then
@@ -148,7 +185,7 @@ function FollowCombineTask:update(dt)
         end
 
         if (not self.vehicle.ad.modes[AutoDrive.MODE_UNLOAD]:isUnloaderOnCorrectSide(self.chaseSide)) and (not AutoDrive.combineIsTurning(self.combine)) then
-            if self.lastChaseSide ~= CombineUnloaderMode.CHASEPOS_REAR then
+            if self.lastChaseSide ~= AutoDrive.CHASEPOS_REAR then
                 FollowCombineTask.debugMsg(self.vehicle, "FollowCombineTask:update STATE_CHASING - switching chase side from side to elsewhere - let's wait for passby next")
                 self.state = FollowCombineTask.STATE_WAIT_FOR_PASS_BY
                 return
@@ -210,8 +247,14 @@ function FollowCombineTask:update(dt)
                         self.vehicle.ad.specialDrivingModule:stopVehicle()
                         self.vehicle.ad.specialDrivingModule:update(dt)
                     else
-                        FollowCombineTask.debugMsg(self.vehicle, "FollowCombineTask:update STATE_WAIT_FOR_TURN -> followChasePoint self.chaseSide %s", tostring(self.chaseSide))
-                        self:followChasePoint(dt)
+                        if self:isChasePointReachableDuringTurn() then
+                            FollowCombineTask.debugMsg(self.vehicle, "FollowCombineTask:update STATE_WAIT_FOR_TURN -> followChasePoint self.chaseSide %s", tostring(self.chaseSide))
+                            self:followChasePoint(dt)
+                        else
+                            FollowCombineTask.debugMsg(self.vehicle, "FollowCombineTask:update STATE_WAIT_FOR_TURN - chase point behind us (%.0f deg) -> stopVehicle", self:getAngleToChasePos())
+                            self.vehicle.ad.specialDrivingModule:stopVehicle()
+                            self.vehicle.ad.specialDrivingModule:update(dt)
+                        end
                     end
                 else
                     -- isFixedPipeChopper
@@ -225,8 +268,14 @@ function FollowCombineTask:update(dt)
                         self.vehicle.ad.specialDrivingModule:stopVehicle()
                         self.vehicle.ad.specialDrivingModule:update(dt)
                     else
-                        FollowCombineTask.debugMsg(self.vehicle, "FollowCombineTask:update STATE_WAIT_FOR_TURN -> followChasePoint no AutoAimingChopper")
-                        self:followChasePoint(dt)
+                        if self:isChasePointReachableDuringTurn() then
+                            FollowCombineTask.debugMsg(self.vehicle, "FollowCombineTask:update STATE_WAIT_FOR_TURN -> followChasePoint no AutoAimingChopper")
+                            self:followChasePoint(dt)
+                        else
+                            FollowCombineTask.debugMsg(self.vehicle, "FollowCombineTask:update STATE_WAIT_FOR_TURN - chase point behind us (%.0f deg) -> stopVehicle", self:getAngleToChasePos())
+                            self.vehicle.ad.specialDrivingModule:stopVehicle()
+                            self.vehicle.ad.specialDrivingModule:update(dt)
+                        end
                     end
                     self.dischargeTimer:timer(dischargeState ~= Dischargeable.DISCHARGE_STATE_OBJECT , 500, dt)
                     if self.dischargeTimer:done() and self.fillingTimer:done() and self.combine.ad.noMovementTimer.elapsedTime < 5000 then
@@ -296,8 +345,16 @@ function FollowCombineTask:update(dt)
         local x, y, z = getWorldTranslation(self.vehicle.components[1].node)
         local distanceToReverseStart = MathUtil.vector2Length(x - self.reverseStartLocation.x, z - self.reverseStartLocation.z)
         self.reverseTimer:timer(true, self.MAX_REVERSE_TIME, dt)
-        local doneReversing = distanceToReverseStart > self.MAX_REVERSE_DISTANCE or (not self.startedChasing)
+        local doneReversing = distanceToReverseStart > self.reverseDistance or (not self.startedChasing)
         if doneReversing or self.reverseTimer:done() then
+            if self.resumeChasingAfterReverse then
+                -- a short retreat is meant to free the driver, not to hand the job back to the mode
+                FollowCombineTask.debugMsg(self.vehicle, "FollowCombineTask:update STATE_REVERSING - retreat done - chasing again")
+                self.resumeChasingAfterReverse = false
+                self.reverseDistance = self.MAX_REVERSE_DISTANCE
+                self.state = FollowCombineTask.STATE_CHASING
+                return
+            end
             FollowCombineTask.debugMsg(self.vehicle, "FollowCombineTask:update STATE_REVERSING - done reversing - set finished")
             self.state = FollowCombineTask.STATE_WAIT_BEFORE_FINISH
             return
@@ -452,15 +509,127 @@ function FollowCombineTask:updateStates(dt)
         
         self.activeUnloading = AutoDrive.getSetting("activeUnloading", self.combineRootVehicle)
     end
-    self:shouldWaitForChasePos(dt)
+    -- Evaluated once per frame and cached: shouldWaitForChasePos advances angleWrongTimer, so a
+    -- second call from followChasePoint would add dt twice and halve the timer's configured time.
+    self.waitForChasePos = self:shouldWaitForChasePos(dt)
 end
 
 function FollowCombineTask:reverse(dt)
     self.vehicle.ad.specialDrivingModule:driveReverse(dt, 15, 1, self.vehicle.ad.trailerModule:canBeHandledInReverse())
 end
 
+--- True while the driver is commanded to move. Chasing and reversing go through the special
+--- driving module, which reports a deliberate halt as "stopping"; the U-turn path is driven by the
+--- drive path module, which publishes the speed it commands.
+function FollowCombineTask:isCommandedToDrive()
+    if self.vehicle.ad.specialDrivingModule:isStoppingVehicle() then
+        return false
+    end
+    if self.state == FollowCombineTask.STATE_DRIVE_UTURN_PATH then
+        return (self.vehicle.ad.drivePathModule.speedLimit or 0) > self.MIN_COMMANDED_SPEED
+    end
+    return true
+end
+
+--- Distance below which the driver is too close to the harvester to keep working with it. Derived
+--- from the two machines and what we tow, because a fixed 25 m is met by a normal side chase on a
+--- large harvester and missed by a long train on a small one.
+function FollowCombineTask:getMinCombineDistance()
+    -- the train length is measured once in setUp, this runs every frame
+    local trainLength = math.max(self.vehicle.size.length, self.tractorTrainLength or 0)
+    return (trainLength + self.combine.size.length) / 2 + self.COMBINE_DISTANCE_MARGIN
+end
+
+--- Escalating answer to being stuck: ask for a fresh chase position first, then retreat a few
+--- metres and try again, and only give the job back to the mode when neither helped.
+-- True while a backup request from the harvester is still fresh.
+function FollowCombineTask:hasPendingBackupRequest()
+    local requestedAt = self.vehicle.ad ~= nil and self.vehicle.ad.reverseForCombineRequest or nil
+    if requestedAt == nil then
+        return false
+    end
+    if (g_time - requestedAt) > FollowCombineTask.BACKUP_REQUEST_VALID_TIME then
+        self.vehicle.ad.reverseForCombineRequest = nil
+        return false
+    end
+    return true
+end
+
+-- Get out of the harvester's way, then pick the chase back up.
+--
+-- Deliberately the same retreat the stuck handling uses rather than a second mechanism: the
+-- situation is the same one - we are too close to a harvester that needs room - and the difference
+-- is only who noticed it first. Reversing states are left alone; we are already moving away.
+function FollowCombineTask:startBackupForReversingCombine()
+    self.vehicle.ad.reverseForCombineRequest = nil
+
+    if self.state == FollowCombineTask.STATE_REVERSING
+        or self.state == FollowCombineTask.STATE_REVERSING_FROM_CHOPPER then
+        return
+    end
+
+    FollowCombineTask.debugMsg(self.vehicle, "FollowCombineTask:startBackupForReversingCombine - harvester needs room, retreating from state %s"
+    , tostring(self:getStateName()))
+
+    local x, y, z = getWorldTranslation(self.vehicle.components[1].node)
+    self.reverseStartLocation = {x = x, y = y, z = z}
+    self.reverseDistance = self.RETREAT_DISTANCE
+    self.resumeChasingAfterReverse = true
+
+    if self.combine.ad.isChopper then
+        self.state = FollowCombineTask.STATE_REVERSING_FROM_CHOPPER
+    else
+        self.state = FollowCombineTask.STATE_REVERSING
+    end
+end
+
+function FollowCombineTask:reactToBeingStuck()
+    self.stuckTimer:timer(false)
+    self.stuckReactions = self.stuckReactions + 1
+    FollowCombineTask.debugMsg(self.vehicle, "FollowCombineTask:reactToBeingStuck - reaction %d in state %s"
+    , self.stuckReactions, tostring(self:getStateName()))
+
+    if self.stuckReactions == 1 and self.state == FollowCombineTask.STATE_CHASING then
+        -- the chase position may simply have gone stale - the pipe folded, the side switched
+        self.chasePos, self.chaseSide = self.vehicle.ad.modes[AutoDrive.MODE_UNLOAD]:getPipeChasePosition()
+        self.lastChaseSide = self.chaseSide
+        self.angleWrongTimer:timer(false)
+        self.chaseTimer:timer(false)
+        return
+    end
+
+    local x, y, z = getWorldTranslation(self.vehicle.components[1].node)
+    self.reverseStartLocation = {x = x, y = y, z = z}
+
+    if self.combine.ad.isChopper then
+        self.state = FollowCombineTask.STATE_REVERSING_FROM_CHOPPER
+        return
+    end
+
+    self.resumeChasingAfterReverse = self.stuckReactions < 3
+    if self.resumeChasingAfterReverse then
+        self.reverseDistance = self.RETREAT_DISTANCE
+    else
+        self.reverseDistance = self.MAX_REVERSE_DISTANCE
+    end
+    self.state = FollowCombineTask.STATE_REVERSING -- reverse to get room from harvester
+end
+
+-- Whether driving towards the chase point is safe while the harvester is turning.
+--
+-- During a turn the harvester swings around and drags its chase position with it. For a rear chase
+-- the position ends up BEHIND the unloader - measured in game at a steady 177 degrees - so driving
+-- "towards" it means turning into the harvester that is swinging back at the same time. That is
+-- the "unloader drives into the harvester from behind while it turns" case.
+--
+-- waitForChasePos does not cover this: it is only recomputed in the chasing state, so during the
+-- turn it keeps whatever value it had when the turn started.
+function FollowCombineTask:isChasePointReachableDuringTurn()
+    return self:getAngleToChasePos() <= FollowCombineTask.MAX_TURN_CHASE_ANGLE
+end
+
 function FollowCombineTask:followChasePoint(dt)
-    if self:shouldWaitForChasePos(dt) then
+    if self.waitForChasePos then
         FollowCombineTask.debugMsg(self.vehicle, "FollowCombineTask:followChasePoint getAngleToChasePos %.0f -> stopVehicle", self:getAngleToChasePos())
         self.vehicle.ad.specialDrivingModule:stopVehicle()
         self.vehicle.ad.specialDrivingModule:update(dt)

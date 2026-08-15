@@ -140,8 +140,13 @@ end
 
 function UnloadBGATask:getCurrentStates()
     self.shovelFillLevel = self:getShovelFillLevel()
-    local fillLevel, fillCapacity, filledToUnload, fillFreeCapacity = AutoDrive.getObjectNonFuelFillLevels(self.targetTrailer)
-    self.trailerLeftCapacity = fillFreeCapacity
+    -- Having no trailer yet is a normal state of this task, not an error. Asking for the fill
+    -- levels of nothing wrote an error line into the game log on every single frame.
+    self.trailerLeftCapacity = 0
+    if self.targetTrailer ~= nil then
+        local _, _, _, fillFreeCapacity = AutoDrive.getObjectNonFuelFillLevels(self.targetTrailer)
+        self.trailerLeftCapacity = fillFreeCapacity
+    end
     self.bunkerFillLevel = 10000 --self:getBunkerFillLevel();
 
     self.targetUnloadTriggerFree = false
@@ -162,8 +167,11 @@ end
 function UnloadBGATask:checkIfPossibleToRestart()
     if self.targetTrailer == nil then
         self.targetTrailer, self.targetDriver = self:findCloseTrailer()
-        local fillLevel, fillCapacity, filledToUnload, fillFreeCapacity = AutoDrive.getObjectNonFuelFillLevels(self.targetTrailer)
-        self.trailerLeftCapacity = fillFreeCapacity
+        if self.targetTrailer ~= nil then
+            -- same as in getCurrentStates: no trailer found is the normal case while waiting
+            local _, _, _, fillFreeCapacity = AutoDrive.getObjectNonFuelFillLevels(self.targetTrailer)
+            self.trailerLeftCapacity = fillFreeCapacity
+        end
     end
     if self.targetBunker == nil then
         self.targetBunker = self:getTargetBunker()
@@ -453,13 +461,6 @@ end
 
 function UnloadBGATask:checkForStopLoading() --stop loading when shovel is filled
     return self.shovelFillLevel >= 0.98
-end
-
-function UnloadBGATask:checkForIdleCondition() --idle if shovel filled and no trailer available to fill;
-    if self.shovelFillLevel >= 0.98 and ((((self.targetTrailer ~= nil or self.trailerLeftCapacity <= 1) or self.targetTrailer == nil) and not self.self.unloadToTrigger) or (self.unloadToTrigger and not self.targetUnloadTriggerFree)) then
-        return true
-    end
-    return false
 end
 
 function UnloadBGATask:handleShovel(dt)
@@ -871,7 +872,7 @@ function UnloadBGATask:driveToSiloCommonPoint(dt)
     end
 
     --self.targetPoint = self:getTargetForShovelOffset(14)
-    self.targetPoint = self:getTargetForShovelOffset(AutoDrive.getVehicleLeadingEdge(vehicle) + 6)
+    self.targetPoint = self:getTargetForShovelOffset(AutoDrive.getVehicleLeadingEdge(self.vehicle) + 6)
     local angleToSilo = self:getAngleToTarget() -- in +/- 180°
 
     if self.storedDirection == nil then
@@ -906,7 +907,7 @@ end
 
 function UnloadBGATask:driveToSiloReversePoint(dt)
     --self.targetPoint = self:getTargetForShovelOffset(18)
-    self.targetPoint = self:getTargetForShovelOffset(AutoDrive.getVehicleLeadingEdge(vehicle) + 6)
+    self.targetPoint = self:getTargetForShovelOffset(AutoDrive.getVehicleLeadingEdge(self.vehicle) + 6)
     self.driveStrategy = self:getDriveStrategyToTarget(false, dt)
 
     self.shovelTarget = self.SHOVELSTATE_LOW
@@ -1187,7 +1188,7 @@ function UnloadBGATask:reverseFromBGALoad(dt)
 
     self.targetPoint = self:getTargetForShovelOffset(200)
     --self.targetPointClose = self:getTargetForShovelOffset(16)
-    self.targetPointClose = self:getTargetForShovelOffset(AutoDrive.getVehicleLeadingEdge(vehicle) + 10)
+    self.targetPointClose = self:getTargetForShovelOffset(AutoDrive.getVehicleLeadingEdge(self.vehicle) + 10)
 
     local finalSpeed = 30
     local acc = 1

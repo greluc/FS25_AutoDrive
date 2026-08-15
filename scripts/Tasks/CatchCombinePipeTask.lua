@@ -26,7 +26,10 @@ function CatchCombinePipeTask:new(vehicle, combine)
     o.reverseTimer = AutoDriveTON:new()
     o.waitTimer = AutoDriveTON:new()
     o.waitForCheckTimer = AutoDriveTON:new()
-    o.waitForCheckTimer.elapsedTime = 4000
+    -- Start looking for a path right away instead of standing around for the delay first.
+    -- Preloading waitForCheckTimer did not achieve that: the state change resets all timers one
+    -- frame later, which wiped the preloaded time again.
+    o.checkPathPlanningNow = true
     o.taskType = "CatchCombinePipeTask"
     o.newPathFindingCounter = 0
     o.trailers = nil
@@ -100,7 +103,8 @@ function CatchCombinePipeTask:update(dt)
         end
     elseif self.state == CatchCombinePipeTask.STATE_DELAY_PATHPLANNING then
         CatchCombinePipeTask.debugMsg(self.vehicle, "CatchCombinePipeTask:update - STATE_DELAY_PATHPLANNING")
-        if self.waitForCheckTimer:timer(true, 1000, dt) then
+        if self.checkPathPlanningNow or self.waitForCheckTimer:timer(true, 1000, dt) then
+            self.checkPathPlanningNow = false
             if self.newPathFindingCounter > self.MAX_COUNT_NEW_PATHFINDING then
                 -- prevent deadlock
                 self.state = CatchCombinePipeTask.STATE_FINISHED
@@ -123,7 +127,8 @@ function CatchCombinePipeTask:update(dt)
 
         if combineTravelDistance > 85 then
             CatchCombinePipeTask.debugMsg(self.vehicle, "CatchCombinePipeTask:update - combine travelled - recalculate path")
-            self.waitForCheckTimer.elapsedTime = 4000
+            -- the old path is worthless now, so recalculate without waiting out the delay
+            self.checkPathPlanningNow = true
             self.state = CatchCombinePipeTask.STATE_DELAY_PATHPLANNING
             return
         else

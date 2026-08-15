@@ -65,12 +65,19 @@ function HandleHarvesterTurnTask:new(vehicle, combine)
 
     o.currentTurn = nil
 
-    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_COMBINEINFO, "HandleHarvesterTurnTask  - turnleft: " .. tostring(turnLeft) .. " angle: " .. o.turnParameters.angle)
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_COMBINEINFO) then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_COMBINEINFO, "HandleHarvesterTurnTask  - turnleft: " .. tostring(turnLeft) .. " angle: " .. o.turnParameters.angle)
+    end
     return o
 end
 
 function HandleHarvesterTurnTask:setUp()
-    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_COMBINEINFO, "HandleHarvesterTurnTask:setUp()")
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_COMBINEINFO) then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_COMBINEINFO, "HandleHarvesterTurnTask:setUp()")
+    end
+    -- setTrailerCoverOpen returns without doing anything when it gets no units, so the covers
+    -- stayed shut for the whole turn maneuver while every sibling task opens them
+    self.trailers, _ = AutoDrive.getAllUnits(self.vehicle)
     AutoDrive.setTrailerCoverOpen(self.vehicle, self.trailers, true)
 end
 
@@ -186,7 +193,9 @@ function HandleHarvesterTurnTask:abort()
 end
 
 function HandleHarvesterTurnTask:finished(propagate)
-    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_COMBINEINFO, "HandleHarvesterTurnTask:finished()")
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_COMBINEINFO) then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_COMBINEINFO, "HandleHarvesterTurnTask:finished()")
+    end
     self.vehicle.ad.taskModule:setCurrentTaskFinished(propagate)
 end
 

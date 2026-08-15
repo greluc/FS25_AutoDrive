@@ -67,7 +67,7 @@ end
 
 function AutoDrive.getFruitValue(fruitTypeIndex, corner1X, corner1Z, corner2X, corner2Z, corner3X, corner3Z)
     local fruitToIgnore = { FruitType.GRASS, FruitType.MEADOW }
-    if table.contains(fruitToIgnore, fruitTypeIndex) then
+    if ADTable.contains(fruitToIgnore, fruitTypeIndex) then
         return 0
     end
 

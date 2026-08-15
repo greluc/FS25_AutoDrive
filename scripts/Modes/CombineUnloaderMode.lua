@@ -17,12 +17,23 @@ CombineUnloaderMode.STATE_REVERSE_FROM_BAD_LOCATION = {}
 CombineUnloaderMode.MAX_COMBINE_FILLLEVEL_CHASING = 101
 CombineUnloaderMode.STATIC_X_OFFSET_FROM_HEADER = 0
 
+-- Lateral clearance the mod keeps on top of the player's pipeOffset setting, derived from the width
+-- of the whole train. See CombineUnloaderMode.calculatePipeSafetyMargin.
+CombineUnloaderMode.PIPE_SAFETY_MARGIN_FACTOR = 0.15
+CombineUnloaderMode.PIPE_SAFETY_MARGIN_MIN = 0.5
+CombineUnloaderMode.PIPE_SAFETY_MARGIN_MAX = 1.5
+
+-- Beyond this the straight line to a chase position says nothing useful, so only the pathfinder
+-- gets to answer. See CombineUnloaderMode:isChaseSideReachable.
+CombineUnloaderMode.MAX_CHASE_REACHABILITY_DISTANCE = 60
+
 function CombineUnloaderMode:new(vehicle)
     local o = CombineUnloaderMode:create()
     o.vehicle = vehicle
     o.trailers = nil
     o.trailerCount = 0
     o.tractorTrainLength = 0
+    o.tractorTrainWidth = 0
     CombineUnloaderMode.reset(o)
     CombineUnloaderMode.setStateNames(o)
     return o
@@ -39,6 +50,9 @@ function CombineUnloaderMode:reset()
     self.failedPathFinder = 0
     self.trailers, self.trailerCount = AutoDrive.getAllUnits(self.vehicle)
     self.tractorTrainLength = AutoDrive.getTractorTrainLength(self.vehicle, true, false)
+    -- 0 means "not measured yet" - the width is taken lazily because the measured dimensions of the
+    -- implements may only be filled in after the train has been assembled
+    self.tractorTrainWidth = 0
     self.vehicle.ad.trailerModule:reset()
     AutoDrive.getAllDischargeableUnits(self.vehicle, true) -- force initialisation
 end
@@ -55,9 +69,12 @@ function CombineUnloaderMode:start(user)
 
     self:reset()
 
-    self.activeTask = self:getNextTask()
-    if self.activeTask ~= nil then
-        self.vehicle.ad.taskModule:addTask(self.activeTask)
+    -- getNextTask may enqueue a task itself (setToWaitForCall) and return nil. Overwriting
+    -- self.activeTask with that nil would lose the task that is actually running.
+    local nextTask = self:getNextTask()
+    if nextTask ~= nil then
+        self.activeTask = nextTask
+        self.vehicle.ad.taskModule:addTask(nextTask)
     end
     CombineUnloaderMode.debugMsg(self.vehicle, "CombineUnloaderMode:start end self.state %s", tostring(self:getStateName()))
 end
@@ -138,9 +155,13 @@ function CombineUnloaderMode:handleFinishedTask()
     -- CombineUnloaderMode.debugMsg(self.vehicle, "CombineUnloaderMode:handleFinishedTask")
     self.vehicle.ad.trailerModule:reset()
     self.lastTask = self.activeTask
-    self.activeTask = self:getNextTask()
-    if self.activeTask ~= nil then
-        self.vehicle.ad.taskModule:addTask(self.activeTask)
+    self.activeTask = nil
+    -- getNextTask may enqueue a task itself (setToWaitForCall) and return nil - in that case
+    -- setToWaitForCall has already put the running task into self.activeTask and it must survive.
+    local nextTask = self:getNextTask()
+    if nextTask ~= nil then
+        self.activeTask = nextTask
+        self.vehicle.ad.taskModule:addTask(nextTask)
     end
     CombineUnloaderMode.debugMsg(self.vehicle, "CombineUnloaderMode:handleFinishedTask self.state %s", tostring(self:getStateName()))
 end
@@ -149,6 +170,12 @@ function CombineUnloaderMode:stop()
 end
 
 function CombineUnloaderMode:continue()
+    -- AD_continue is a bindable key and reaches a driver that is not running at all. Without this
+    -- the keypress queues a task on a stopped driver, which then executes on the next start.
+    if self.vehicle == nil or self.vehicle.ad == nil or self.vehicle.ad.stateModule == nil or not self.vehicle.ad.stateModule:isActive() then
+        return
+    end
+
     local x, y, z = getWorldTranslation(self.vehicle.components[1].node)
     local point = nil
     local distanceToStart = 0
@@ -163,10 +190,19 @@ function CombineUnloaderMode:continue()
         end
     end
 
-    if self.state == self.STATE_DRIVE_TO_UNLOAD then
+    -- STATE_DRIVE_TO_UNLOAD is reached from several places and not all of them leave a task behind
+    -- that knows how to resume: setToWaitForCall enqueues one without going through
+    -- handleFinishedTask, and a task aborted with DONT_PROPAGATE leaves the previous one in place.
+    -- Only the task that actually implements continue may be asked to; everything else rebuilds the
+    -- unload task below instead of calling a method that is not there.
+    local resumed = false
+    if self.state == self.STATE_DRIVE_TO_UNLOAD and self.activeTask ~= nil and type(self.activeTask.continue) == "function" then
         CombineUnloaderMode.debugMsg(self.vehicle, "CombineUnloaderMode:continue self.STATE_DRIVE_TO_UNLOAD")
         self.activeTask:continue()
-    else
+        resumed = true
+    end
+
+    if not resumed then
         CombineUnloaderMode.debugMsg(self.vehicle, "CombineUnloaderMode:continue self.state" .. tostring(self:getStateName()))
         self.vehicle.ad.taskModule:abortCurrentTask()
 
@@ -301,20 +337,27 @@ function CombineUnloaderMode:setToWaitForCall(keepCombine)
     end
 
     local _, _, filledToUnload, _ = AutoDrive.getAllFillLevels(self.trailers)
+    -- Every branch records the task it enqueues: this is reached without going through
+    -- handleFinishedTask (CatchCombinePipeTask and HandleHarvesterTurnTask finish with
+    -- DONT_PROPAGATE first), so self.activeTask would otherwise keep pointing at the task that
+    -- just ended - or at nothing at all - while the state says a new one is running.
     if filledToUnload then
         if AutoDrive.checkIsOnField(x, y, z) and distanceToStart > 30 then
             -- is activated on a field - use ExitFieldTask to leave field according to setting
             CombineUnloaderMode.debugMsg(self.vehicle, "CombineUnloaderMode:setToWaitForCall ExitFieldTask...")
-            self.vehicle.ad.taskModule:addTask(ExitFieldTask:new(self.vehicle))
+            self.activeTask = ExitFieldTask:new(self.vehicle)
+            self.vehicle.ad.taskModule:addTask(self.activeTask)
             self.state = self.STATE_EXIT_FIELD
         else
             CombineUnloaderMode.debugMsg(self.vehicle, "CombineUnloaderMode:setToWaitForCall UnloadAtDestinationTask...")
-            self.vehicle.ad.taskModule:addTask(UnloadAtDestinationTask:new(self.vehicle, self.vehicle.ad.stateModule:getSecondMarker().id))
+            self.activeTask = UnloadAtDestinationTask:new(self.vehicle, self.vehicle.ad.stateModule:getSecondMarker().id)
+            self.vehicle.ad.taskModule:addTask(self.activeTask)
             self.state = self.STATE_DRIVE_TO_UNLOAD
         end
     else
 	    self.state = self.STATE_WAIT_TO_BE_CALLED
-	    self.vehicle.ad.taskModule:addTask(WaitForCallTask:new(self.vehicle))
+	    self.activeTask = WaitForCallTask:new(self.vehicle)
+	    self.vehicle.ad.taskModule:addTask(self.activeTask)
 	    if self.combine ~= nil and self.combine.ad ~= nil and (keepCombine == nil or keepCombine ~= true) then
 	        self.combine = nil
 	    end
@@ -341,15 +384,18 @@ function CombineUnloaderMode:assignToHarvester(harvester)
             then
                 -- default unloading - no movement
                 self.state = self.STATE_DRIVE_TO_PIPE
-                self.vehicle.ad.taskModule:addTask(EmptyHarvesterTask:new(self.vehicle, self.combine))
+                self.activeTask = EmptyHarvesterTask:new(self.vehicle, self.combine)
+                self.vehicle.ad.taskModule:addTask(self.activeTask)
             else
                 -- Probably active unloading for choppers and moving combines
                 self.state = self.STATE_DRIVE_TO_COMBINE
-                self.vehicle.ad.taskModule:addTask(CatchCombinePipeTask:new(self.vehicle, self.combine))
+                self.activeTask = CatchCombinePipeTask:new(self.vehicle, self.combine)
+                self.vehicle.ad.taskModule:addTask(self.activeTask)
             end
         else
             self.state = self.STATE_DRIVE_TO_COMBINE
-            self.vehicle.ad.taskModule:addTask(CatchCombinePipeTask:new(self.vehicle, self.combine))
+            self.activeTask = CatchCombinePipeTask:new(self.vehicle, self.combine)
+            self.vehicle.ad.taskModule:addTask(self.activeTask)
         end
     end
 end
@@ -357,7 +403,8 @@ end
 function CombineUnloaderMode:driveToUnloader(unloader)
     if self.state == self.STATE_WAIT_TO_BE_CALLED then
         self.vehicle.ad.taskModule:abortCurrentTask()
-        self.vehicle.ad.taskModule:addTask(DriveToVehicleTask:new(self.vehicle, unloader))
+        self.activeTask = DriveToVehicleTask:new(self.vehicle, unloader)
+        self.vehicle.ad.taskModule:addTask(self.activeTask)
         unloader.ad.modes[AutoDrive.MODE_UNLOAD]:registerFollowingUnloader(self.vehicle)
         self.targetUnloader = unloader
         self.state = self.STATE_FOLLOW_CURRENT_UNLOADER
@@ -493,21 +540,108 @@ function CombineUnloaderMode:getPipeSlopeCorrection2()
     return currentElevationCorrection
 end
 
-function CombineUnloaderMode:getPipeSlopeCorrection1()
-    self.combineX, self.combineY, self.combineZ = getWorldTranslation(self.combineNode)
-    local nodeX, nodeY, nodeZ = getWorldTranslation(AutoDrive.getDischargeNode(self.combine))
-    local heightUnderCombine = getTerrainHeightAtWorldPos(g_currentMission.terrainRootNode, self.combineX, self.combineY, self.combineZ)
-    local heightUnderPipe = getTerrainHeightAtWorldPos(g_currentMission.terrainRootNode, nodeX, nodeY, nodeZ)
-    -- want this to be negative if the ground is lower under the pipe
-    local dh = heightUnderPipe - heightUnderCombine
-    local hyp = MathUtil.vector3Length(self.combineX - nodeX, heightUnderCombine - heightUnderPipe, self.combineZ - nodeZ)
-    local run = math.sqrt(hyp * hyp - dh * dh)
-    local elevationCorrection = (hyp + (nodeY - heightUnderPipe) * (dh / hyp)) - run
-    return elevationCorrection * self.pipeSide
-end
-
 function CombineUnloaderMode:getPipeSlopeCorrection()
     return self:getPipeSlopeCorrection2()
+end
+
+--- The widest unit of the whole train, not just the tractor. A chaser bin is regularly wider than
+--- the vehicle pulling it, and everything that keeps us clear of the harvester is measured from the
+--- centre line, so the tractor's width is the wrong number to clear the trailer with. The length
+--- side of the same geometry already asks the whole train - see the use of
+--- AutoDrive.getTractorTrainLength in PathFinderModule:startPathPlanningToPipe.
+function CombineUnloaderMode.getTrainWidth(vehicle)
+    local widest = 0
+    if vehicle ~= nil then
+        local units, _ = AutoDrive.getAllUnits(vehicle)
+        if units ~= nil then
+            for _, unit in ipairs(units) do
+                local unitWidth = nil
+                local dimensions = unit.ad ~= nil and unit.ad.adDimensions or nil
+                if dimensions ~= nil and dimensions.maxWidthLeft ~= nil and dimensions.maxWidthRight ~= nil then
+                    -- measured dimensions are half widths and they are not symmetric on every implement
+                    unitWidth = dimensions.maxWidthLeft + dimensions.maxWidthRight
+                elseif unit.size ~= nil and unit.size.width ~= nil then
+                    unitWidth = unit.size.width
+                end
+                if unitWidth ~= nil then
+                    widest = math.max(widest, unitWidth)
+                end
+            end
+        end
+        if widest <= 0 and vehicle.size ~= nil and vehicle.size.width ~= nil then
+            -- nothing measured and no units reported - fall back to the vehicle definition
+            widest = vehicle.size.width
+        end
+    end
+    return widest
+end
+
+function CombineUnloaderMode:getTractorTrainWidth()
+    if self.tractorTrainWidth == nil or self.tractorTrainWidth <= 0 then
+        self.tractorTrainWidth = CombineUnloaderMode.getTrainWidth(self.vehicle)
+    end
+    return self.tractorTrainWidth
+end
+
+--- The clearance the mod insists on, on top of whatever the player dialled in. Wider trains need
+--- more of it, but a fixed floor keeps a narrow tractor from ending up flush against the header.
+function CombineUnloaderMode.calculatePipeSafetyMargin(trainWidth)
+    local margin = (trainWidth or 0) * CombineUnloaderMode.PIPE_SAFETY_MARGIN_FACTOR
+    return math.min(math.max(margin, CombineUnloaderMode.PIPE_SAFETY_MARGIN_MIN), CombineUnloaderMode.PIPE_SAFETY_MARGIN_MAX)
+end
+
+function CombineUnloaderMode:getPipeSafetyMargin()
+    return CombineUnloaderMode.calculatePipeSafetyMargin(self:getTractorTrainWidth())
+end
+
+--- The lateral distance we keep from the harvester is the player's preference PLUS the safety
+--- margin above. Keeping the margin out of the setting means a player who dials the offset to 0 - or
+--- to a negative value, which the setting still allows - does not end up scraping the header.
+function CombineUnloaderMode:getPipeOffset()
+    return AutoDrive.getSetting("pipeOffset", self.vehicle) + self:getPipeSafetyMargin()
+end
+
+--- One-time migration for savegames written before the safety margin existed. Back then the stored
+--- pipeOffset was the only clearance there was, so players folded the margin into it by hand;
+--- adding the margin on top of an unchanged setting would push every unloader a margin too far out.
+--- Reduce the stored preference by exactly the margin we now add ourselves, floored at 0 so a
+--- previously negative offset cannot eat into the margin.
+--- Must run once per vehicle after its settings have been read, and never a second time.
+function CombineUnloaderMode.migratePipeOffsetForSafetyMargin(vehicle)
+    if vehicle == nil or vehicle.ad == nil or vehicle.ad.pipeOffsetSafetyMarginMigrated then
+        return false
+    end
+
+    -- only the vehicle's own copy may be touched: writing the shared template would migrate every
+    -- other driver as a side effect
+    local setting = vehicle.ad.settings ~= nil and vehicle.ad.settings.pipeOffset or nil
+    if setting == nil or setting.values == nil then
+        return false
+    end
+
+    local currentValue = AutoDrive.getSetting("pipeOffset", vehicle)
+    if currentValue == nil then
+        return false
+    end
+
+    local margin = CombineUnloaderMode.calculatePipeSafetyMargin(CombineUnloaderMode.getTrainWidth(vehicle))
+    local targetValue = math.max(currentValue - margin, 0)
+
+    -- The setting is an index into a fixed grid of values. Take the largest entry that does not
+    -- exceed the target, so the migration can only ever reduce the stored preference.
+    local newIndex = nil
+    for index, value in ipairs(setting.values) do
+        if value <= targetValue and (newIndex == nil or value > setting.values[newIndex]) then
+            newIndex = index
+        end
+    end
+    if newIndex == nil then
+        return false
+    end
+
+    vehicle.ad.pipeOffsetSafetyMarginMigrated = true
+    AutoDrive.setSettingState("pipeOffset", newIndex, vehicle)
+    return true
 end
 
 function CombineUnloaderMode:getSideChaseOffsetX()
@@ -515,8 +649,8 @@ function CombineUnloaderMode:getSideChaseOffsetX()
     -- we are chasing on! This function only finds the base X offset "to the left".
     -- Slope and side correction MUST be applied in CombineUnloaderMode:getPipeChasePosition
     -- AFTER determining the chase side. Or this function needs to be rewritten.
-    local pipeOffset = AutoDrive.getSetting("pipeOffset", self.vehicle)
-    local unloaderWidest = self.vehicle.size.width
+    local pipeOffset = self:getPipeOffset()
+    local unloaderWidest = self:getTractorTrainWidth()
     local headerExtra = math.max((AutoDrive.getFrontToolWidth(self.combine) - self.combine.size.width) / 2, 0)
 
     local sideChaseTermPipeIn = self.combine.size.width / 2 + unloaderWidest / 2 + headerExtra
@@ -591,7 +725,7 @@ function CombineUnloaderMode:getPipeChaseWayPoint(offsetX, offsetZ)
     if pipeSide == 0 then
         pipeSide = 1
     end
-    local pipeOffset = AutoDrive.getSetting("pipeOffset", self.vehicle)
+    local pipeOffset = self:getPipeOffset()
     local worldOffsetX1, worldOffsetY1, worldOffsetZ1 = AutoDrive.localDirectionToWorld(self.combine, 0, -diffY, 0, dischargeNode)
     local targetDistX, _, targetDistZ = AutoDrive.worldToLocal(self.combine, targetX + worldOffsetX1, targetY + worldOffsetY1, targetZ + worldOffsetZ1, combinePipeRootNode)
     local worldOffsetX2, worldOffsetY2, worldOffsetZ2 = AutoDrive.localDirectionToWorld(self.combine, targetDistX + (offsetX or 0) + (pipeSide * pipeOffset), 0, targetDistZ + (offsetZ or 0), combinePipeRootNode)
@@ -622,42 +756,6 @@ function CombineUnloaderMode:getDynamicSideChaseOffsetZ_fromDischargeNode(planni
         offset = offset + (self.vehicle.size.length/2)
     end
     return offset
-end
-
-function CombineUnloaderMode:getDynamicSideChaseOffsetZ_FS19()
-    -- The default maximum will place the front of the unloader at the back of the header
-    local pipeZOffsetToCombine = 0
-    if AutoDrive.isPipeOut(self.combine) then
-        local nodeX, nodeY, nodeZ = getWorldTranslation(AutoDrive.getDischargeNode(self.combine))
-        local _, _, diffZ = AutoDrive.worldToLocal(self.combine, nodeX, nodeY, nodeZ, self.combine.ad.ADRootNode)
-        pipeZOffsetToCombine = diffZ
-    end
-    local vehicleX, vehicleY, vehicleZ = getWorldTranslation(self.vehicle.components[1].node)
-
---[[
-    -- AimTargetNode - not used as it not always fit to the fill area of trailers
-    if self.targetTrailer.getFillUnitAutoAimTargetNode ~= nil then
-        local node = self.targetTrailer:getFillUnitAutoAimTargetNode(1)
-        if node ~= nil then
-            -- use dynamic fill in trailer if available, to better follow unloading the harvester
-            targetNode = node
-        end
-    end
-]]
-    local _, _, diffZ = AutoDrive.worldToLocal(self.targetTrailer, vehicleX, vehicleY, vehicleZ)
-
-    -- We gradually move the chase node forward as a function of fill level because it's pretty and
-    -- helps the sugarcane harvester. We start at at the front of the trailer. We use an exponential
-    -- to increase dwell time towards the front of the trailer, since loads migrate towards the back.
-
-    -- The constant additions should put at precisely at the joint of the vehicle and trailer, then correct for
-    -- only moving the midpoint of the tractor
-    local constantAdditionsZ = 1 + self.vehicle.size.length / 2 - self.targetTrailer.size.length / 2
-    -- We then gradually move back, but don't use the last part of trailer for cosmetic reasons
-    local dynamicAdditionsZ = diffZ + pipeZOffsetToCombine
-    dynamicAdditionsZ = dynamicAdditionsZ + math.max((self.targetTrailer.size.length * 0.5 - 2) ^ self.targetTrailerFillRatio, 0)
-    local sideChaseTermZ = constantAdditionsZ + dynamicAdditionsZ
-    return sideChaseTermZ
 end
 
 function CombineUnloaderMode:getSideChaseOffsetZ(dynamic)
@@ -711,6 +809,74 @@ function CombineUnloaderMode:getRearChaseOffsetZ(planningPhase)
     return rearChaseOffset
 end
 
+--- Can we actually get to that chase position, or is something parked in between?
+--- A straight line is not a path and is not meant to be one - the pathfinder still has the last
+--- word. It is here to rule out the obviously bad side before we commit to it, because the flags
+--- the chase side is otherwise chosen from come from the HARVESTER's sensors and know nothing about
+--- where the unloader is standing. Only vehicles are in the mask: they are the case the harvester
+--- cannot see (a second unloader, a parked tractor), and anything static in a field is the
+--- pathfinder's business. Returns true whenever it cannot say otherwise, so a frame in which
+--- nothing is in the way behaves exactly as it did before this check existed.
+function CombineUnloaderMode:isChaseSideReachable(chasePos)
+    if chasePos == nil or self.vehicle == nil or self.combine == nil then
+        return true
+    end
+
+    local x, _, z = getWorldTranslation(self.vehicle.components[1].node)
+    local deltaX, deltaZ = chasePos.x - x, chasePos.z - z
+    local distance = MathUtil.vector2Length(deltaX, deltaZ)
+    if distance < 1 or distance > CombineUnloaderMode.MAX_CHASE_REACHABILITY_DISTANCE then
+        -- on top of it already, or far enough away that only the pathfinder can answer
+        return true
+    end
+
+    local centerX, centerZ = x + deltaX / 2, z + deltaZ / 2
+    local centerY = getTerrainHeightAtWorldPos(g_currentMission.terrainRootNode, centerX, 300, centerZ) + 1.5
+    local angleRad = AutoDrive.normalizeAngle(math.atan2(deltaX, deltaZ))
+    local halfWidth = self:getTractorTrainWidth() / 2
+    local halfLength = distance / 2
+    local mask = AutoDrive.collisionMaskVehicleDimesions or CollisionFlag.VEHICLE
+
+    self.chaseSideBlocked = false
+    overlapBox(centerX, centerY, centerZ, 0, angleRad, 0, halfWidth, 1.5, halfLength, "isChaseSideReachable_Callback", self, mask, true, true, true, true)
+
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_COMBINEINFO) then
+        local r, g, b = 0, 1, 0
+        if self.chaseSideBlocked then
+            r, g, b = 1, 0, 0
+        end
+        DebugUtil.drawOverlapBox(centerX, centerY, centerZ, 0, angleRad, 0, halfWidth, 1.5, halfLength, r, g, b)
+    end
+
+    return not self.chaseSideBlocked
+end
+
+function CombineUnloaderMode:isChaseSideReachable_Callback(transformId)
+    if transformId == nil or transformId == 0 or transformId == g_currentMission.terrainRootNode then
+        return
+    end
+    local collisionObject = g_currentMission.nodeToObject[transformId]
+    if collisionObject == nil then
+        -- let try if parent is a object
+        local parent = getParent(transformId)
+        if parent then
+            collisionObject = g_currentMission.nodeToObject[parent]
+        end
+    end
+    if collisionObject == nil then
+        -- only vehicles are in the mask, so a shape that resolves to nothing is not ours to judge
+        return
+    end
+    -- the line starts inside our own train and ends alongside the harvester, both by construction
+    if collisionObject == self.vehicle or AutoDrive:checkIsConnected(self.vehicle, collisionObject) then
+        return
+    end
+    if collisionObject == self.combine or AutoDrive:checkIsConnected(self.combineRootVehicle or self.combine, collisionObject) then
+        return
+    end
+    self.chaseSideBlocked = true
+end
+
 function CombineUnloaderMode:getPipeChasePosition(planningPhase)
     local chaseNode
     local sideIndex = AutoDrive.CHASEPOS_REAR
@@ -755,12 +921,29 @@ function CombineUnloaderMode:getPipeChasePosition(planningPhase)
     if self.combine.ad.isChopper then
         -- any chopper
         --CombineUnloaderMode.debugMsg(self.vehicle, "CombineUnloaderMode:getPipeChasePosition=IsBufferCombine")
-        local leftChasePos = AutoDrive.createWayPointRelativeToVehicle(self.combine, sideChaseTermX + self:getPipeSlopeCorrection(), sideChaseTermZ - 2)
-        local rightChasePos = AutoDrive.createWayPointRelativeToVehicle(self.combine, -(sideChaseTermX + self:getPipeSlopeCorrection()), sideChaseTermZ - 2)
+        -- the correction reads the terrain normal under the pipe, so it is the same value for both
+        -- sides within one frame - asking for it twice only paid for the raycast twice
+        local pipeSlopeCorrection = self:getPipeSlopeCorrection()
+        local leftChasePos = AutoDrive.createWayPointRelativeToVehicle(self.combine, sideChaseTermX + pipeSlopeCorrection, sideChaseTermZ - 2)
+        local rightChasePos = AutoDrive.createWayPointRelativeToVehicle(self.combine, -(sideChaseTermX + pipeSlopeCorrection), sideChaseTermZ - 2)
         local rearChasePos = AutoDrive.createWayPointRelativeToVehicle(self.combine, 0, rearChaseTermZ)
         local angleToLeftChaseSide = self:getAngleToChasePos(leftChasePos)
         local angleToRearChaseSide = self:getAngleToChasePos(rearChasePos)
         local chaseSideSetting = AutoDrive.getSetting("chaseSide", self.combine)
+
+        if chaseSideSetting == AutoDrive.CHASEPOS_AUTO and not self.combine.ad.isFixedPipeChopper then
+            -- The flags above are the harvester's own sensors: they answer whether a side is clear
+            -- for the harvester, not whether we could get to it. Ask that separately, and only where
+            -- the answer can still change the outcome: an explicit chaseSide is the player's call and
+            -- a fixed pipe chopper never uses these two positions at all. A side already ruled out
+            -- cannot be ruled out twice either.
+            if (not leftBlocked) and (not self:isChaseSideReachable(leftChasePos)) then
+                leftBlocked = true
+            end
+            if (not rightBlocked) and (not self:isChaseSideReachable(rightChasePos)) then
+                rightBlocked = true
+            end
+        end
 
         -- Default to the side of the harvester the unloader is already on
         -- then check if there is a better side
@@ -803,12 +986,7 @@ function CombineUnloaderMode:getPipeChasePosition(planningPhase)
     else
         -- harveser with bunker
         --CombineUnloaderMode.debugMsg(self.vehicle, "CombineUnloaderMode:getPipeChasePosition:IsNormalCombine")
-        local rearChaseTermX = self:getRearChaseOffsetX(leftBlocked, rightBlocked)
-
         local sideChasePos = AutoDrive.createWayPointRelativeToVehicle(self.combine, self.pipeSide * (sideChaseTermX + self:getPipeSlopeCorrection()), sideChaseTermZ)
-        local rearChasePos = AutoDrive.createWayPointRelativeToVehicle(self.combine, rearChaseTermX, rearChaseTermZ)
-        local angleToSideChaseSide = self:getAngleToChasePos(sideChasePos)
-        local angleToRearChaseSide = self:getAngleToChasePos(rearChasePos)
 
         AutoDrive.useNewPipeOffsets = true
 
@@ -817,8 +995,21 @@ function CombineUnloaderMode:getPipeChasePosition(planningPhase)
             -- local sideOffsetX = self.pipeSide * self:getSideChaseOffsetX_new()
             -- sideChasePos = AutoDrive.createWayPointRelativeToDischargeNode(self.combine, sideOffsetX, sideOffsetZ)
             sideChasePos = self:getPipeChaseWayPoint(0, sideOffsetZ)
-            angleToSideChaseSide = self:getAngleToChasePos(sideChasePos)
         end
+
+        -- Same as for the chopper: the sensors belong to the harvester and cannot tell us whether we
+        -- can get to the pipe side. Done before the rear chase offset is derived, so that a side we
+        -- cannot reach is not the one the rear position leans towards either.
+        if self.pipeSide == AutoDrive.CHASEPOS_LEFT and (not leftBlocked) and (not self:isChaseSideReachable(sideChasePos)) then
+            leftBlocked = true
+        elseif self.pipeSide == AutoDrive.CHASEPOS_RIGHT and (not rightBlocked) and (not self:isChaseSideReachable(sideChasePos)) then
+            rightBlocked = true
+        end
+
+        local rearChaseTermX = self:getRearChaseOffsetX(leftBlocked, rightBlocked)
+        local rearChasePos = AutoDrive.createWayPointRelativeToVehicle(self.combine, rearChaseTermX, rearChaseTermZ)
+        local angleToSideChaseSide = self:getAngleToChasePos(sideChasePos)
+        local angleToRearChaseSide = self:getAngleToChasePos(rearChasePos)
 
         if
             (

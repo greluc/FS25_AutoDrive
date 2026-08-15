@@ -49,7 +49,9 @@ function UnloadAtMode:stop()
 end
 
 function UnloadAtMode:getNextTask()
-	AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "UnloadAtMode:getNextTask start self.state %s", tostring(self.state))
+	if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
+	    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_PATHINFO, "UnloadAtMode:getNextTask start self.state %s", tostring(self.state))
+	end
     local nextTask
 
 	if self.state == UnloadAtMode.STATE_TO_TARGET then

@@ -14,7 +14,9 @@ function DriveToMode:reset()
 end
 
 function DriveToMode:start(user)
-    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO, "DriveToMode:start self.vehicle.ad.onRouteToRefuel %s", tostring(self.vehicle.ad.onRouteToRefuel))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_VEHICLEINFO) then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO, "DriveToMode:start self.vehicle.ad.onRouteToRefuel %s", tostring(self.vehicle.ad.onRouteToRefuel))
+    end
     if not self.vehicle.ad.stateModule:isActive() then
         self.vehicle:startAutoDrive()
     end
@@ -25,7 +27,9 @@ function DriveToMode:start(user)
 
     self:reset()
     self.destinationID = self.vehicle.ad.stateModule:getFirstMarker().id
-    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO, "DriveToMode:start self.destinationID %s", tostring(self.destinationID))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_VEHICLEINFO) then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO, "DriveToMode:start self.destinationID %s", tostring(self.destinationID))
+    end
 
     AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO, "DriveToMode:start add DriveToDestinationTask")
     self.driveToDestinationTask = DriveToDestinationTask:new(self.vehicle, self.destinationID)
@@ -39,7 +43,9 @@ end
 function DriveToMode:handleFinishedTask()
     if self.driveToDestinationTask ~= nil then
         self.driveToDestinationTask = nil
-        self.vehicle.ad.taskModule:addTask(StopAndDisableADTask:new(self.vehicle), ADTaskModule.DONT_PROPAGATE)
+        -- DONT_PROPAGATE belongs to the task: addTask ignores a second argument, so the stop task
+        -- would have called back into handleFinishedTask when it finished
+        self.vehicle.ad.taskModule:addTask(StopAndDisableADTask:new(self.vehicle, ADTaskModule.DONT_PROPAGATE))
         local target = self.vehicle.ad.stateModule:getFirstMarker().name
         local mapMarker = ADGraphManager:getMapMarkerByWayPointId(self.destinationID)
         if mapMarker ~= nil and mapMarker.name ~= nil then
