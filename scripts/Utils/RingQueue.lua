@@ -47,5 +47,5 @@ function RingQueue:Count()
 end
 
 function RingQueue:Contains(item)
-    return table.contains(self.items, item)
+    return ADTable.contains(self.items, item)
 end

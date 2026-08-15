@@ -8,26 +8,30 @@ end
 
 function AutoDrive.checkForVehiclesInBox(boundingBox, excludedVehicles)
     for _, otherVehicle in pairs(AutoDrive.getAllVehicles()) do
-        local isExcluded = false
-        if excludedVehicles ~= nil and otherVehicle ~= nil then
-            for _, excludedVehicle in pairs(excludedVehicles) do
-                if excludedVehicle == otherVehicle or AutoDrive:checkIsConnected(excludedVehicle, otherVehicle) then
-                    isExcluded = true
-                end
-            end
-        end
-        if (otherVehicle.spec_conveyorBelt and otherVehicle.spec_motorized and otherVehicle.getIsMotorStarted and otherVehicle:getIsMotorStarted()) -- ignore operating conveyor belts
-            or (otherVehicle.trainSystem ~= nil) -- ignore train vehicles
-        then
-            isExcluded = true
-        end
-        if (not isExcluded) and otherVehicle ~= nil and otherVehicle.components ~= nil and otherVehicle.size.width ~= nil and otherVehicle.size.length ~= nil and otherVehicle.rootNode ~= nil then
+        if otherVehicle ~= nil and otherVehicle.components ~= nil and otherVehicle.size.width ~= nil and otherVehicle.size.length ~= nil and otherVehicle.rootNode ~= nil then
             local x, y, z = getWorldTranslation(otherVehicle.components[1].node)
             local distance = MathUtil.vector2Length(boundingBox[1].x - x, boundingBox[1].z - z)
+            -- cull by distance before anything else: this runs over every vehicle in the mission and
+            -- checkIsConnected below walks the whole implement chain of each excluded vehicle
             if distance < 50 then
-                if AutoDrive.boxesIntersect(boundingBox, AutoDrive.getBoundingBoxForVehicle(otherVehicle)) == true then
-                    if math.abs(boundingBox[1].y - y) < 10 then
-                        return true
+                local isExcluded = false
+                if (otherVehicle.spec_conveyorBelt and otherVehicle.spec_motorized and otherVehicle.getIsMotorStarted and otherVehicle:getIsMotorStarted()) -- ignore operating conveyor belts
+                    or (otherVehicle.trainSystem ~= nil) -- ignore train vehicles
+                then
+                    isExcluded = true
+                elseif excludedVehicles ~= nil then
+                    for _, excludedVehicle in pairs(excludedVehicles) do
+                        if excludedVehicle == otherVehicle or AutoDrive:checkIsConnected(excludedVehicle, otherVehicle) then
+                            isExcluded = true
+                            break
+                        end
+                    end
+                end
+                if not isExcluded then
+                    if AutoDrive.boxesIntersect(boundingBox, AutoDrive.getBoundingBoxForVehicle(otherVehicle)) == true then
+                        if math.abs(boundingBox[1].y - y) < 10 then
+                            return true
+                        end
                     end
                 end
             end
@@ -72,7 +76,11 @@ function AutoDrive.checkForVehiclePathInBox(boundingBox, minTurnRadius, searchin
                             local corner4Z = wp.z + math.sin(rightAngle) * sideLength
                             local cellBox = AutoDrive.boundingBoxFromCorners(cornerX, cornerZ, corner2X, corner2Z, corner3X, corner3Z, corner4X, corner4Z)
 
-                            local anglesSimilar = false
+                            -- the angle test only narrows the hit down to routes running roughly
+                            -- parallel to us. Without a direction vector there is nothing to compare
+                            -- against, so the test is skipped instead of counting as a mismatch -
+                            -- otherwise the whole check could never report a hit for that caller.
+                            local anglesSimilar = true
                             if currentVec ~= nil then
                                 local dirVec = { x=vectorX, z = vectorZ}
                                 local angleBetween = AutoDrive.angleBetween(dirVec, currentVec)
@@ -157,7 +165,7 @@ function AutoDrive.getDistanceBetween(vehicleOne, vehicleTwo)
         return math.huge
     end
     if not entityExists(vehicleOne.components[1].node) or not entityExists(vehicleTwo.components[1].node) then
-        if not table.contains(AutoDrive.shownErrors, "getDistanceBetween") then
+        if not ADTable.contains(AutoDrive.shownErrors, "getDistanceBetween") then
             table.insert(AutoDrive.shownErrors, "getDistanceBetween")
             AutoDrive.debugMsg(nil, "AutoDrive.getDistanceBetween ERROR - entity vehicleOne %s vehicleTwo %s"
             , tostring(entityExists(vehicleOne.components[1].node))
@@ -312,7 +320,7 @@ function ADDimensionSensor:getRealVehicleDimensions_Callback(transformId)
     if transformId ~= 0 and transformId ~= g_currentMission.terrainRootNode then
         local collisionObject = g_currentMission.nodeToObject[transformId]
         if collisionObject ~= nil then
-            if self.frontImplements and table.contains(self.frontImplements, collisionObject) then
+            if self.frontImplements and ADTable.contains(self.frontImplements, collisionObject) then
                 self.selfHits = self.selfHits + 1
             elseif collisionObject == self.vehicle then
                 self.selfHits = self.selfHits + 1

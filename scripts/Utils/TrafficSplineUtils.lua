@@ -15,7 +15,7 @@ function AutoDrive:adParseSplines()
 
 	for _, spline in pairs(splines) do
 		self:createWaypointsForSpline(startNodes, endNodes, usedSplines, splines, spline)
-		if not table.contains(usedSplines, spline) then
+		if not ADTable.contains(usedSplines, spline) then
 			table.insert(usedSplines, spline)
 		end
 	end
@@ -33,7 +33,7 @@ function AutoDrive:createWaypointsForSpline(startNodes, endNodes, usedSplines, s
 	if length > 0 then
 		local reverseSpline = AutoDrive:checkForSplineInReverseDirection(splines, spline)
 		local isDualRoad = reverseSpline ~= nil
-		if reverseSpline ~= nil and table.contains(usedSplines, reverseSpline) then
+		if reverseSpline ~= nil and ADTable.contains(usedSplines, reverseSpline) then
 			return
 		end
 		for i=0, 1, 1.0/length do

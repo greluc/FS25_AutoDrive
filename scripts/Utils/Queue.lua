@@ -24,7 +24,7 @@ end
 
 function Queue:Peek()
     if self:Count() > 0 then
-        self.itemsCount = self.itemsCount - 1
+        -- look, do not take: decrementing here made Count() drift away from #items
         return self.items[1]
     end
     return nil
@@ -44,5 +44,5 @@ function Queue:Count()
 end
 
 function Queue:Contains(item)
-    return table.contains(self.items, item)
+    return ADTable.contains(self.items, item)
 end

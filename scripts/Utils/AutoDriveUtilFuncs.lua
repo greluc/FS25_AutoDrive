@@ -63,11 +63,11 @@ function AutoDrive:checkIsConnected(toCheck, other)
             return true
         end
 
-        if implement.spec_baleGrab ~= nil and implement.spec_baleGrab.dynamicMountedObjects ~= nil and table.contains(implement.spec_baleGrab.dynamicMountedObjects, other) then
+        if implement.spec_baleGrab ~= nil and implement.spec_baleGrab.dynamicMountedObjects ~= nil and ADTable.contains(implement.spec_baleGrab.dynamicMountedObjects, other) then
             return true
         end
 
-        if implement.spec_dynamicMountAttacher ~= nil and implement.spec_dynamicMountAttacher.dynamicMountedObjects ~= nil and table.contains(implement.spec_dynamicMountAttacher.dynamicMountedObjects, other) then
+        if implement.spec_dynamicMountAttacher ~= nil and implement.spec_dynamicMountAttacher.dynamicMountedObjects ~= nil and ADTable.contains(implement.spec_dynamicMountAttacher.dynamicMountedObjects, other) then
             return true
         end
     end
@@ -127,7 +127,9 @@ function AutoDrive.getMinLookaheadByVehicleType(vehicle)
             min_lookAhead = 4
         end
     end
-    AutoDrive.debugPrint(vehicle, AutoDrive.DC_VEHICLEINFO, "AutoDrive.getMinLookaheadByVehicleType %.1f", math.max(min_lookAhead, 2))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_VEHICLEINFO) then
+        AutoDrive.debugPrint(vehicle, AutoDrive.DC_VEHICLEINFO, "AutoDrive.getMinLookaheadByVehicleType %.1f", math.max(min_lookAhead, 2))
+    end
     return math.max(min_lookAhead, 2)
 end
 
@@ -187,7 +189,7 @@ function AutoDrive.getRequiredRefuels(vehicle, ignoreFillLevel)
                 local currentFillLevelPercentage = vehicle:getFillUnitFillLevelPercentage(consumer.fillUnitIndex)
                 local needFuel = (currentFillLevelPercentage < AutoDrive.REFUEL_LEVEL or (ignoreFillLevel and (currentFillLevelPercentage < minFillLevel)))
                 if needFuel then
-                    if not table.contains(AutoDrive.nonFillableFillTypes, fillTypeName) then
+                    if not ADTable.contains(AutoDrive.nonFillableFillTypes, fillTypeName) then
                         table.insert(ret, consumer.fillType)
                     end
                 end
@@ -228,6 +230,20 @@ function AutoDrive.combineIsTurning(combine)
     if not combineIsTurning then --(combine.ad.driveForwardTimer:done() and (not combine:getIsBufferCombine()))
         return false
     end
+
+    -- A harvester that has not moved for 3 s is treated as "no longer turning", so the unloader
+    -- stops waiting and resumes the chase. That heuristic exists for AI helpers, which never stand
+    -- still mid-turn: standing still there means the turn is over or something went wrong.
+    --
+    -- It must not apply when Courseplay says the harvester is maneuvering. A Courseplay turn
+    -- legitimately pauses - reversing into a pocket, waiting for room, holding for an unloader -
+    -- and it can easily exceed 3 s. Dropping the turn flag then sends the unloader back into a
+    -- harvester that is about to swing, which is the collision this whole state exists to avoid.
+    -- getIsCPTurning is authoritative for a Courseplay harvester, so trust it over the timer.
+    if cpIsTurning then
+        return true
+    end
+
     if combine.ad.noMovementTimer.elapsedTime > 3000 then
         return false
     end
@@ -883,7 +899,7 @@ function AutoDrive.getSupportedFillTypesOfAllUnitsAlphabetically(vehicle, exclud
                     if dischargeableUnit.object and dischargeableUnit.object.getFillUnitSupportedFillTypes ~= nil then
                         if dischargeableUnit.fillUnitIndex and dischargeableUnit.fillUnitIndex > 0 then
                             for fillType, supported in pairs(dischargeableUnit.object:getFillUnitSupportedFillTypes(dischargeableUnit.fillUnitIndex)) do
-                                if supported and not table.contains(supportedFillTypes, fillType) then
+                                if supported and not ADTable.contains(supportedFillTypes, fillType) then
                                     table.insert(supportedFillTypes, fillType)
                                 end
                             end

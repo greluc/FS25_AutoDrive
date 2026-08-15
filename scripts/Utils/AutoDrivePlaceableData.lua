@@ -208,36 +208,54 @@ function AutoDrivePlaceableData.readGraphFromXml(xmlFile, placeable)
             end
         end
 
-        checkProperty("placeable")
-        checkProperty("placeable.AutoDrive")
-        checkProperty("placeable.AutoDrive.wayPoints")
+        -- the checks return a negative error code and nil when fine, so every result has to be
+        -- propagated to the caller - otherwise a missing key reaches string.split as nil
+        local ret
+
+        ret = checkProperty("placeable") or checkProperty("placeable.AutoDrive") or checkProperty("placeable.AutoDrive.wayPoints")
+        if ret then
+            return ret
+        end
 
         local key
-        local tempString
 
         key = "placeable.AutoDrive.waypoints.x"
-        checkProperty(key)
-        checkString(key)
+        ret = checkProperty(key) or checkString(key)
+        if ret then
+            return ret
+        end
         local xt = string.split(getXMLString(xmlFile, key), ",")
         key = "placeable.AutoDrive.waypoints.y" -- not required, only for consistency check
-        checkProperty(key)
-        checkString(key)
+        ret = checkProperty(key) or checkString(key)
+        if ret then
+            return ret
+        end
         local yt = string.split(getXMLString(xmlFile, key), ",")
         key = "placeable.AutoDrive.waypoints.z"
-        checkProperty(key)
-        checkString(key)
+        ret = checkProperty(key) or checkString(key)
+        if ret then
+            return ret
+        end
         local zt = string.split(getXMLString(xmlFile, key), ",")
+        -- out/incoming are ";" separated, but checkString only rejects a nil or empty value, which
+        -- is what has to be caught before string.split sees it - it never rejects a valid list
         key = "placeable.AutoDrive.waypoints.out"
-        checkProperty(key)
-        -- checkString(key)
+        ret = checkProperty(key) or checkString(key)
+        if ret then
+            return ret
+        end
         local ot = string.split(getXMLString(xmlFile, key), ";")
         key = "placeable.AutoDrive.waypoints.incoming"
-        checkProperty(key)
-        -- checkString(key)
+        ret = checkProperty(key) or checkString(key)
+        if ret then
+            return ret
+        end
         local it = string.split(getXMLString(xmlFile, key), ";")
         key = "placeable.AutoDrive.waypoints.flags"
-        checkProperty(key)
-        checkString(key)
+        ret = checkProperty(key) or checkString(key)
+        if ret then
+            return ret
+        end
         local ft = string.split(getXMLString(xmlFile, key), ",")
 
         if #xt == 0 or #yt == 0 or #zt == 0 or #ot == 0 or #it == 0 or #ft == 0 or #xt ~= #yt or #xt ~= #zt or #xt ~= #ot or #xt ~= #it or #xt ~= #ft then

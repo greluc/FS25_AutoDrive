@@ -5,7 +5,7 @@ function AutoDrive:checkDestinations(showAll)
         return
     end
     local mapMarkers = ADGraphManager:getMapMarkers()
-    if mapMarkers and table.count(mapMarkers) > 0 then
+    if mapMarkers and ADTable.count(mapMarkers) > 0 then
 
         for index, mapMarker in pairs(mapMarkers) do
             local wayPoints = ADGraphManager:getPathTo(vehicle, mapMarker.id)

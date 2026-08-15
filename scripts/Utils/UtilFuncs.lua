@@ -1,67 +1,3 @@
-string.randomCharset = {
-	"0",
-	"1",
-	"2",
-	"3",
-	"4",
-	"5",
-	"6",
-	"7",
-	"8",
-	"9",
-	"A",
-	"B",
-	"C",
-	"D",
-	"E",
-	"F",
-	"G",
-	"H",
-	"I",
-	"J",
-	"K",
-	"L",
-	"M",
-	"N",
-	"O",
-	"P",
-	"Q",
-	"R",
-	"S",
-	"T",
-	"U",
-	"V",
-	"W",
-	"X",
-	"Y",
-	"Z",
-	"a",
-	"b",
-	"c",
-	"d",
-	"e",
-	"f",
-	"g",
-	"h",
-	"i",
-	"j",
-	"k",
-	"l",
-	"m",
-	"n",
-	"o",
-	"p",
-	"q",
-	"r",
-	"s",
-	"t",
-	"u",
-	"v",
-	"w",
-	"x",
-	"y",
-	"z"
-}
 
 --- Calculates a much better result of world height by using a raycast.
 --- The original function `getTerrainHeightAtWorldPos` returns wrong results if, for example, the terrain underneath a road has gaps.
@@ -189,8 +125,29 @@ if math.clamp == nil then
 	end
 end
 
-function table:contains(value)
-	for _, v in pairs(self) do
+------------------------------------------------------------------------------------------------------------------------
+--- Table and string helpers
+------------------------------------------------------------------------------------------------------------------------
+--- These used to be attached to the global `table` and `string` types. Every mod in Farming
+--- Simulator shares one Lua state, so that made the names AutoDrive's to lose: a mod loaded later
+--- defining `table.contains` with different semantics would silently change behaviour for
+--- everyone, and the last one loaded would win. They live in their own namespace now.
+---
+--- The call convention is unchanged - these were always invoked as `ADTable.contains(t, v)`, so
+--- taking the table as an explicit first parameter is a straight rename at the call sites.
+ADTable = {}
+ADString = {}
+
+ADString.randomCharset = {
+	"0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+	"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+	"N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+	"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+	"n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"
+}
+
+function ADTable.contains(t, value)
+	for _, v in pairs(t) do
 		if v == value then
 			return true
 		end
@@ -198,8 +155,8 @@ function table:contains(value)
 	return false
 end
 
-function table:f_contains(func)
-	for _, v in pairs(self) do
+function ADTable.f_contains(t, func)
+	for _, v in pairs(t) do
 		if func(v) then
 			return true
 		end
@@ -207,8 +164,8 @@ function table:f_contains(func)
 	return false
 end
 
-function table:indexOf(value)
-	for k, v in pairs(self) do
+function ADTable.indexOf(t, value)
+	for k, v in pairs(t) do
 		if v == value then
 			return k
 		end
@@ -216,8 +173,8 @@ function table:indexOf(value)
 	return nil
 end
 
-function table:f_indexOf(func)
-	for k, v in pairs(self) do
+function ADTable.f_indexOf(t, func)
+	for k, v in pairs(t) do
 		if func(v) then
 			return k
 		end
@@ -225,8 +182,8 @@ function table:f_indexOf(func)
 	return nil
 end
 
-function table:f_find(func)
-	for _, v in pairs(self) do
+function ADTable.f_find(t, func)
+	for _, v in pairs(t) do
 		if func(v) then
 			return v
 		end
@@ -234,9 +191,9 @@ function table:f_find(func)
 	return nil
 end
 
-function table:f_filter(func)
+function ADTable.f_filter(t, func)
 	local new = {}
-	for _, v in pairs(self) do
+	for _, v in pairs(t) do
 		if func(v) then
 			table.insert(new, v)
 		end
@@ -244,38 +201,47 @@ function table:f_filter(func)
 	return new
 end
 
-function table:removeValue(value)
-	for k, v in pairs(self) do
+--- Removes the FIRST element equal to value. Returns true when something was removed.
+--- Safe despite mutating during traversal because it returns immediately after the removal.
+function ADTable.removeValue(t, value)
+	for k, v in pairs(t) do
 		if v == value then
-			table.remove(self, k)
+			table.remove(t, k)
 			return true
 		end
 	end
 	return false
 end
 
-function table:f_remove(func)
-	for k, v in pairs(self) do
-		if func(v) then
-			table.remove(self, k)
+--- Removes EVERY element matching func, in place.
+---
+--- This replaces the old `table:f_remove`, which called table.remove() while iterating the same
+--- array with pairs(). Removing element k shifts everything after it down one slot while the
+--- iterator moves on to k+1, so the element that just moved into k was skipped - two adjacent
+--- matches meant the second one survived. Walking backwards has no such problem: removing at i
+--- only shifts indices above i, which have already been visited.
+function ADTable.removeAll(t, func)
+	for i = #t, 1, -1 do
+		if func(t[i]) then
+			table.remove(t, i)
 		end
 	end
 end
 
-function table:count()
+function ADTable.count(t)
 	local c = 0
-	if self ~= nil then
-		for _ in pairs(self) do
+	if t ~= nil then
+		for _ in pairs(t) do
 			c = c + 1
 		end
 	end
 	return c
 end
 
-function table:f_count(func)
+function ADTable.f_count(t, func)
 	local c = 0
-	if self ~= nil then
-		for _, v in pairs(self) do
+	if t ~= nil then
+		for _, v in pairs(t) do
 			if func(v) then
 				c = c + 1
 			end
@@ -284,19 +250,19 @@ function table:f_count(func)
 	return c
 end
 
-function table:concatNil(sep, i, j)
-	local res = table.concat(self, sep, i, j)
+function ADTable.concatNil(t, sep, i, j)
+	local res = table.concat(t, sep, i, j)
 	if res == "" then
 		return nil
 	end
 	return res
 end
 
-function string.random(length)
+function ADString.random(length)
 	if not length or length <= 0 then
 		return ""
 	end
-	return string.random(length - 1) .. string.randomCharset[math.random(1, #string.randomCharset)]
+	return ADString.random(length - 1) .. ADString.randomCharset[math.random(1, #ADString.randomCharset)]
 end
 
 function AutoDrive.localize(text)
@@ -519,7 +485,7 @@ function AutoDrive:createSplineInterpolationBetween(startNode, endNode)
 		AutoDrive.splineInterpolationUserCurvature = 0.49
 	end
 
-	if table.contains(startNode.out, endNode.id) or table.contains(endNode.incoming, startNode.id) then
+	if ADTable.contains(startNode.out, endNode.id) or ADTable.contains(endNode.incoming, startNode.id) then
 		-- nodes are already connected - do not create preview
 		return
 	end
@@ -649,11 +615,15 @@ function AutoDrive:createSplineWithControlPoints(startNode, p0, endNode, p3)
 				px.y = AutoDrive:getTerrainHeightAtWorldPos(px.x, px.z, prevWP.y)
 				table.insert(self.splineInterpolation.waypoints, px)
 
-				-- Trying out if this slightly delayed call results in a more stable raycastHeight detection
-				local dummy = 1
-				for i = 1, 1000 do
-					dummy = dummy + i
-				end
+				-- There used to be a 1000 iteration spin loop here, with the comment "trying out if
+				-- this slightly delayed call results in a more stable raycastHeight detection".
+				-- It cannot do that: Lua runs single threaded here and never yields, so busy
+				-- waiting can never let an outstanding engine callback fire. raycastClosest inside
+				-- getTerrainHeightAtWorldPos above already invoked its callback synchronously and
+				-- the function returned "self.raycastHeight or startHeight", so the value read on
+				-- the next line was final before the loop started. On an interactive path - every
+				-- mouse move while dragging a spline preview re-runs this for each emitted point -
+				-- it cost up to 200.000 iterations per event for nothing.
 				self.splineInterpolation.waypoints[#self.splineInterpolation.waypoints].y = self.raycastHeight or self.splineInterpolation.waypoints[#self.splineInterpolation.waypoints].y
 				if self.splineInterpolation.waypoints[#self.splineInterpolation.waypoints].y == nil then
 					self.splineInterpolation.waypoints[#self.splineInterpolation.waypoints].y = prevWP.y
@@ -887,11 +857,13 @@ function AutoDrive:ServerBroadcastEvent(superFunc, event, sendLocal, ignoreConne
 	eCopy.sendLocal = sendLocal or false
 	eCopy.ignoreConnection = ignoreConnection or "nil"
 	eCopy.force = force or false
-	eCopy.clients = table.count(self.clientConnections) - 1
+	eCopy.clients = ADTable.count(self.clientConnections) - 1
 	superFunc(self, event, sendLocal, ignoreConnection, ghostObject, force)
 	eCopy.size = AutoDrive.debug.lastSentEventSize
 	if eCopy.clients > 0 then
-		AutoDrive.debugPrint(nil, AutoDrive.DC_NETWORKINFO, "%s size %s (x%s = %s) Bytes", eCopy.eventName, eCopy.size / eCopy.clients, eCopy.clients, eCopy.size)
+		if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_NETWORKINFO) then
+		    AutoDrive.debugPrint(nil, AutoDrive.DC_NETWORKINFO, "%s size %s (x%s = %s) Bytes", eCopy.eventName, eCopy.size / eCopy.clients, eCopy.clients, eCopy.size)
+		end
 	else
 		AutoDrive.debugPrint(nil, AutoDrive.DC_NETWORKINFO, "%s", eCopy.eventName)
 	end
@@ -1049,7 +1021,9 @@ function AutoDrive:onZoomTopDownCamera(superFunc, action, offset, ...)
 end
 
 function AutoDrive:onFillTypeSelection(fillType)
-    AutoDrive.debugPrint(self.validFillableObject, AutoDrive.DC_VEHICLEINFO, "AutoDrive:onFillTypeSelection start... #self.fillableObjects %s fillType %s self.validFillableObject %s self.currentFillableObject %s self.isLoading %s", tostring(table.count(self.fillableObjects)), tostring(fillType), tostring(self.validFillableObject), tostring(self.currentFillableObject), tostring(self.isLoading))
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_VEHICLEINFO) then
+        AutoDrive.debugPrint(self.validFillableObject, AutoDrive.DC_VEHICLEINFO, "AutoDrive:onFillTypeSelection start... #self.fillableObjects %s fillType %s self.validFillableObject %s self.currentFillableObject %s self.isLoading %s", tostring(ADTable.count(self.fillableObjects)), tostring(fillType), tostring(self.validFillableObject), tostring(self.currentFillableObject), tostring(self.isLoading))
+    end
 
     -- fillUnit for wrong fillType is active, so disable loading and check again
     if fillType ~= nil and fillType ~= FillType.UNKNOWN then
@@ -1069,7 +1043,9 @@ function AutoDrive:onFillTypeSelection(fillType)
         AutoDrive.debugPrint(self.validFillableObject, AutoDrive.DC_VEHICLEINFO, "AutoDrive:onFillTypeSelection not self.isLoading")
         if fillType ~= nil and fillType ~= FillType.UNKNOWN then
             for _, fillableObject in pairs(self.fillableObjects) do --copied from gdn getIsActivatable to get a valid Fillable Object even without entering vehicle (needed for refuel first time)
-                AutoDrive.debugPrint(fillableObject.object, AutoDrive.DC_VEHICLEINFO, "AutoDrive:onFillTypeSelection fillableObject.object fillableObject.fillUnitIndex %s", tostring(fillableObject.fillUnitIndex))
+                if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_VEHICLEINFO) then
+                    AutoDrive.debugPrint(fillableObject.object, AutoDrive.DC_VEHICLEINFO, "AutoDrive:onFillTypeSelection fillableObject.object fillableObject.fillUnitIndex %s", tostring(fillableObject.fillUnitIndex))
+                end
 
                 if fillableObject.object.getFillUnitSupportsToolType and fillableObject.object:getFillUnitSupportsToolType(fillableObject.fillUnitIndex, ToolType.TRIGGER) then
                     AutoDrive.debugPrint(fillableObject.object, AutoDrive.DC_VEHICLEINFO, "AutoDrive:onFillTypeSelection getFillUnitSupportsToolType")
@@ -1078,7 +1054,9 @@ function AutoDrive:onFillTypeSelection(fillType)
                         if fillableObject.object.getFillUnitAllowsFillType and fillableObject.object:getFillUnitAllowsFillType(fillableObject.fillUnitIndex, fillType) then
                             AutoDrive.debugPrint(fillableObject.object, AutoDrive.DC_VEHICLEINFO, "AutoDrive:onFillTypeSelection getFillUnitAllowsFillType")
                             if fillableObject.object.getFillUnitFreeCapacity and fillableObject.object:getFillUnitFreeCapacity(fillableObject.fillUnitIndex) > 0 then
-                                AutoDrive.debugPrint(fillableObject.object, AutoDrive.DC_VEHICLEINFO, "AutoDrive:onFillTypeSelection setIsLoading self.selectedFillType %s -> fillType %s", tostring(self.selectedFillType), tostring(fillType))
+                                if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_VEHICLEINFO) then
+                                    AutoDrive.debugPrint(fillableObject.object, AutoDrive.DC_VEHICLEINFO, "AutoDrive:onFillTypeSelection setIsLoading self.selectedFillType %s -> fillType %s", tostring(self.selectedFillType), tostring(fillType))
+                                end
                                 local rootVehicle = fillableObject.object.rootVehicle
                                 local onRouteToRefuel = rootVehicle and rootVehicle.ad and rootVehicle.ad.onRouteToRefuel
                                 if not onRouteToRefuel then
@@ -1102,7 +1080,9 @@ function AutoDrive:onFillTypeSelection(fillType)
                     Logging.info("[AD] Info: invalid load trigger (fillUnitIndex == nil) vehicle position: %s , %s", tostring(x), tostring(z))
                 end
             end
-            AutoDrive.debugPrint(self.validFillableObject, AutoDrive.DC_VEHICLEINFO, "AutoDrive:onFillTypeSelection self.isLoading %s", tostring(self.isLoading))
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_VEHICLEINFO) then
+                AutoDrive.debugPrint(self.validFillableObject, AutoDrive.DC_VEHICLEINFO, "AutoDrive:onFillTypeSelection self.isLoading %s", tostring(self.isLoading))
+            end
         end
     end
 
@@ -1116,7 +1096,9 @@ function AutoDrive:onFillTypeSelection(fillType)
 
                     for _, consumer in pairs(spec.consumersByFillTypeName) do
                         local fillUnitIndex = consumer.fillUnitIndex
-                        AutoDrive.debugPrint(fillableObject.object, AutoDrive.DC_VEHICLEINFO, "AutoDrive:onFillTypeSelection fillUnitIndex %s", tostring(fillUnitIndex))
+                        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_VEHICLEINFO) then
+                            AutoDrive.debugPrint(fillableObject.object, AutoDrive.DC_VEHICLEINFO, "AutoDrive:onFillTypeSelection fillUnitIndex %s", tostring(fillUnitIndex))
+                        end
                         if fillableObject.object.getFillUnitSupportsToolType and fillableObject.object:getFillUnitSupportsToolType(fillUnitIndex, ToolType.TRIGGER) then
                             AutoDrive.debugPrint(fillableObject.object, AutoDrive.DC_VEHICLEINFO, "AutoDrive:onFillTypeSelection getFillUnitSupportsToolType")
                             if fillableObject.object.getFillUnitSupportsFillType and fillableObject.object:getFillUnitSupportsFillType(fillUnitIndex, fillType) then
@@ -1124,7 +1106,9 @@ function AutoDrive:onFillTypeSelection(fillType)
                                 if fillableObject.object.getFillUnitAllowsFillType and fillableObject.object:getFillUnitAllowsFillType(fillUnitIndex, fillType) then
                                     AutoDrive.debugPrint(fillableObject.object, AutoDrive.DC_VEHICLEINFO, "AutoDrive:onFillTypeSelection getFillUnitAllowsFillType")
                                     if fillableObject.object.getFillUnitFreeCapacity and fillableObject.object:getFillUnitFreeCapacity(fillUnitIndex) > 0 then
-                                        AutoDrive.debugPrint(fillableObject.object, AutoDrive.DC_VEHICLEINFO, "AutoDrive:onFillTypeSelection setIsLoading self.selectedFillType %s -> fillType %s", tostring(self.selectedFillType), tostring(fillType))
+                                        if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_VEHICLEINFO) then
+                                            AutoDrive.debugPrint(fillableObject.object, AutoDrive.DC_VEHICLEINFO, "AutoDrive:onFillTypeSelection setIsLoading self.selectedFillType %s -> fillType %s", tostring(self.selectedFillType), tostring(fillType))
+                                        end
                                         self:setIsLoading(true, fillableObject.object, fillUnitIndex, fillType)
                                         break
                                     end
@@ -1134,7 +1118,9 @@ function AutoDrive:onFillTypeSelection(fillType)
                     end
                 end
             end
-            AutoDrive.debugPrint(self.validFillableObject, AutoDrive.DC_VEHICLEINFO, "AutoDrive:onFillTypeSelection self.isLoading %s", tostring(self.isLoading))
+            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_VEHICLEINFO) then
+                AutoDrive.debugPrint(self.validFillableObject, AutoDrive.DC_VEHICLEINFO, "AutoDrive:onFillTypeSelection self.isLoading %s", tostring(self.isLoading))
+            end
         end
     end
     AutoDrive.debugPrint(nil, AutoDrive.DC_VEHICLEINFO, "AutoDrive:onFillTypeSelection end")
@@ -1193,7 +1179,9 @@ function AutoDrive.checkWaypointsLinkedtothemselve(correctit)
 		end
 	end
 	if count > 0 then
-		AutoDrive.debugPrint(nil, AutoDrive.DC_ROADNETWORKINFO, "removed %s waypoint links to themselve", tostring(count))
+		if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_ROADNETWORKINFO) then
+		    AutoDrive.debugPrint(nil, AutoDrive.DC_ROADNETWORKINFO, "removed %s waypoint links to themselve", tostring(count))
+		end
 	end
 end
 
@@ -1230,7 +1218,9 @@ function AutoDrive.checkWaypointsMultipleSameOut(correctit)
 		end
 	end
 	if count > 0 then
-		AutoDrive.debugPrint(nil, AutoDrive.DC_ROADNETWORKINFO, "removed %s waypoint with multiple same out links", tostring(count))
+		if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_ROADNETWORKINFO) then
+		    AutoDrive.debugPrint(nil, AutoDrive.DC_ROADNETWORKINFO, "removed %s waypoint with multiple same out links", tostring(count))
+		end
 	end
 end
 

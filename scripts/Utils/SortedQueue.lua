@@ -31,8 +31,8 @@ function SortedQueue:dequeue()
 end
 
 function SortedQueue:peek()
-    if self:Count() > 0 then
-        self.itemsCount = self.itemsCount - 1
+    -- was self:Count(), which does not exist on this class, and it decremented the count as well
+    if self:count() > 0 then
         return self.items[1]
     end
     return nil
