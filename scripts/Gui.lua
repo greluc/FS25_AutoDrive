@@ -1,3 +1,24 @@
+--- Loads one gui-config and reports whether it is usable afterwards.
+---
+--- The return value of Gui:loadGui is NOT a usable success signal: Utils.prependedFunction and
+--- Utils.appendedFunction call the original without passing its result on, so as soon as any mod
+--- wraps Gui.loadGui - FS25_Financing does exactly that - every load in the game returns nil even
+--- though it succeeded. Checking the registration the engine performs on success instead keeps
+--- this honest no matter who else hooked the function.
+local function loadADGui(xmlFilename, name, controller, isFrame)
+	g_gui:loadGui(xmlFilename, name, controller, isFrame)
+
+	local registry = g_gui.guis
+	if isFrame then
+		registry = g_gui.frames
+	end
+	local guiElement = registry[name]
+	if guiElement == nil then
+		AutoDrive.debugPrint(nil, AutoDrive.DC_DEVINFO, "AutoDrive:loadGUI failed to load %s", name)
+	end
+	return guiElement
+end
+
 function AutoDrive:loadGUI()
 	g_overlayManager:addTextureConfigFile(g_autoDriveUIConfigPath, "ad_gui")
 	g_gui:loadProfiles(AutoDrive.directory .. "gui/guiProfiles.xml")
@@ -12,56 +33,21 @@ function AutoDrive:loadGUI()
 	AutoDrive.gui.ADColorSettingsGui = ADColorSettingsGui.new()
 	AutoDrive.gui.ADScanConfirmationGui = ADScanConfirmationGui.new()
 
-    local count = 1
-    local result = nil
+	loadADGui(AutoDrive.directory .. "gui/enterDriverNameGUI.xml", "ADEnterDriverNameGui", AutoDrive.gui.ADEnterDriverNameGui)
 
-	result = g_gui:loadGui(AutoDrive.directory .. "gui/enterDriverNameGUI.xml", "ADEnterDriverNameGui", AutoDrive.gui.ADEnterDriverNameGui)
-    count = count + 1
-    if result == nil then
-        AutoDrive.debugMsg(nil, "AutoDrive:loadGUI failed count %d", count)
-    end
+	loadADGui(AutoDrive.directory .. "gui/enterTargetNameGUI.xml", "ADEnterTargetNameGui", AutoDrive.gui.ADEnterTargetNameGui)
 
-	result = g_gui:loadGui(AutoDrive.directory .. "gui/enterTargetNameGUI.xml", "ADEnterTargetNameGui", AutoDrive.gui.ADEnterTargetNameGui)
-    count = count + 1
-    if result == nil then
-        AutoDrive.debugMsg(nil, "AutoDrive:loadGUI failed count %d", count)
-    end
+	loadADGui(AutoDrive.directory .. "gui/enterGroupNameGUI.xml", "ADEnterGroupNameGui", AutoDrive.gui.ADEnterGroupNameGui)
 
-	result = g_gui:loadGui(AutoDrive.directory .. "gui/enterGroupNameGUI.xml", "ADEnterGroupNameGui", AutoDrive.gui.ADEnterGroupNameGui)
-    count = count + 1
-    if result == nil then
-        AutoDrive.debugMsg(nil, "AutoDrive:loadGUI failed count %d", count)
-    end
+	loadADGui(AutoDrive.directory .. "gui/enterDestinationFilterGUI.xml", "ADEnterDestinationFilterGui", AutoDrive.gui.ADEnterDestinationFilterGui)
 
-	result = g_gui:loadGui(AutoDrive.directory .. "gui/enterDestinationFilterGUI.xml", "ADEnterDestinationFilterGui", AutoDrive.gui.ADEnterDestinationFilterGui)
-    count = count + 1
-    if result == nil then
-        AutoDrive.debugMsg(nil, "AutoDrive:loadGUI failed count %d", count)
-    end
+	loadADGui(AutoDrive.directory .. "gui/routesManagerGUI.xml", "ADRoutesManagerGui", AutoDrive.gui.ADRoutesManagerGui)
 
-	result = g_gui:loadGui(AutoDrive.directory .. "gui/routesManagerGUI.xml", "ADRoutesManagerGui", AutoDrive.gui.ADRoutesManagerGui)
-    count = count + 1
-    if result == nil then
-        AutoDrive.debugMsg(nil, "AutoDrive:loadGUI failed count %d", count)
-    end
+	loadADGui(AutoDrive.directory .. "gui/notificationsHistoryGUI.xml", "ADNotificationsHistoryGui", AutoDrive.gui.ADNotificationsHistoryGui)
 
-	result = g_gui:loadGui(AutoDrive.directory .. "gui/notificationsHistoryGUI.xml", "ADNotificationsHistoryGui", AutoDrive.gui.ADNotificationsHistoryGui)
-    count = count + 1
-    if result == nil then
-        AutoDrive.debugMsg(nil, "AutoDrive:loadGUI failed count %d", count)
-    end
+	loadADGui(AutoDrive.directory .. "gui/colorSettingsGUI.xml", "ADColorSettingsGui", AutoDrive.gui.ADColorSettingsGui)
 
-	result = g_gui:loadGui(AutoDrive.directory .. "gui/colorSettingsGUI.xml", "ADColorSettingsGui", AutoDrive.gui.ADColorSettingsGui)
-    count = count + 1
-    if result == nil then
-        AutoDrive.debugMsg(nil, "AutoDrive:loadGUI failed count %d", count)
-    end
-
-	result = g_gui:loadGui(AutoDrive.directory .. "gui/scanConfirmationGUI.xml", "ADScanConfirmationGui", AutoDrive.gui.ADScanConfirmationGui)
-    count = count + 1
-    if result == nil then
-        AutoDrive.debugMsg(nil, "AutoDrive:loadGUI failed count %d", count)
-    end
+	loadADGui(AutoDrive.directory .. "gui/scanConfirmationGUI.xml", "ADScanConfirmationGui", AutoDrive.gui.ADScanConfirmationGui)
 
 	AutoDrive.gui.ADGlobalSettingsPage = ADSettingsPage.new()
 	AutoDrive.gui.ADUserSettingsPage = ADSettingsPage.new()
@@ -72,47 +58,19 @@ function AutoDrive:loadGUI()
 
 	AutoDrive.gui.ADSettings = ADSettings.new()
 
-	result = g_gui:loadGui(AutoDrive.directory .. "gui/globalSettingsPage.xml", "autoDriveGlobalSettings", AutoDrive.gui.ADGlobalSettingsPage, true)
-    count = count + 1
-    if result == nil then
-        AutoDrive.debugMsg(nil, "AutoDrive:loadGUI failed count %d", count)
-    end
+	loadADGui(AutoDrive.directory .. "gui/globalSettingsPage.xml", "autoDriveGlobalSettings", AutoDrive.gui.ADGlobalSettingsPage, true)
 
-	result = g_gui:loadGui(AutoDrive.directory .. "gui/userSettingsPage.xml", "autoDriveUserSettings", AutoDrive.gui.ADUserSettingsPage, true)
-    count = count + 1
-    if result == nil then
-        AutoDrive.debugMsg(nil, "AutoDrive:loadGUI failed count %d", count)
-    end
+	loadADGui(AutoDrive.directory .. "gui/userSettingsPage.xml", "autoDriveUserSettings", AutoDrive.gui.ADUserSettingsPage, true)
 
-	result = g_gui:loadGui(AutoDrive.directory .. "gui/vehicleSettingsPage.xml", "autoDriveVehicleSettings", AutoDrive.gui.ADVehicleSettingsPage, true)
-    count = count + 1
-    if result == nil then
-        AutoDrive.debugMsg(nil, "AutoDrive:loadGUI failed count %d", count)
-    end
+	loadADGui(AutoDrive.directory .. "gui/vehicleSettingsPage.xml", "autoDriveVehicleSettings", AutoDrive.gui.ADVehicleSettingsPage, true)
 
-	result = g_gui:loadGui(AutoDrive.directory .. "gui/combineUnloadSettingsPage.xml", "autoDriveCombineUnloadSettings", AutoDrive.gui.ADCombineUnloadSettingsPage, true)
-    count = count + 1
-    if result == nil then
-        AutoDrive.debugMsg(nil, "AutoDrive:loadGUI failed count %d", count)
-    end
+	loadADGui(AutoDrive.directory .. "gui/combineUnloadSettingsPage.xml", "autoDriveCombineUnloadSettings", AutoDrive.gui.ADCombineUnloadSettingsPage, true)
 
-	result = g_gui:loadGui(AutoDrive.directory .. "gui/environmentSettingsPage.xml", "autoDriveEnvironmentSettings", AutoDrive.gui.ADEnvironmentSettingsPage, true)
-    count = count + 1
-    if result == nil then
-        AutoDrive.debugMsg(nil, "AutoDrive:loadGUI failed count %d", count)
-    end
+	loadADGui(AutoDrive.directory .. "gui/environmentSettingsPage.xml", "autoDriveEnvironmentSettings", AutoDrive.gui.ADEnvironmentSettingsPage, true)
 
-	result = g_gui:loadGui(AutoDrive.directory .. "gui/debugSettingsPage.xml", "autoDriveDebugSettings", AutoDrive.gui.ADDebugSettingsPage, true)
-    count = count + 1
-    if result == nil then
-        AutoDrive.debugMsg(nil, "AutoDrive:loadGUI failed count %d", count)
-    end
+	loadADGui(AutoDrive.directory .. "gui/debugSettingsPage.xml", "autoDriveDebugSettings", AutoDrive.gui.ADDebugSettingsPage, true)
 
-	result = g_gui:loadGui(AutoDrive.directory .. "gui/settings.xml", "ADSettings", AutoDrive.gui.ADSettings)
-    count = count + 1
-    if result == nil then
-        AutoDrive.debugMsg(nil, "AutoDrive:loadGUI failed count %d", count)
-    end
+	loadADGui(AutoDrive.directory .. "gui/settings.xml", "ADSettings", AutoDrive.gui.ADSettings)
 end
 
 function AutoDrive.onOpenSettings()

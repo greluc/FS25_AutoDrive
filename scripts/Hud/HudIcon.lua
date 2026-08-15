@@ -68,7 +68,7 @@ function ADHudIcon:renderDefaultText(vehicle, fontSize, posX, posY)
 
     if AutoDrive.isEditorModeEnabled() and AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
         if vehicle.ad.pathFinderModule.steps > 0 then
-            textToShow = textToShow .. " - " .. "Fallback: " .. tostring(vehicle.ad.pathFinderModule.fallBackMode)
+            textToShow = textToShow .. " - " .. "Fallback: " .. vehicle.ad.pathFinderModule:getFallBackModeText()
         end
     end
 

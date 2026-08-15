@@ -57,11 +57,18 @@ function ADHudSettingsButton:act(vehicle, posX, posY, isDown, isUp, button)
         if button == 1 and isUp then
             local currentState = AutoDrive.getSettingState(self.setting, vehicle)
             currentState = (currentState + 1)
-            if currentState > table.count(AutoDrive.settings[self.setting].values) then
+            if currentState > ADTable.count(AutoDrive.settings[self.setting].values) then
                 currentState = 1
             end
             AutoDrive.setSettingState(self.setting, currentState, vehicle)
             AutoDriveUpdateSettingsEvent.sendEvent(vehicle)
+            return true
+        end
+
+        -- Swallow the press half of the click as well, silently, like ADHudButton does. Without it
+        -- the same event is handed on to the editor waypoint handling in AutoDriveHud:mouseEvent.
+        if button > 0 and button < 4 and isDown then
+            return true, true
         end
     end
 

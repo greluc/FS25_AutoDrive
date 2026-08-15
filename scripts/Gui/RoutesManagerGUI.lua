@@ -48,7 +48,7 @@ end
 function ADRoutesManagerGui:onClickSave()
     self:debugMsg("ADRoutesManagerGui:onClickSave")
     local newName = self.textInputElement.text
-    if table.f_contains(
+    if ADTable.f_contains(
             self.routes,
             function(v)
                 return v.name == newName

@@ -40,7 +40,10 @@ function ADPullDownList:initReusableOverlaysOnlyOnce()
     ADPullDownList.ovCollapseAll = overlayReuseOrNew(ADPullDownList.ovCollapseAll, self.imageCollapseAll)
 end
 
-function ADPullDownList:new(posX, posY, width, height, type, selected)
+--- reuseFrom is the list this one replaces. It is only passed while the HUD is dragged, where
+--- nothing but the position changes and deriving the contents again would mean scanning every map
+--- marker and every supported fill type of the vehicle on each mouse-move event.
+function ADPullDownList:new(posX, posY, width, height, type, selected, reuseFrom)
     local o = ADPullDownList:create()
     o:init(posX, posY, width, height)
     o.selected = selected
@@ -81,7 +84,11 @@ function ADPullDownList:new(posX, posY, width, height, type, selected)
     o.state = ADPullDownList.STATE_COLLAPSED
     o.isVisible = true
 
-    o:createSelection()
+    if reuseFrom ~= nil then
+        o:takeOverSelection(reuseFrom)
+    else
+        o:createSelection()
+    end
 
     o.expandedSize = {width = o.size.width, height = o.rowSize.height * (ADPullDownList.MAX_SHOWN + 1) + o.size.height / 2}
     if o.position.y >= 0.5 then
@@ -179,7 +186,8 @@ function ADPullDownList:onDraw(vehicle, uiScale)
             end
         end
 
-        for i = 1, ADPullDownList.MAX_SHOWN - 1, 1 do
+        local i = 1
+        while i <= ADPullDownList.MAX_SHOWN - 1 do
             local listEntry = self:getListElementByDisplayIndex(vehicle, i)
             if listEntry ~= nil then
                 local text = listEntry.displayName
@@ -226,7 +234,7 @@ function ADPullDownList:onDraw(vehicle, uiScale)
                 local makeSpecial = listEntry.isFolder
 
                 if self.type == ADPullDownList.TYPE_FILLTYPE then
-                    makeBold = table.contains(vehicle.ad.stateModule:getSelectedFillTypes(), listEntry.returnValue)
+                    makeBold = ADTable.contains(vehicle.ad.stateModule:getSelectedFillTypes(), listEntry.returnValue)
                     makeSpecial = makeBold or vehicle.ad.stateModule:getFillType() == listEntry.returnValue
                 end
 
@@ -249,12 +257,17 @@ function ADPullDownList:onDraw(vehicle, uiScale)
                 end
 
                 renderText(textPosition.x, textPosition.y, adFontSize, text)
+                i = i + 1
+            elseif i == 1 and self.selected ~= 1 then
+                -- The view scrolled past the end of the list, e.g. a folder was collapsed or an
+                -- entry removed. Scroll back to the top and draw this row now - the old
+                -- `i = i - 1` could not do that, assigning to the control variable of a numeric
+                -- for loop does not repeat the iteration, so the first row was lost for a frame.
+                self.selected = 1
+                self.hovered = 1
             else
-                if i == 1 then
-                    i = i - 1
-                    self.selected = 1
-                    self.hovered = 1
-                end
+                -- nothing left to draw, the following rows are empty as well
+                break
             end
         end
 
@@ -286,14 +299,18 @@ function ADPullDownList:getListElementByIndex(vehicle, index)
     local counter = 1
     if self.type ~= ADPullDownList.TYPE_FILLTYPE then
         local useFolders = AutoDrive.getSetting("useFolders")
+        -- One reverse lookup for the whole walk instead of groupIDToGroupName scanning all groups
+        -- again for every group visited - this runs for every row of an expanded list, every frame.
+        local groupNames = self:getGroupNamesByID()
         for groupID, entries in pairs(self.options) do
+            local groupName = groupNames[self.fakeGroupIDs[groupID]]
             if useFolders then
                 if counter == index then
-                    return {displayName = self:groupIDToGroupName(self.fakeGroupIDs[groupID]), returnValue = self:groupIDToGroupName(self.fakeGroupIDs[groupID]), isFolder = true}
+                    return {displayName = groupName, returnValue = groupName, isFolder = true}
                 end
                 counter = counter + 1
             end
-            if vehicle.ad.groups[self:groupIDToGroupName(self.fakeGroupIDs[groupID])] == true or (not useFolders) then
+            if vehicle.ad.groups[groupName] == true or (not useFolders) then
                 for _, entry in pairs(entries) do
                     if vehicle.ad.destinationFilterText == "" or string.match(string.lower(entry.displayName), string.lower(vehicle.ad.destinationFilterText)) then
                         if counter == index then
@@ -404,6 +421,15 @@ function ADPullDownList:updateVisibility(vehicle)
     end
 
     self.isVisible = newVisibility
+end
+
+--- Everything createSelection would derive again. The replaced list is thrown away right after, so
+--- the tables can be handed over instead of copied.
+function ADPullDownList:takeOverSelection(other)
+    self.options = other.options
+    self.groups = other.groups
+    self.fakeGroupIDs = other.fakeGroupIDs
+    self.autoLoadFillTypes = other.autoLoadFillTypes
 end
 
 function ADPullDownList:createSelection()
@@ -527,7 +553,7 @@ function ADPullDownList:createSelection_FillType()
     else
         while not lastIndexReached do
             if g_fillTypeManager:getFillTypeByIndex(fillTypeIndex) ~= nil then
-                if (not AutoDriveHud:has_value(AutoDrive.ItemFilterList, fillTypeIndex)) and (supportedFillTypes == nil or table.contains(supportedFillTypes, fillTypeIndex)) then
+                if (not AutoDriveHud:has_value(AutoDrive.ItemFilterList, fillTypeIndex)) and (supportedFillTypes == nil or ADTable.contains(supportedFillTypes, fillTypeIndex)) then
                     self.options[1][itemListIndex] = {displayName = g_fillTypeManager:getFillTypeByIndex(fillTypeIndex).title, returnValue = fillTypeIndex}
                     itemListIndex = itemListIndex + 1
                 end
@@ -890,6 +916,16 @@ function ADPullDownList:groupIDToGroupName(id)
         end
     end
     return nil
+end
+
+--- The group table inverted: group id -> group name. ADGraphManager keeps it the other way round,
+--- so every single name lookup would otherwise walk all groups.
+function ADPullDownList:getGroupNamesByID()
+    local groupNames = {}
+    for groupName, groupId in pairs(ADGraphManager:getGroups()) do
+        groupNames[groupId] = groupName
+    end
+    return groupNames
 end
 
 function ADPullDownList:sortCurrentItems()

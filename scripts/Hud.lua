@@ -96,7 +96,12 @@ function AutoDriveHud:loadHud()
 	self.statesHud = 0
 end
 
-function AutoDriveHud:createHudAt(hudX, hudY)
+--- reuseListData is set by the drag path only: while the HUD is being moved nothing but its
+--- position changes, so the pull-down lists that are about to be replaced hand their already
+--- derived contents to their successors instead of every mouse-move event re-scanning all map
+--- markers and re-deriving the supported fill types of the vehicle. Anything that does change the
+--- underlying data sets AutoDrive.Hud.lastUIScale = 0, which makes drawHud rebuild in full.
+function AutoDriveHud:createHudAt(hudX, hudY, reuseListData)
     local vehicle = AutoDrive.getADFocusVehicle()
 	local uiScale = g_gameSettings:getValue("uiScale")
 	if AutoDrive.getSetting("guiScale") ~= 0 then
@@ -146,6 +151,18 @@ function AutoDriveHud:createHudAt(hudX, hudY)
 	AutoDrive.HudY = self.posY
 	AutoDrive.HudChanged = true
 
+	local previousLists = nil
+	if reuseListData and self.hudElements ~= nil then
+		previousLists = {}
+		for _, element in ipairs(self.hudElements) do
+			-- class(), not isa(): isa walks up to ADGenericHudElement, which is not an
+			-- ADInheritsFrom class and has no superClass to continue the walk with
+			if element.class ~= nil and element:class() == ADPullDownList then
+				previousLists[element.type] = element
+			end
+		end
+	end
+
 	self.hudElements = {}
 
 	self.Speed = "50"
@@ -184,13 +201,13 @@ function AutoDriveHud:createHudAt(hudX, hudY)
 	table.insert(self.hudElements, ADHudButton:new(self.posX + self.gapWidth, self.row4, self.iconWidth, self.iconHeight, "input_toggleAutomaticPickupTarget", nil, nil, nil, nil, nil, nil, nil, "input_ADToggleAutomaticPickupTarget", 1, true))
 
 	-- 1st destination
-	self.targetPullDownList = ADPullDownList:new(self.posX + 2 * self.gapWidth + self.buttonWidth, self.row4, self.iconWidth * 6 + self.gapWidth * 5, self.listItemHeight, ADPullDownList.TYPE_TARGET, 1)
+	self.targetPullDownList = ADPullDownList:new(self.posX + 2 * self.gapWidth + self.buttonWidth, self.row4, self.iconWidth * 6 + self.gapWidth * 5, self.listItemHeight, ADPullDownList.TYPE_TARGET, 1, previousLists and previousLists[ADPullDownList.TYPE_TARGET])
 	table.insert(self.hudElements, self.targetPullDownList)
 
 	table.insert(self.hudElements, ADHudButton:new(self.posX + self.gapWidth, self.row3, self.iconWidth, self.iconHeight, "input_toggleAutomaticUnloadTarget", nil, nil, nil, nil, nil, nil, nil, "input_ADToggleAutomaticUnloadTarget", 1, true))
 
-	table.insert(self.hudElements, ADPullDownList:new(self.posX + 2 * self.gapWidth + self.buttonWidth, self.row3, self.iconWidth * 6 + self.gapWidth * 5, self.listItemHeight, ADPullDownList.TYPE_UNLOAD, 1))
-	
+	table.insert(self.hudElements, ADPullDownList:new(self.posX + 2 * self.gapWidth + self.buttonWidth, self.row3, self.iconWidth * 6 + self.gapWidth * 5, self.listItemHeight, ADPullDownList.TYPE_UNLOAD, 1, previousLists and previousLists[ADPullDownList.TYPE_UNLOAD]))
+
 	table.insert(self.hudElements, ADHudButton:new(self.posX + self.gapWidth, self.row2, self.iconWidth, self.iconHeight, "input_toggleLoadByFillLevel", nil, nil, nil, nil, nil, nil, nil, "input_ADToggleLoadByFillLevel", 1, true))
 
 	table.insert(
@@ -201,7 +218,8 @@ function AutoDriveHud:createHudAt(hudX, hudY)
 			self.iconWidth * 6 + self.gapWidth * 5,
 			self.listItemHeight,
 			ADPullDownList.TYPE_FILLTYPE,
-			1
+			1,
+			previousLists and previousLists[ADPullDownList.TYPE_FILLTYPE]
 		)
 	)
 	table.insert(self.hudElements, HudHarvesterInfo:new(self.posX + 2 * self.gapWidth + self.buttonWidth, self.row2, self.iconWidth * 6 + self.gapWidth * 5, self.listItemHeight))
@@ -535,7 +553,7 @@ function AutoDriveHud:mouseEventConnectWaypoints(vehicle, connectDual)
     if vehicle.ad.selectedNodeId ~= vehicle.ad.hoveredNodeId then
         local reverseDirection = AutoDrive.rightSHIFTmodifierKeyPressed
 
-        if not table.contains(ADGraphManager:getWayPointById(vehicle.ad.selectedNodeId).out, vehicle.ad.hoveredNodeId) then
+        if not ADTable.contains(ADGraphManager:getWayPointById(vehicle.ad.selectedNodeId).out, vehicle.ad.hoveredNodeId) then
             -- connect selected point with hovered point
 
             if AutoDrive.splineInterpolation ~= nil and AutoDrive.splineInterpolation.valid and AutoDrive.splineInterpolation.waypoints ~= nil and #AutoDrive.splineInterpolation.waypoints > 2 then
@@ -927,14 +945,19 @@ function AutoDriveHud:moveHud(posX, posY)
 	if self.isMoving then
 		local diffX = posX - self.lastMousePosX
 		local diffY = posY - self.lastMousePosY
-		self:createHudAt(self.posX + diffX, self.posY + diffY)
-		self.lastMousePosX = posX
-		self.lastMousePosY = posY
+		-- moveHud runs for every mouse event while the header is held, not only for actual motion
+		if diffX ~= 0 or diffY ~= 0 then
+			self:createHudAt(self.posX + diffX, self.posY + diffY, true)
+			self.lastMousePosX = posX
+			self.lastMousePosY = posY
+		end
 	end
 end
 
 function AutoDriveHud:stopMovingHud()
 	self.isMoving = false
+	-- the drag reused the pull-down list contents, so derive them once now that it is over
+	self:createHudAt(self.posX, self.posY)
 	ADUserDataManager:sendToServer()
 end
 
@@ -1181,7 +1204,9 @@ function AutoDrive.showMarkersOnIngameMap()
 end
 
 function AutoDrive.updateDestinationsMapHotspots()
-    AutoDrive.debugPrint(nil, AutoDrive.DC_DEVINFO, "AutoDrive.updateDestinationsMapHotspots()")
+    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_DEVINFO) then
+        AutoDrive.debugPrint(nil, AutoDrive.DC_DEVINFO, "AutoDrive.updateDestinationsMapHotspots()")
+    end
 
     local width, height = getNormalizedScreenValues(9, 9)
 
