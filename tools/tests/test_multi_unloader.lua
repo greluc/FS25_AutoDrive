@@ -98,6 +98,46 @@ function TestApproachClaims:testReleasingLeavesOtherUnloadersAlone()
         "releasing one unloader must not free the side another one holds")
 end
 
+--- The claim map is keyed on the harvester table and then on the side. An entry that empties has to
+--- go, or the map grows one entry per harvester ever worked for and holds each of those vehicles
+--- alive through the key.
+function TestApproachClaims:testAnEmptiedHarvesterEntryIsDropped()
+    ADHarvestManager:claimApproach(self.first, self.harvester, AutoDrive.CHASEPOS_LEFT)
+    lu.assertNotNil(ADHarvestManager.approachClaims[self.harvester], 'test setup: it has to be there first')
+
+    ADHarvestManager:releaseApproachClaims(self.first)
+
+    lu.assertNil(ADHarvestManager.approachClaims[self.harvester],
+        'an empty side table keeps its harvester from ever being collected')
+end
+
+--- But an entry another unloader still holds must survive the release.
+function TestApproachClaims:testAnEntryStillInUseSurvives()
+    ADHarvestManager:claimApproach(self.first, self.harvester, AutoDrive.CHASEPOS_LEFT)
+    ADHarvestManager:claimApproach(self.second, self.harvester, AutoDrive.CHASEPOS_RIGHT)
+
+    ADHarvestManager:releaseApproachClaims(self.first)
+
+    lu.assertNotNil(ADHarvestManager.approachClaims[self.harvester])
+    lu.assertTrue(ADHarvestManager:isApproachClaimedByOther(self.first, self.harvester, AutoDrive.CHASEPOS_RIGHT))
+end
+
+--- Asking about a harvester nobody has ever claimed must not create an entry for it.
+function TestApproachClaims:testAskingDoesNotCreateAnEntry()
+    local stranger = TestSetup.vehicle()
+
+    ADHarvestManager:isApproachClaimedByOther(self.first, stranger, AutoDrive.CHASEPOS_LEFT)
+
+    lu.assertNil(ADHarvestManager.approachClaims[stranger],
+        'a read must not populate the map, or every harvester ever asked about accumulates')
+end
+
+--- Releasing for an unloader that holds nothing at all is a no-op, not an error.
+function TestApproachClaims:testReleasingWithoutAnyClaimIsHarmless()
+    ADHarvestManager:releaseApproachClaims(self.second)
+    lu.assertTrue(ADHarvestManager:claimApproach(self.first, self.harvester, AutoDrive.CHASEPOS_LEFT))
+end
+
 function TestApproachClaims:testNilArgumentsAreRefused()
     lu.assertFalse(ADHarvestManager:claimApproach(nil, self.harvester, AutoDrive.CHASEPOS_LEFT))
     lu.assertFalse(ADHarvestManager:claimApproach(self.first, nil, AutoDrive.CHASEPOS_LEFT))
