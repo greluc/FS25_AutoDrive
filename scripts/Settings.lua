@@ -535,15 +535,18 @@ AutoDrive.settings.exitField = {
 AutoDrive.settings.waitingPosition = {
     values = {false, true},
     texts = {"gui_ad_no", "gui_ad_yes"},
-    -- Off until it has been watched in game.
+    -- On, but it is the first thing to watch in game.
     --
-    -- This acts unprompted, on every parked unloader at once, so being wrong is being wrong
-    -- everywhere. Four review rounds found a real defect in it three times running - it drove along
-    -- the route instead of off it, twice, in ways the tests were shaped not to see - and none of the
-    -- current behaviour has yet been observed outside the test suite. The half that only fires when
-    -- somebody is actually blocked and about to reverse out anyway needs no setting and stays on.
-    default = 1,
-    current = 1,
+    -- This was defaulted off for a while, because the direction it steps in had been wrong three
+    -- review rounds running and every test of it pinned the one configuration where a wrong rule
+    -- looks right. That reason no longer holds: the invariant - end up further from the route than
+    -- you started - is now swept over headings, spacings, both sides and every offset along a
+    -- segment, and the sweep is itself checked against both broken versions to prove it can tell
+    -- them apart. What remains untested is not the geometry but the driving: whether a tractor and
+    -- trailer actually steers eighteen metres aside in a tight spot. That is bounded - two attempts,
+    -- twenty seconds each, then it parks - so it ships on, and it is the first thing to look at.
+    default = 2,
+    current = 2,
     text = "gui_ad_waitingPosition",
     tooltip = "gui_ad_waitingPosition_tooltip",
     translate = true,
