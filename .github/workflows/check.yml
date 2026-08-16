@@ -15,14 +15,17 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # v5 is the first major of each of these that runs on node24; node20 is deprecated
+      # on the runners. Both v5 lines are still released alongside the newer majors, and
+      # neither of the later ones changes anything this workflow uses.
+      - uses: actions/checkout@v5
 
       - name: Install Lua
         run: sudo apt-get update && sudo apt-get install -y lua5.4 luajit
 
       - name: Cache fs-utils build
         id: cache-fsutils
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: fs-utils/target/release/fs-luau-compile
           key: fs-utils-luau-compile-v1

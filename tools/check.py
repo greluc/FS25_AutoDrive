@@ -61,6 +61,23 @@ def find_luau_compiler():
     return pathlib.Path(p) if p else None
 
 
+def compiler_skip_encoding_flag(compiler):
+    """['-e'] if this build of fs-luau-compile has it, [] otherwise.
+
+    -e skips writing the ENCODED bytecode, which a syntax gate does not need and which costs a
+    shift table lookup per file. Older builds of fs-luau-compile do not have the switch, and argh
+    treats an unknown argument as a hard error rather than ignoring it - so passing it blindly
+    failed every single file with "Unrecognized argument" while the sources were all fine. CI
+    builds the compiler from the public repository and hit exactly that; the locally built one has
+    the flag. Ask rather than assume.
+    """
+    try:
+        res = subprocess.run([str(compiler), "--help"], capture_output=True, text=True, timeout=60)
+    except Exception:
+        return []
+    return ["-e"] if "-e" in (res.stdout or "") + (res.stderr or "") else []
+
+
 def lua_files():
     """Every .lua file that ships in the mod. tools/ is excluded from the release zip."""
     out = []
@@ -79,10 +96,11 @@ def check_compile(verbose):
 
     if compiler:
         label = f"Luau ({compiler.name})"
+        skip_encoding = compiler_skip_encoding_flag(compiler)
         with tempfile.TemporaryDirectory() as tmp:
             for i, f in enumerate(files):
                 res = subprocess.run(
-                    [str(compiler), "-e", str(f), str(pathlib.Path(tmp) / f"{i}.out")],
+                    [str(compiler)] + skip_encoding + [str(f), str(pathlib.Path(tmp) / f"{i}.out")],
                     capture_output=True, text=True,
                 )
                 if res.returncode != 0:
