@@ -341,14 +341,17 @@ end
 --- reaches a long way past the point its own origin sits at.
 function PathFinderModule:isNetworkEntryOccupied(wayPoint)
     for _, other in pairs(AutoDrive.getAllVehicles()) do
-        if other ~= self.vehicle and other.components ~= nil and other.components[1] ~= nil
-            and not AutoDrive:checkIsConnected(self.vehicle, other) then
+        if other ~= self.vehicle and other.components ~= nil and other.components[1] ~= nil then
+            -- distance first, for the same reason as everywhere else: checkIsConnected walks the
+            -- implement list and allocates, and this runs for several candidates times several
+            -- points each
             local ox, _, oz = getWorldTranslation(other.components[1].node)
             local reach = AutoDrive.NETWORK_ENTRY_CLEARANCE
             if other.size ~= nil and other.size.length ~= nil then
                 reach = reach + (other.size.length / 2)
             end
-            if MathUtil.vector2Length(ox - wayPoint.x, oz - wayPoint.z) < reach then
+            if MathUtil.vector2Length(ox - wayPoint.x, oz - wayPoint.z) < reach
+                and not AutoDrive:checkIsConnected(self.vehicle, other) then
                 return true
             end
         end

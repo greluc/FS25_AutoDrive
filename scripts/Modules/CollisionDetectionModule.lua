@@ -125,16 +125,25 @@ function ADCollisionDetectionModule:detectAdTrafficOffRoute()
         return false
     end
 
+    local ownX, _, ownZ = getWorldTranslation(self.vehicle.components[1].node)
+    -- Nothing beyond this can possibly share a point with us: getUpcomingPathPoints seeds from each
+    -- vehicle's own position and stops at AD_TRAFFIC_LOOKAHEAD, so every point it returns lies
+    -- within that of its own vehicle. Two look-aheads plus the conflict range is the exact bound.
+    local reachBound = AutoDrive.AD_TRAFFIC_LOOKAHEAD * 2 + AutoDrive.AD_TRAFFIC_CONFLICT_RANGE
+
     for _, other in pairs(AutoDrive.getAllVehicles()) do
         if other ~= self.vehicle and other.ad ~= nil and other.ad.stateModule ~= nil
             and other.ad.stateModule:isActive() and other.ad.drivePathModule ~= nil
-            and not AutoDrive:checkIsConnected(self.vehicle, other)
+            and other.components ~= nil and other.components[1] ~= nil
             -- Giving way means letting the other one through first, which is only worth anything if
             -- it is going anywhere. A vehicle that is standing still will not clear the point we
             -- both want, so waiting for it turns one stopped vehicle into two. It gets asked to
             -- move instead - see AutoDrive:requestMakeWay - and our own sensors still stop us short
             -- of it in the meantime.
-            and (other.lastSpeedReal == nil or other.lastSpeedReal > ADCollisionDetectionModule.MOVING_SPEED) then
+            and (other.lastSpeedReal == nil or other.lastSpeedReal > ADCollisionDetectionModule.MOVING_SPEED)
+            and self:isWithinTrafficReach(other, ownX, ownZ, reachBound)
+            -- last, because it walks the implement list and allocates while the tests above do not
+            and not AutoDrive:checkIsConnected(self.vehicle, other) then
 
             local otherPoints, otherDistances = self:getUpcomingPathPoints(other)
             if otherPoints ~= nil and #otherPoints >= 2 then
@@ -185,6 +194,15 @@ end
 --- on something else entirely: a closed gate, a tree, a player parked across the track. Waiting for
 --- it would be indefinite, so the wait is capped. Afterwards we drive on and let the ordinary
 --- collision detection deal with whatever is actually there.
+--- Whether another vehicle is close enough that our upcoming paths could possibly meet. Cheap, and
+--- it stands in front of the two expensive things in the scan - walking that vehicle's path points
+--- and walking its implement list.
+function ADCollisionDetectionModule:isWithinTrafficReach(other, ownX, ownZ, reachBound)
+    local ox, _, oz = getWorldTranslation(other.components[1].node)
+    local dx, dz = ox - ownX, oz - ownZ
+    return (dx * dx + dz * dz) < (reachBound * reachBound)
+end
+
 --- The clock belongs to one partner, not to us. A single shared timer would let the wait we already
 --- spent on one vehicle be charged to the next one we meet, so a driver crossing a busy yard could
 --- arrive at a fresh conflict with its patience already used up and drive straight through it.

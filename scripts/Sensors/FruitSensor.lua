@@ -34,7 +34,7 @@ function ADFruitSensor:onUpdate(dt)
         end
     end
 
-    if AutoDrive.getSetting("detectSwath") then
+    if AutoDrive.getSetting("detectSwath", self.vehicle) then
         local fillType = DensityMapHeightUtil.getFillTypeAtArea(corners[1].x, corners[1].z, corners[2].x, corners[2].z, corners[3].x, corners[3].z)
         if fillType ~= nil and self.SWATH_TYPES[fillType] then
             local fillLevel, _, _ = DensityMapHeightUtil.getFillLevelAtArea(fillType, corners[1].x, corners[1].z, corners[2].x, corners[2].z, corners[3].x, corners[3].z)

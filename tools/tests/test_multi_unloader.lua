@@ -238,6 +238,20 @@ function TestOffRouteLookAhead:testAClearedConflictRestartsTheClock()
         'a fresh conflict must get the full wait, not the remains of the previous one')
 end
 
+--- The cull that stands in front of the expensive part of the scan. Its bound is exact rather than
+--- generous: getUpcomingPathPoints seeds from each vehicle own position and stops at the look-ahead,
+--- so every point it returns is within that of its own vehicle.
+function TestOffRouteLookAhead:testAFarAwayVehicleIsCulledButANearOneIsNot()
+    local near, far = convergingPair()
+    self.vehicles = { near, far }
+    lu.assertTrue(detectsTrafficFor(far), 'test setup: this pair has to conflict')
+
+    local bound = AutoDrive.AD_TRAFFIC_LOOKAHEAD * 2 + AutoDrive.AD_TRAFFIC_CONFLICT_RANGE
+    MockEngine.nodePositions[near.components[1].node] = { x = 42, y = 0, z = bound + 20 }
+    lu.assertFalse(detectsTrafficFor(far),
+        'a vehicle further off than two look-aheads plus the conflict range cannot share a point with us')
+end
+
 function TestOffRouteLookAhead:testPathsThatDoNotMeetAreIgnored()
     local a = unloaderOnPath(1, 0, 0, { { x = 5, y = 0, z = 0 }, { x = 10, y = 0, z = 0 } }, false)
     local b = unloaderOnPath(2, 0, 500, { { x = 5, y = 0, z = 500 }, { x = 10, y = 0, z = 500 } }, false)

@@ -196,9 +196,11 @@ function ADSpecialDrivingModule:driveToPoint(dt, point, maxFollowSpeed, checkDyn
         self:releaseVehicle()
 
         self.isBlocked = self.stoppedTimer:timer(self.vehicle.lastSpeedReal < 0.00028, 15000, dt)
-        -- Allow active braking if vehicle is not 'following' targetSpeed precise enough
+        -- Allow active braking if vehicle is not 'following' targetSpeed precise enough.
+        -- Writes the local, not self.acceleration: that member is read by nobody, and the value
+        -- passed to driveInDirection below is this local, so the braking never reached the vehicle.
         if (self.vehicle.lastSpeedReal * 3600) > (speed + ADSpecialDrivingModule.MAX_SPEED_DEVIATION) then
-            self.acceleration = -0.6
+            acc = -0.6
         end
         --ADDrawingManager:addLineTask(x, y, z, point.x, point.y, point.z, 1, 1, 0, 0)
 

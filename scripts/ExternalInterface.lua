@@ -519,10 +519,12 @@ function AutoDrive:askNearbyVehiclesToMakeWay(vehicle)
     local x, _, z = getWorldTranslation(vehicle.components[1].node)
     local asked = 0
     for _, other in pairs(AutoDrive.getAllVehicles()) do
-        if other ~= vehicle and other.components ~= nil and other.components[1] ~= nil
-            and not AutoDrive:checkIsConnected(vehicle, other) then
+        if other ~= vehicle and other.components ~= nil and other.components[1] ~= nil then
+            -- distance first: checkIsConnected walks the implement list and allocates, the
+            -- distance test is three subtractions
             local ox, _, oz = getWorldTranslation(other.components[1].node)
-            if MathUtil.vector2Length(ox - x, oz - z) < AutoDrive.MAKE_WAY_ASK_RANGE then
+            if MathUtil.vector2Length(ox - x, oz - z) < AutoDrive.MAKE_WAY_ASK_RANGE
+                and not AutoDrive:checkIsConnected(vehicle, other) then
                 if AutoDrive:requestMakeWay(other, vehicle) then
                     asked = asked + 1
                 end
