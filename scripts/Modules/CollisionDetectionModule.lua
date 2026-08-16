@@ -112,11 +112,12 @@ end
 -- sides from the same geometry, so exactly one of the two yields and they cannot deadlock by both
 -- waiting for each other.
 function ADCollisionDetectionModule:detectAdTrafficOffRoute()
+    -- forget, not just release: these end the off-network episode the give-up memory belongs to.
     if not self.vehicle.ad.stateModule:isActive() then
-        return self:releaseOffRouteYield()
+        return self:forgetOffRouteGiveUps()
     end
     if self.vehicle.ad.drivePathModule:isOnRoadNetwork() then
-        return self:releaseOffRouteYield() -- handled by detectAdTrafficOnRoute
+        return self:forgetOffRouteGiveUps() -- handled by detectAdTrafficOnRoute
     end
 
     -- same throttle and per-vehicle phase offset as the other scans
@@ -127,7 +128,7 @@ function ADCollisionDetectionModule:detectAdTrafficOffRoute()
 
     local ownPoints, ownDistances = self:getUpcomingPathPoints(self.vehicle)
     if ownPoints == nil or #ownPoints < 2 then
-        return self:releaseOffRouteYield()
+        return self:forgetOffRouteGiveUps()
     end
 
     -- Whether we stepped over a partner we have already given up on. Remembered across the scan,
@@ -140,6 +141,15 @@ function ADCollisionDetectionModule:detectAdTrafficOffRoute()
     -- two of them alternate for as long as they keep shuffling about. Each entry carries the scan
     -- that last saw it still in conflict, so partners are forgiven individually as they clear.
     local skippedGivenUpPartner = false
+    -- Who we will give way to, decided here but acted on at the bottom. Returning from inside the
+    -- loop the moment a partner was found skipped the mark-and-sweep below, and that sweep is the
+    -- only place an entry is ever forgiven: while we were busy giving way to one vehicle - which can
+    -- be every gate frame for as long as it takes - a partner we had given up on earlier could
+    -- leave, come back, and still be stepped over on the first scan that finally reached it.
+    --
+    -- The first candidate wins, exactly as the early return chose. Which one it is matters: the cap
+    -- in holdOffRouteYield is per partner and restarts when the partner changes.
+    local yieldTo, yieldOwnBest, yieldOtherBest = nil, nil, nil
     local gaveUpOn = self.offRouteYieldGaveUpOn
     self.offRouteYieldScan = (self.offRouteYieldScan or 0) + 1
     local thisScan = self.offRouteYieldScan
@@ -198,8 +208,8 @@ function ADCollisionDetectionModule:detectAdTrafficOffRoute()
                     if ownBest == otherBest then
                         weYield = (self.vehicle.id or 0) > (other.id or 0)
                     end
-                    if weYield then
-                        return self:holdOffRouteYield(other, ownBest, otherBest)
+                    if weYield and yieldTo == nil then
+                        yieldTo, yieldOwnBest, yieldOtherBest = other, ownBest, otherBest
                     end
                 end
             end
@@ -220,6 +230,12 @@ function ADCollisionDetectionModule:detectAdTrafficOffRoute()
                 gaveUpOn[vehicle] = nil
             end
         end
+    end
+
+    -- After the sweep, never before it. A give-up recorded in here on the timeout is stamped with
+    -- this scan, so it cannot be swept away by the pass that has already run.
+    if yieldTo ~= nil then
+        return self:holdOffRouteYield(yieldTo, yieldOwnBest, yieldOtherBest)
     end
     return self:releaseOffRouteYield()
 end
@@ -252,6 +268,34 @@ function ADCollisionDetectionModule:releaseOffRouteYield()
     self.offRouteYieldPartner = nil
     self.detectedOffRouteTraffic = false
     return false
+end
+
+--- The same release, plus forgetting everyone we gave up on.
+---
+--- A give-up means "I have just waited the full cap on this vehicle, and it has been in conflict
+--- continuously since". Both halves are only true within ONE uninterrupted off-network episode, and
+--- the only place an entry can be forgiven is the mark-and-sweep at the bottom of a scan that walked
+--- the whole vehicle list. The three exits above that one never reach it, so an episode that ends
+--- there used to leave the memory standing for the rest of the session: an unloader that once waited
+--- out its cap on a sibling drove to the silo, came back, and met that sibling as a permanently
+--- exempt vehicle - it was the further one, it should have yielded, and it never did again, because
+--- the skip branch re-stamps the entry every gate frame the conflict is visible. Neither yielded,
+--- and all that was left were the front sensors, which is exactly what this scan exists to improve
+--- on.
+---
+--- Note what this trades. A path gap - a recompute that briefly leaves us with no usable route -
+--- also comes through here and so also forgets, which can cost one extra full cap on a partner we
+--- had already waited out. That is the better of the two failure modes by a wide margin: waiting ten
+--- seconds too long once, against never giving way to that vehicle again for the rest of the
+--- session.
+---
+--- The give-up and yield exits deliberately do NOT come through here - the memory is the whole point
+--- of the cap, and a cap that forgets itself is not a cap.
+function ADCollisionDetectionModule:forgetOffRouteGiveUps()
+    for vehicle in pairs(self.offRouteYieldGaveUpOn) do
+        self.offRouteYieldGaveUpOn[vehicle] = nil
+    end
+    return self:releaseOffRouteYield()
 end
 
 --- Whether another vehicle is close enough that our upcoming paths could possibly meet. Cheap, and
@@ -423,9 +467,15 @@ function ADCollisionDetectionModule:detectAdTrafficOnRoute()
             end
         else
             if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_SENSORINFO) then
-                AutoDrive.debugMsg(self.vehicle, "CDM: detectAdTrafficOnRoute self.trafficVehicle ~= nil -> %s"
-                , tostring(self.trafficVehicle and self.trafficVehicle.getName and self.trafficVehicle:getName() or "unknown")
-                )
+                -- "none" and "unnamed" are kept apart on purpose. The old wording answered both
+                -- with "unknown", so the by far commonest line in the log - nobody is holding us
+                -- up - read as if someone was and we could not say who. This is the line a
+                -- standstill gets diagnosed from; it has to distinguish the two.
+                local heldBy = "none"
+                if self.trafficVehicle ~= nil then
+                    heldBy = self.trafficVehicle.getName and self.trafficVehicle:getName() or "unnamed"
+                end
+                AutoDrive.debugMsg(self.vehicle, "CDM: detectAdTrafficOnRoute cached, held up by %s", heldBy)
             end
             return self.trafficVehicle ~= nil
         end

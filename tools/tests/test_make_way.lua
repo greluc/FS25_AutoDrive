@@ -69,6 +69,13 @@ TestRequest = {}
 function TestRequest:setUp()
     TestSetup.reset()
     driveCalls = {}
+    -- The real one reaches into the engine's density maps, which the harness does not provide. The
+    -- step-aside uses it only as a preference for which sort of ground to come to rest on, so a
+    -- constant answer leaves every other rule under test untouched.
+    AutoDrive.checkIsOnField = function() return false end
+    -- Individual tests override this, and it is a global: without putting it back, a test that sets
+    -- a thirty metre train hands that train to every test that runs after it.
+    AutoDrive.getTractorTrainLength = function() return 0 end
     g_time = 10000
     ADHarvestManager = { registerAsUnloader = function() end }
     self.parked = vehicleAt(1, 0, 0, { canMakeWay = true })
@@ -125,6 +132,13 @@ TestAskNearby = {}
 function TestAskNearby:setUp()
     TestSetup.reset()
     driveCalls = {}
+    -- The real one reaches into the engine's density maps, which the harness does not provide. The
+    -- step-aside uses it only as a preference for which sort of ground to come to rest on, so a
+    -- constant answer leaves every other rule under test untouched.
+    AutoDrive.checkIsOnField = function() return false end
+    -- Individual tests override this, and it is a global: without putting it back, a test that sets
+    -- a thirty metre train hands that train to every test that runs after it.
+    AutoDrive.getTractorTrainLength = function() return 0 end
     g_time = 10000
     ADHarvestManager = { registerAsUnloader = function() end }
     AutoDrive.checkIsConnected = function() return false end
@@ -170,6 +184,13 @@ TestMakingWay = {}
 function TestMakingWay:setUp()
     TestSetup.reset()
     driveCalls = {}
+    -- The real one reaches into the engine's density maps, which the harness does not provide. The
+    -- step-aside uses it only as a preference for which sort of ground to come to rest on, so a
+    -- constant answer leaves every other rule under test untouched.
+    AutoDrive.checkIsOnField = function() return false end
+    -- Individual tests override this, and it is a global: without putting it back, a test that sets
+    -- a thirty metre train hands that train to every test that runs after it.
+    AutoDrive.getTractorTrainLength = function() return 0 end
     g_time = 10000
     ADHarvestManager = { registerAsUnloader = function() end }
     self.task = WaitForCallTask:new(vehicleAt(1, 0, 0, nil))
@@ -274,6 +295,13 @@ end
 function TestParkedOnNetwork:setUp()
     TestSetup.reset()
     driveCalls = {}
+    -- The real one reaches into the engine's density maps, which the harness does not provide. The
+    -- step-aside uses it only as a preference for which sort of ground to come to rest on, so a
+    -- constant answer leaves every other rule under test untouched.
+    AutoDrive.checkIsOnField = function() return false end
+    -- Individual tests override this, and it is a global: without putting it back, a test that sets
+    -- a thirty metre train hands that train to every test that runs after it.
+    AutoDrive.getTractorTrainLength = function() return 0 end
     g_time = 10000
     -- The network check is throttled to one frame in PERF_FRAMES, phase shifted by vehicle id.
     -- Without putting the loop index on that vehicle frame the scan simply never runs and every
@@ -402,6 +430,13 @@ end
 function TestSteppingOffTheRoute:setUp()
     TestSetup.reset()
     driveCalls = {}
+    -- The real one reaches into the engine's density maps, which the harness does not provide. The
+    -- step-aside uses it only as a preference for which sort of ground to come to rest on, so a
+    -- constant answer leaves every other rule under test untouched.
+    AutoDrive.checkIsOnField = function() return false end
+    -- Individual tests override this, and it is a global: without putting it back, a test that sets
+    -- a thirty metre train hands that train to every test that runs after it.
+    AutoDrive.getTractorTrainLength = function() return 0 end
     g_time = 10000
     g_updateLoopIndex = AutoDrive.PERF_FRAMES - 1
     ADHarvestManager = { registerAsUnloader = function() end }
@@ -726,6 +761,98 @@ function TestSteppingOffTheRoute:testItEndsUpClearOfTheRouteFromAnywhereAlongIt(
             string.format('offset %d: target still %.1f m from the route',
                 offsetAlong, distanceToRoute(target.x, target.z)))
     end
+end
+
+--- Hang something off the back at a world position of its own. The rig is walked by real node
+--- positions rather than assumed to lie along the vehicle's axis, so a trailer can be put where it
+--- actually ends up - including across a road the tractor has already driven clear of, which is the
+--- case these exist for.
+local function attachTrailer(vehicle, id, x, z)
+    local trailer = { components = { { node = 'imp' .. id } } }
+    MockEngine.nodePositions['imp' .. id] = { x = x, y = 0, z = z }
+    vehicle.getAttachedImplements = function() return { { object = trailer } } end
+    return trailer
+end
+
+--- Reported from a real game: a tractor asked to clear a field entry point drove far enough that it
+--- was itself well past the neighbouring road, and left its trailer lying across it. Nothing noticed
+--- - every question this task asks was asked about components[1], the tractor's own root - so the
+--- manoeuvre reported success, the housekeeping check that exists to move a vehicle off the network
+--- saw nothing to move, and the trailer stayed there blocking the road.
+function TestSteppingOffTheRoute:testATrailerLeftOnTheRouteCountsAsBeingOnIt()
+    -- the tractor is a comfortable twenty-five metres off the route
+    moveTo(self.parked, 25, 20)
+    lu.assertNil(self.task:nearestWayPointToUs(), 'test setup: the tractor alone is clear')
+
+    -- and the trailer is still sitting on it
+    attachTrailer(self.parked, 9, 1, 20)
+
+    lu.assertNotNil(self.task:nearestWayPointToUs(),
+        'the tractor being clear says nothing about what is hanging off the back of it')
+end
+
+--- And the consequence that matters: a vehicle whose trailer is on the network has to move off it
+--- by itself, exactly as one whose tractor is.
+function TestSteppingOffTheRoute:testItMovesOffWhenOnlyTheTrailerIsOnTheRoute()
+    moveTo(self.parked, 25, 20)
+    attachTrailer(self.parked, 9, 1, 20)
+    self.task:setUp()
+
+    self.task:update(16)
+
+    lu.assertEquals(self.task.state, WaitForCallTask.STATE_MAKING_WAY,
+        'a trailer left across a route blocks it just as thoroughly as a tractor would')
+end
+
+--- The rig follows the tractor out, so whatever distance takes the tractor clear leaves the tail of
+--- the train that much short of clear - still on the route it was asked to leave. The run therefore
+--- has to be longer by the length of what is being towed, or the manoeuvre solves the problem for
+--- the front half of the vehicle only.
+function TestSteppingOffTheRoute:testTheRunAllowsForWhatIsBeingTowed()
+    AutoDrive:requestMakeWay(self.parked, vehicleAt(2, 20, 20, nil))
+    self.task:update(16)
+    local aloneDistance = self.task.makeWayDistance
+    lu.assertNotNil(aloneDistance, 'test setup: it has to move at all')
+    self.task:stopMakingWay()
+
+    -- twelve metres of trailer behind us
+    attachTrailer(self.parked, 9, 2, 8)
+    AutoDrive:requestMakeWay(self.parked, vehicleAt(3, 20, 20, nil))
+    self.task:update(16)
+
+    lu.assertTrue(self.task.makeWayDistance >= aloneDistance + 10, string.format(
+        'stepped aside %.1f m with a twelve metre trailer against %.1f m without one - the trailer '
+        .. 'is left that much nearer the route than the tractor',
+        self.task.makeWayDistance or -1, aloneDistance))
+end
+
+--- The reported case, as geometry: a second route close enough that the run cannot simply be driven
+--- out to its full length. Every distance that keeps the TRACTOR clear of both routes leaves the
+--- trailer sitting on the near one - which is exactly what happened in the game, the tractor past
+--- the road and the trailer lying across it. Checking only where the tractor stops cannot see that;
+--- the target has to be judged by where the whole rig ends up.
+function TestSteppingOffTheRoute:testTheTargetLeavesRoomForTheTrailerBehindIt()
+    local wps = ADGraphManager:getWayPoints()
+    for i = 1, 40 do
+        wps[40 + i] = TestSetup.waypoint(40 + i, 30, (i - 1) * 4, {}, {})
+    end
+    ADGraphManager:setWayPoints(wps)
+
+    attachTrailer(self.parked, 9, 2, 8)   -- twelve metres of trailer behind us
+    self.task:setUp()
+
+    self.task:update(16)
+
+    local target = self.task.makeWayTarget
+    lu.assertNotNil(target, 'test setup: it has to move at all')
+    -- where the back of the rig comes to rest: back along the run from the target
+    local runX = (target.x - 2) / self.task.makeWayDistance
+    local runZ = (target.z - 20) / self.task.makeWayDistance
+    local tailX, tailZ = target.x - runX * 12, target.z - runZ * 12
+
+    lu.assertTrue(distanceToRoute(tailX, tailZ) > AutoDrive.WAITING_NETWORK_CLEARANCE,
+        string.format('the tractor stops %.1f m from a route but the trailer only %.1f m',
+            distanceToRoute(target.x, target.z), distanceToRoute(tailX, tailZ)))
 end
 
 --- A request arriving mid-manoeuvre used to be accepted, never read, and then deleted by

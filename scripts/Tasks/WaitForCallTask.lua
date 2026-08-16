@@ -137,16 +137,139 @@ function WaitForCallTask:isParkedOnItsOwnMarker()
 end
 
 --- The way point we are standing on, if we are standing on one. nil means we are out of the way.
-function WaitForCallTask:nearestWayPointToUs()
+--- How finely the rig is sampled when asking whether it is standing on anything.
+WaitForCallTask.TRAIN_SAMPLE_STEP = 4
+
+--- How deep the implement chain is followed. A dolly with a trailer on it is two; anything past a
+--- handful is a mod doing something unusual and not worth an unbounded walk every query.
+WaitForCallTask.MAX_IMPLEMENT_DEPTH = 6
+
+local function collectRigNodes(vehicle, out, depth)
+    if vehicle == nil or depth > WaitForCallTask.MAX_IMPLEMENT_DEPTH then
+        return
+    end
+    if vehicle.components ~= nil and vehicle.components[1] ~= nil and vehicle.components[1].node ~= nil then
+        out[#out + 1] = vehicle.components[1].node
+    end
+    if vehicle.getAttachedImplements ~= nil then
+        for _, implement in pairs(vehicle:getAttachedImplements()) do
+            if implement ~= nil and implement.object ~= nil then
+                collectRigNodes(implement.object, out, depth + 1)
+            end
+        end
+    end
+end
+
+--- Every part of the rig: the vehicle itself and everything hanging off it, however deep.
+---
+--- Real nodes rather than a length along the vehicle's axis, for two reasons. A rig is not a
+--- straight line - the case this was written for had the tractor clear of a road with its trailer
+--- lying ACROSS it, which no axis-aligned approximation would have found - and a length summed from
+--- trailer sizes only counts things that are trailers, while the question here is what is standing
+--- on the network, which a plough or a front loader does just as well.
+---
+--- The table is reused, so walking the rig does not allocate on every query.
+function WaitForCallTask:rigNodes()
+    local nodes = self.rigNodeList
+    if nodes == nil then
+        nodes = {}
+        self.rigNodeList = nodes
+    end
+    for i = #nodes, 1, -1 do
+        nodes[i] = nil
+    end
+    collectRigNodes(self.vehicle, nodes, 0)
+    return nodes
+end
+
+--- How far the rig reaches from its own root. Measured off the real parts and then floored with the
+--- summed train length, because the measurement runs to each part's origin rather than its far end
+--- and the sum runs the other way - it misses non-trailer implements entirely. The larger of the two
+--- is wrong in the safe direction.
+function WaitForCallTask:rigReach()
+    local reach = AutoDrive.getTractorTrainLength ~= nil
+        and AutoDrive.getTractorTrainLength(self.vehicle, true, false) or 0
     local x, _, z = getWorldTranslation(self.vehicle.components[1].node)
-    -- reused, so the query does not allocate a point per call
+    for _, node in ipairs(self:rigNodes()) do
+        local nx, _, nz = getWorldTranslation(node)
+        reach = math.max(reach, MathUtil.vector2Length(nx - x, nz - z))
+    end
+    return reach
+end
+
+--- Which way the rig trails: the vehicle's own backwards axis, as a unit world vector.
+function WaitForCallTask:trainDirection()
+    if AutoDrive.localDirectionToWorld == nil then
+        return 0, 0
+    end
+    local bx, _, bz = AutoDrive.localDirectionToWorld(self.vehicle, 0, 0, -1)
+    local length = MathUtil.vector2Length(bx, bz)
+    if length <= 0.001 then
+        return 0, 0
+    end
+    return bx / length, bz / length
+end
+
+--- The nearest way point to ANY part of a train standing at (x, z) and reaching back along
+--- (backX, backZ), or nil if the whole of it is clear.
+---
+--- A tractor is the short end of the thing being parked. Every question in this task used to be
+--- asked about components[1] alone - the tractor's root - so a driver that had pulled its own cab
+--- past a road while its trailer still lay across it answered "clear" to all of them: the manoeuvre
+--- reported success, and the housekeeping check that exists to move a vehicle off the network never
+--- saw anything to move. That is not an edge case, it is what a step-aside of eighteen metres does
+--- to a train half that long.
+function WaitForCallTask:queryPoint()
+    -- reused, so a query does not allocate a point per sample
     local query = self.networkQueryPoint
     if query == nil then
         query = {x = 0, z = 0}
         self.networkQueryPoint = query
     end
-    query.x, query.z = x, z
-    return ADGraphManager:getNearestWayPointWithin(query, AutoDrive.WAITING_NETWORK_CLEARANCE)
+    return query
+end
+
+--- A vehicle can be asked to move before any network exists - a fresh save, or one recorded entirely
+--- elsewhere - and the spatial index has nothing to build itself from.
+function WaitForCallTask.hasNetwork()
+    return ADGraphManager ~= nil and ADGraphManager.wayPoints ~= nil and #ADGraphManager.wayPoints > 0
+end
+
+function WaitForCallTask:nearestWayPointToTrain(x, z, backX, backZ, length, clearance)
+    if not WaitForCallTask.hasNetwork() then
+        return nil
+    end
+    local query = self:queryPoint()
+    local sampled = 0
+    while true do
+        query.x, query.z = x + backX * sampled, z + backZ * sampled
+        local wayPoint = ADGraphManager:getNearestWayPointWithin(query,
+            clearance or AutoDrive.WAITING_NETWORK_CLEARANCE)
+        if wayPoint ~= nil then
+            return wayPoint
+        end
+        if sampled >= (length or 0) then
+            return nil
+        end
+        sampled = math.min(sampled + WaitForCallTask.TRAIN_SAMPLE_STEP, length)
+    end
+end
+
+--- Whether any part of the rig - not just the tractor - is standing on the network.
+---
+--- Real positions, so a trailer swung out across a road is found where it actually is rather than
+--- where a straight line behind the tractor would have put it.
+function WaitForCallTask:nearestWayPointToUs()
+    local query = self:queryPoint()
+    for _, node in ipairs(self:rigNodes()) do
+        local x, _, z = getWorldTranslation(node)
+        query.x, query.z = x, z
+        local wayPoint = ADGraphManager:getNearestWayPointWithin(query, AutoDrive.WAITING_NETWORK_CLEARANCE)
+        if wayPoint ~= nil then
+            return wayPoint
+        end
+    end
+    return nil
 end
 
 --- Whether we are out of the way, by the same measure that decides we are in it. The two have to be
@@ -329,6 +452,96 @@ function WaitForCallTask:getEscapeDirection(x, z, request)
     return nil, nil
 end
 
+--- How far apart the candidate resting places along a run are sampled.
+WaitForCallTask.TARGET_STEP = 3
+
+--- The furthest distance up to maxDistance at which the vehicle would come to rest somewhere
+--- acceptable, or nil if nothing along the run is.
+---
+--- Furthest, not nearest: how far to step aside is a question about making room for whoever asked,
+--- and stepAsideDistance has already answered it. This only shortens the run, and only as far as it
+--- has to - the vehicle gives up as little of the room it was going to make as the ground allows.
+--- Searching outward from zero instead would cut every run down to the first few metres whenever
+--- nothing happened to be in the way, which is most of the time and misses the entire point.
+---
+--- The predicate is passed in rather than reached for, so a sweep can drive this over a network it
+--- made up instead of restating the rule - a test that restates a rule cannot notice it changing.
+function WaitForCallTask.furthestRestingDistance(acceptable, maxDistance, step)
+    local distance = maxDistance
+    while distance >= step do
+        if acceptable(distance) then
+            return distance
+        end
+        distance = distance - step
+    end
+    return nil
+end
+
+--- Whether the vehicle could be left standing at this point of the run.
+function WaitForCallTask:isRestingPlaceAt(sx, sz, dirX, dirZ, distance, wantOnField, reach)
+    local x, z = sx + dirX * distance, sz + dirZ * distance
+    -- Not the target alone: when the tractor stops there, the rest of the rig is strung out along
+    -- the run behind it - which is exactly where the road it has just driven across is. Checking the
+    -- end point on its own is what let a tractor come to rest clear of a road with its trailer
+    -- lying over it.
+    --
+    -- With the same margin the crossing distance aims past the clearance by, so that arriving a
+    -- little short of the target still leaves the rig genuinely clear rather than exactly on the
+    -- boundary of being clear.
+    if self:nearestWayPointToTrain(x, z, -dirX, -dirZ, reach or 0,
+        AutoDrive.WAITING_NETWORK_CLEARANCE + WaitForCallTask.CLEARANCE_MARGIN) ~= nil then
+        return false
+    end
+    if wantOnField ~= nil and AutoDrive.checkIsOnField ~= nil then
+        local y = getTerrainHeightAtWorldPos(g_currentMission.terrainRootNode, x, 300, z)
+        if (AutoDrive.checkIsOnField(x, y, z) == true) ~= wantOnField then
+            return false
+        end
+    end
+    return true
+end
+
+--- Where to step aside to.
+---
+--- The target used to be placed at the full step-aside distance and never looked at. Nothing asked
+--- whether that spot was any good, and neither do the two completion tests that actually end most
+--- manoeuvres - reaching the target and running out of time both stop the vehicle wherever it
+--- happens to be. So on a field whose entry point sits beside a road, a driver asked to clear that
+--- entry point drove the full run straight across the road and parked on it: on the way point
+--- network, blocking everyone using it, which is the exact thing this manoeuvre exists to prevent.
+--- Lengthening the run for crossing cases made that reach considerably further.
+---
+--- Surface is a preference, not a filter, and it is "stay on the kind of ground we are already on"
+--- rather than "get onto a field". A driver waiting on a field steps aside on that field, which is
+--- what is wanted of it; a driver waiting on a road does not get pushed into standing crops to
+--- satisfy a preference. Either way, a vehicle that can only find room on the other kind of ground
+--- still takes it, because standing on the network is worse than standing on the wrong sort of
+--- ground.
+---
+--- Falls back to the old behaviour - chosen side, full distance - when nothing along either side is
+--- clear, because on a densely recorded field that spot may genuinely not exist.
+function WaitForCallTask:chooseStepAsideTarget(sx, sz, dirX, dirZ, maxDistance, onField, reach)
+    -- Side before surface: sideAwayFrom already weighed this side against driving at the asker, and
+    -- that judgement outranks which sort of ground we end up on.
+    local candidates = {
+        {dirX, dirZ, onField},
+        {dirX, dirZ, nil},
+        {-dirX, -dirZ, onField},
+        {-dirX, -dirZ, nil},
+    }
+    reach = reach or self:rigReach()
+    for _, candidate in ipairs(candidates) do
+        local cx, cz, wantOnField = candidate[1], candidate[2], candidate[3]
+        local found = WaitForCallTask.furthestRestingDistance(
+            function(distance) return self:isRestingPlaceAt(sx, sz, cx, cz, distance, wantOnField, reach) end,
+            maxDistance, WaitForCallTask.TARGET_STEP)
+        if found ~= nil then
+            return cx, cz, found
+        end
+    end
+    return dirX, dirZ, maxDistance
+end
+
 function WaitForCallTask:startMakingWay()
     local request = AutoDrive.getMakeWayRequest(self.vehicle)
     if request == nil or request.awayFromX == nil or request.awayFromZ == nil then
@@ -343,7 +556,36 @@ function WaitForCallTask:startMakingWay()
         return
     end
 
-    local distance = WaitForCallTask.stepAsideDistance(crossing)
+    local onField = nil
+    if AutoDrive.checkIsOnField ~= nil then
+        onField = AutoDrive.checkIsOnField(sx, sy, sz) == true
+    end
+    local trainLength = AutoDrive.getTractorTrainLength ~= nil
+        and AutoDrive.getTractorTrainLength(self.vehicle, true, false) or 0
+
+    -- The manoeuvre the geometry actually asks for, before any of the corrections below. Whether it
+    -- is one to reverse to is decided here rather than on the final target, because a run that is
+    -- lengthened to get a trailer clear must not be able to talk itself into reversing: a train
+    -- longer than the step-aside distance can never put a target far enough astern, and adding that
+    -- very train length to the distance would arrange for exactly that.
+    --
+    -- Heights come off the terrain, because passing 0 for y on a map whose ground sits at fifty to a
+    -- hundred and fifty metres lets the vehicle's own pitch decide the direction instead of the
+    -- geometry.
+    local base = WaitForCallTask.stepAsideDistance(crossing)
+    local bx, bz = sx + dx * base, sz + dz * base
+    local by = getTerrainHeightAtWorldPos(g_currentMission.terrainRootNode, bx, 300, bz)
+    local baseLocalX, _, baseLocalZ = AutoDrive.worldToLocal(self.vehicle, bx, by, bz)
+    local baseReverse = WaitForCallTask.shouldReverseTo(baseLocalX, baseLocalZ, trainLength)
+
+    -- Plus the rig's own reach, but only when the rig FOLLOWS us. Driving forwards, whatever
+    -- distance takes the tractor clear leaves the tail of the train exactly that much short of
+    -- clear - still standing on the route we were asked to leave, which is how a tractor came to
+    -- rest past a road with its trailer lying across it. Reversing puts the rig in front instead,
+    -- already further from the route than the tractor, so it needs no allowance at all.
+    local reach = baseReverse and 0 or self:rigReach()
+    local distance
+    dx, dz, distance = self:chooseStepAsideTarget(sx, sz, dx, dz, base + reach, onField, reach)
     self.makeWayDistance = distance
 
     local tx = sx + dx * distance
@@ -351,13 +593,11 @@ function WaitForCallTask:startMakingWay()
     local ty = getTerrainHeightAtWorldPos(g_currentMission.terrainRootNode, tx, 300, tz)
     self.makeWayTarget = { x = tx, y = ty, z = tz }
 
-    -- Computed against the target's real height, because passing 0 for y on a map whose ground sits
-    -- at fifty to a hundred and fifty metres lets the vehicle's own pitch decide the direction
-    -- instead of the geometry.
+    -- Both have to agree. The search can shorten the run or take it to the other side, and either
+    -- can leave a target that was going to be reversed to sitting inside the train.
     local targetLocalX, _, targetLocalZ = AutoDrive.worldToLocal(self.vehicle, tx, ty, tz)
-    local trainLength = AutoDrive.getTractorTrainLength ~= nil
-        and AutoDrive.getTractorTrainLength(self.vehicle, true, false) or 0
-    self.makeWayReverse = WaitForCallTask.shouldReverseTo(targetLocalX, targetLocalZ, trainLength)
+    self.makeWayReverse = baseReverse
+        and WaitForCallTask.shouldReverseTo(targetLocalX, targetLocalZ, trainLength)
 
     self.makeWayStart = { x = sx, y = sy, z = sz }
     -- Which request this manoeuvre is serving. A second one can arrive while it runs - requestMakeWay

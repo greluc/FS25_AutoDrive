@@ -1468,7 +1468,11 @@ function ADGraphManager:createDebugMarkers(updateMap)
             end
             table.insert(tileHashMap[hash], i)
             if not wp.foundError and #tileHashMap[hash] > 1 then
-                for _, j in tileHashMap[hash] do
+                -- ipairs, not the bare table: "for k, v in someTable do" asks Lua to CALL that table
+                -- as an iterator, which raises. The branch needs two way points in the same ten
+                -- metre tile before it is entered at all, so on any recorded network the very first
+                -- check of the road network died here.
+                for _, j in ipairs(tileHashMap[hash]) do
                     if j ~= i then
                         local wp2 = network[j]
                         if math.abs(wp.x - wp2.x) < 1e-3 and math.abs(wp.z - wp2.z) < 1e-3 then

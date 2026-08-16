@@ -235,4 +235,58 @@ function TestBatchDelete:testSinglePointDeletionStillWorks()
     lu.assertEquals(#ADGraphManager:getWayPoints(), 4)
 end
 
+------------------------------------------------------------------------------------------------------------------------
+--- Checking the road network for faults
+---
+--- The duplicate-point check groups way points into ten metre tiles and compares the ones that share
+--- a tile. It walked that group with "for _, j in tileHashMap[hash] do" - no ipairs - which asks Lua
+--- to CALL the table as an iterator and raises on the spot. Two way points in one tile is all it
+--- takes, so an ordinary route recorded at five metre spacing killed the check on its very first
+--- tile, and the network fault finder could never report anything to anybody.
+------------------------------------------------------------------------------------------------------------------------
+TestNetworkCheck = {}
+
+function TestNetworkCheck:setUp()
+    TestSetup.reset()
+    ADGraphManager:load()
+    AutoDrive.testSettings['mapMarkerDetour'] = 0
+    AutoDrive.Hud = { lastUIScale = 1 }
+    AutoDrive.getAllVehicles = function() return {} end
+    AutoDrive.notifyDestinationListeners = function() end
+    -- Without this the entire body of createDebugMarkers is skipped and both tests below pass
+    -- without executing a line of what they are about.
+    AutoDrive.currentDebugChannelMask = AutoDrive.DC_ROADNETWORKINFO
+    lu.assertTrue(AutoDrive.getDebugChannelIsSet(AutoDrive.DC_ROADNETWORKINFO))
+end
+
+--- Points five metres apart on a straight line - the most ordinary recorded route there is, and
+--- several of them share a ten metre tile.
+function TestNetworkCheck:testItSurvivesAnOrdinaryRoute()
+    local wps = {}
+    for i = 1, 8 do
+        wps[i] = TestSetup.waypoint(i, i * 5, 0, i < 8 and { i + 1 } or {}, i > 1 and { i - 1 } or {})
+    end
+    ADGraphManager:setWayPoints(wps)
+
+    local ok, err = pcall(function() ADGraphManager:createDebugMarkers(false) end)
+
+    lu.assertTrue(ok, 'checking a perfectly healthy route raised: ' .. tostring(err))
+end
+
+--- And it still finds what it is for: two way points on exactly the same spot.
+function TestNetworkCheck:testItStillFindsGenuineDuplicates()
+    local wps = {}
+    for i = 1, 4 do
+        wps[i] = TestSetup.waypoint(i, i * 5, 0, i < 4 and { i + 1 } or {}, i > 1 and { i - 1 } or {})
+    end
+    wps[5] = TestSetup.waypoint(5, 2 * 5, 0, {}, {})   -- sitting on top of way point 2
+    ADGraphManager:setWayPoints(wps)
+
+    local ok = pcall(function() ADGraphManager:createDebugMarkers(false) end)
+
+    lu.assertTrue(ok)
+    lu.assertTrue(wps[5].foundError == true or wps[2].foundError == true,
+        'a way point placed exactly on another one has to be reported as a fault')
+end
+
 os.exit(lu.LuaUnit.run())

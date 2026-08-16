@@ -487,6 +487,109 @@ function TestOffRouteLookAhead:testTheGiveUpIsForgottenWhenTheConflictClears()
         'a fresh encounter with the same vehicle gets the full wait again')
 end
 
+--- The give-up belongs to one off-network episode, and the everyday unloader cycle ends that episode
+--- several times an hour: field, road, silo, road, field. The whole road leg answers at the
+--- isOnRoadNetwork exit, which never reaches the mark-and-sweep at the bottom - the only place an
+--- entry is ever forgiven - so a give-up used to survive the entire round trip. Coming back to the
+--- field, the sibling it was recorded against was met as a permanently exempt vehicle: we are the
+--- further one, we should give way, and we never did again, because the skip branch re-stamps the
+--- entry every gate frame the conflict is visible. Neither of them yields, and all that is left are
+--- the front sensors.
+function TestOffRouteLookAhead:testTheGiveUpDoesNotSurviveATripOnTheRoadNetwork()
+    local near, far = convergingPair()
+    self.vehicles = { near, far }
+    local _, module = detectsTrafficFor(far)
+    g_time = g_time + AutoDrive.AD_TRAFFIC_YIELD_TIMEOUT + 1
+    lu.assertFalse(module:detectAdTrafficOffRoute(), 'test setup: the cap has to run out first')
+
+    -- the drive to the silo and back, twenty seconds of it
+    far.ad.drivePathModule.isOnRoadNetwork = function() return true end
+    for _ = 1, 200 do
+        g_time = g_time + 100
+        module:detectAdTrafficOffRoute()
+    end
+    far.ad.drivePathModule.isOnRoadNetwork = function() return false end
+
+    lu.assertTrue(module:detectAdTrafficOffRoute(),
+        'a give-up from before a road trip must not disable right of way on the next field')
+end
+
+--- The second of the three exits above the sweep: AutoDrive switched off and on again, which is what
+--- happens every time the player takes a vehicle over and hands it back. One test per exit rather
+--- than one test walking all three, so that breaking any single one of them is caught on its own.
+function TestOffRouteLookAhead:testTheGiveUpDoesNotSurviveBeingSwitchedOff()
+    local near, far = convergingPair()
+    self.vehicles = { near, far }
+    local _, module = detectsTrafficFor(far)
+    g_time = g_time + AutoDrive.AD_TRAFFIC_YIELD_TIMEOUT + 1
+    lu.assertFalse(module:detectAdTrafficOffRoute(), 'test setup: the cap has to run out first')
+
+    far.ad.stateModule.isActive = function() return false end
+    for _ = 1, 50 do
+        g_time = g_time + 100
+        module:detectAdTrafficOffRoute()
+    end
+    far.ad.stateModule.isActive = function() return true end
+
+    lu.assertTrue(module:detectAdTrafficOffRoute(),
+        'a give-up from before the driver was switched off must not carry into the next job')
+end
+
+--- And the third: no usable path, which is what a route being recomputed looks like from in here.
+--- This is the exit that costs something - a path gap can hand a partner we had already waited out
+--- one more full cap - and it is deliberate. One extra ten second wait beats never giving way to
+--- that vehicle again for the rest of the session.
+function TestOffRouteLookAhead:testTheGiveUpDoesNotSurviveLosingThePath()
+    local near, far = convergingPair()
+    self.vehicles = { near, far }
+    local _, module = detectsTrafficFor(far)
+    g_time = g_time + AutoDrive.AD_TRAFFIC_YIELD_TIMEOUT + 1
+    lu.assertFalse(module:detectAdTrafficOffRoute(), 'test setup: the cap has to run out first')
+
+    local realWayPoints = far.ad.drivePathModule.getWayPoints
+    far.ad.drivePathModule.getWayPoints = function() return nil, nil end
+    for _ = 1, 50 do
+        g_time = g_time + 100
+        module:detectAdTrafficOffRoute()
+    end
+    far.ad.drivePathModule.getWayPoints = realWayPoints
+
+    lu.assertTrue(module:detectAdTrafficOffRoute(),
+        'a give-up recorded before the path was lost must not outlive the path it was made on')
+end
+
+--- Giving way exits the scan from the middle of the vehicle loop, and the mark-and-sweep at the
+--- bottom is the only place an entry is forgiven. So for as long as we were busy giving way to one
+--- vehicle - which can be every gate frame for a long time - nothing could notice that a DIFFERENT
+--- partner, one we had given up on earlier, had meanwhile left. It stayed given up on, and the first
+--- scan that finally reached it stepped over it without ever spending the wait.
+function TestOffRouteLookAhead:testAPartnerThatLeavesWhileWeYieldToAnotherIsForgiven()
+    local us, first, second = twoBlockersAheadOfUs()
+
+    -- wait out the full cap on the first one, then give up on it
+    self.vehicles = { us, first }
+    local _, module = detectsTrafficFor(us)
+    g_time = g_time + AutoDrive.AD_TRAFFIC_YIELD_TIMEOUT + 1
+    lu.assertFalse(module:detectAdTrafficOffRoute(), 'test setup: the cap has to run out first')
+
+    -- now the second one turns up and we start giving way to it instead
+    self.vehicles = { us, first, second }
+    lu.assertTrue(module:detectAdTrafficOffRoute(), 'test setup: it has to give way to the second')
+
+    -- while we stand there, the first one drives away entirely - well inside the second one's cap,
+    -- so what is under test is the forgiving, not another timeout
+    self.vehicles = { us, second }
+    for _ = 1, 5 do
+        g_time = g_time + 100
+        module:detectAdTrafficOffRoute()
+    end
+
+    -- and now it comes back, to a vehicle that has never waited a second on it in this encounter
+    self.vehicles = { us, first }
+    lu.assertTrue(module:detectAdTrafficOffRoute(),
+        'a partner that left while we were giving way to somebody else has to be forgiven')
+end
+
 --- The mirror of the off-route release: a partner recorded ON the network and then left behind when
 --- the route turns off onto a field would sit there until the vehicle rejoined the network.
 function TestOffRouteLookAhead:testTheOnRouteScanReleasesItsOwnPartnerOnLeavingTheNetwork()

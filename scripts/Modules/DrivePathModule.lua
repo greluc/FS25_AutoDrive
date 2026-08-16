@@ -355,8 +355,22 @@ function ADDrivePathModule:followWaypoints(dt)
             if not self:isOnRoadNetwork() then
                 cornerScale, cornerFloor = 2, 12
             end
-            self.speedLimit = math.min(self.speedLimit,
-                self:getCornerSpeedLimit(self.speedLimit, cornerScale, cornerFloor))
+            local cornerLimit = self:getCornerSpeedLimit(self.speedLimit, cornerScale, cornerFloor)
+            -- Only when a corner actually takes speed off us. Straights are the common case and
+            -- would bury the interesting frames; this way the log holds one line per braking
+            -- decision, which is exactly what has to be checked against what the vehicle did.
+            if cornerLimit < self.speedLimit then
+                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO,
+                    "ADDrivePathModule: corner brake %.1f -> %.1f km/h - corner wants %.1f km/h in %.1f m (radius %.1f m, turn %.1f deg)"
+                    , self.speedLimit
+                    , cornerLimit
+                    , self.maxAngleSpeed or -1
+                    , self.maxAngleDistance or -1
+                    , self.maxAngleRadius or -1
+                    , self.maxAngle or -1
+                )
+            end
+            self.speedLimit = math.min(self.speedLimit, cornerLimit)
         end
 
         self.distanceToTarget = self:getDistanceToLastWaypoint(40)
@@ -730,6 +744,10 @@ function ADDrivePathModule:getCornerSpeedLimit(currentLimit, cornerScale, corner
                     self.maxAngle = angle
                     self.maxAngleSpeed = cornerSpeed
                     self.maxAngleRadius = radius
+                    -- Diagnostics only, and the one number that makes the ramp legible in a log:
+                    -- the same corner constrains a lot at ten metres and almost nothing at sixty,
+                    -- so without it the reported limit cannot be told apart from a flat cap.
+                    self.maxAngleDistance = travelled
                 end
             end
         end
