@@ -1080,6 +1080,20 @@ function ADDrivePathModule:askForWayIfHeldLongEnough()
     if self.heldTimer.elapsedTime < ADDrivePathModule.ASK_FOR_WAY_AFTER then
         return
     end
+    -- Arriving, not passing through: queue instead of asking.
+    --
+    -- Whoever is standing in front of us this close to the end of our own route is standing at our
+    -- destination, and a second driver turning up at a waiting spot should fall in behind the one
+    -- already there - not send it away. Reported from the game: two empty unloaders assigned to the
+    -- same field, and the one that had been waiting drove sixty metres off in two goes because the
+    -- second arrived behind it.
+    --
+    -- getDistanceToLastWaypoint answers math.huge until the end of the route is within reach, so
+    -- this is false for exactly the case the asking is for - a loaded driver trying to get PAST
+    -- something on its way somewhere else.
+    if (self.distanceToTarget or math.huge) < AutoDrive.MAKE_WAY_ASK_RANGE then
+        return
+    end
     self.askedForWay = true
     local asked = AutoDrive:askNearbyVehiclesToMakeWay(self.vehicle)
     if asked > 0 then

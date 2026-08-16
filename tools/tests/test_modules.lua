@@ -844,6 +844,8 @@ local function heldModule(held, activeTask)
         wayPoints = TestSetup.lineNetwork(6),
         currentWayPoint = 1,
         askedForWay = false,
+        -- far from the end of the route: this driver is passing through, not arriving
+        distanceToTarget = math.huge,
         handleBeingStuck = function() record.stuck = record.stuck + 1 end,
     })
     AutoDrive.askNearbyVehiclesToMakeWay = function() record.asked = record.asked + 1 return 1 end
@@ -929,6 +931,34 @@ function TestHeldOnTheRoute:testAParkedWaiterNeitherAsksNorIsStuck()
 
     lu.assertEquals(record.asked, 0)
     lu.assertEquals(record.stuck, 0)
+end
+
+
+--- Arriving is not the same as being blocked, and the difference is the end of your own route.
+---
+--- Reported from the game: two empty unloaders assigned to the same field. The second arrived behind
+--- the first at the waiting spot, asked it to move, and the one that had been waiting drove sixty
+--- metres off in two goes. A second driver turning up at a waiting spot should fall in behind the
+--- one already there, exactly as it did before any of this - whoever is standing in front of you
+--- that close to the end of your route is standing at your destination.
+function TestHeldOnTheRoute:testADriverArrivingAtItsDestinationAsksNobody()
+    local module, record = heldModule(true, {})
+    module.distanceToTarget = AutoDrive.MAKE_WAY_ASK_RANGE - 1
+
+    run(module, ADDrivePathModule.MAX_HELD_TIME * 2)
+
+    lu.assertEquals(record.asked, 0, 'the vehicle in front is at our destination - queue behind it')
+end
+
+--- And the case the asking exists for is untouched: a loaded driver on its way somewhere else, with
+--- the end of its route nowhere near.
+function TestHeldOnTheRoute:testADriverPassingThroughStillAsks()
+    local module, record = heldModule(true, {})
+    module.distanceToTarget = math.huge
+
+    run(module, ADDrivePathModule.ASK_FOR_WAY_AFTER + 1000)
+
+    lu.assertEquals(record.asked, 1)
 end
 
 os.exit(lu.LuaUnit.run())
