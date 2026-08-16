@@ -260,6 +260,9 @@ end
 --- Real positions, so a trailer swung out across a road is found where it actually is rather than
 --- where a straight line behind the tractor would have put it.
 function WaitForCallTask:nearestWayPointToUs()
+    if not WaitForCallTask.hasNetwork() then
+        return nil
+    end
     local query = self:queryPoint()
     for _, node in ipairs(self:rigNodes()) do
         local x, _, z = getWorldTranslation(node)
@@ -609,6 +612,10 @@ function WaitForCallTask:startMakingWay()
     self.makeWayTimer:timer(false)
     self.state = WaitForCallTask.STATE_MAKING_WAY
     self.vehicle.ad.specialDrivingModule:releaseVehicle()
+
+    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO,
+        "WaitForCallTask: making way %.1f m %s (crossing %.1f m, rig %.1f m)",
+        distance, self.makeWayReverse and "astern" or "forwards", crossing or 0, reach or 0)
 end
 
 function WaitForCallTask:updateMakingWay(dt)
@@ -626,7 +633,20 @@ function WaitForCallTask:updateMakingWay(dt)
     -- move in the first place, and spent one of its two attempts doing it. So the early finish now
     -- has to be somewhere the vehicle is actually clear; if it never is, the full distance and the
     -- timeout still end the manoeuvre.
-    if timedOut or moved >= distance or (moved >= (distance * 0.75) and self:isClearOfTheRoute()) then
+    local arrived = moved >= distance
+    -- The short circuit matters: isClearOfTheRoute is a spatial query, and the two cheap tests above
+    -- it decide most frames. Evaluating it unconditionally just to name the reason in a log line
+    -- would run it on every ending frame as well.
+    local clearEnough = not timedOut and not arrived
+        and moved >= (distance * 0.75) and self:isClearOfTheRoute()
+    if timedOut or arrived or clearEnough then
+        -- Which of the three ended it, and how far the vehicle actually got. Without this the only
+        -- thing visible from outside is that the driver stopped saying "making way", which is the
+        -- same picture whether it walked its full eighteen metres or never moved at all.
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO,
+            "WaitForCallTask: making way ended after %.1f m of %.1f - %s",
+            moved, distance,
+            timedOut and "timed out" or (arrived and "arrived" or "clear of the route"))
         self:stopMakingWay()
         return
     end
@@ -640,7 +660,24 @@ function WaitForCallTask:updateMakingWay(dt)
             self:stopMakingWay()
         end
     else
-        self.vehicle.ad.specialDrivingModule:driveToPoint(dt, self.makeWayTarget, 8, true, 0.5, 8)
+        -- No forward collision gate on this one, and that is the whole difference between a
+        -- manoeuvre that happens and one that does not.
+        --
+        -- This was the only one of driveToPoint's four callers asking for it. The other three -
+        -- following a harvester, reversing out of a bad spot, nudging up to drop a bale - all pass
+        -- false, and ReverseFromBadLocationTask is the telling one: a vehicle getting itself out of
+        -- a tight place must not be stopped by the very thing it is escaping.
+        --
+        -- Stepping aside is exactly that situation. Something is in the way by definition; that is
+        -- why somebody asked. With the gate on, driveToPoint saw the queue ahead - through
+        -- hasDetectedObstable and again through the separate, unlogged frontSensor - and braked
+        -- every frame instead of driving. Reported from the game and matching it exactly: the driver
+        -- switched to "making way", stood still, and went back to waiting when the twenty second
+        -- timeout ran out.
+        --
+        -- What still bounds it: eight km/h, at most twice MAKE_WAY_DISTANCE, its own timeout, and
+        -- the physics engine, which does not let anything drive through anything.
+        self.vehicle.ad.specialDrivingModule:driveToPoint(dt, self.makeWayTarget, 8, false, 0.5, 8)
     end
 end
 

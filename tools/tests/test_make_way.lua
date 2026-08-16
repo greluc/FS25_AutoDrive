@@ -855,6 +855,57 @@ function TestSteppingOffTheRoute:testTheTargetLeavesRoomForTheTrailerBehindIt()
             distanceToRoute(target.x, target.z), distanceToRoute(tailX, tailZ)))
 end
 
+
+--- The forward collision gate, and why this manoeuvre must not have one.
+---
+--- driveToPoint has four callers. Following a harvester, reversing out of a bad spot and nudging up
+--- to drop a bale all pass checkDynamicCollision = false; only the step-aside passed true. The
+--- reverse recovery is the telling comparison: a vehicle getting itself out of a tight place must
+--- not be stopped by the very thing it is escaping, and stepping aside is exactly that situation -
+--- something is in the way by definition, which is why somebody asked.
+---
+--- Reported from the game, and matching it exactly: the driver switched to "making way", stood
+--- still, and went back to waiting when the twenty second timeout ran out. driveToPoint had seen the
+--- queue ahead - through hasDetectedObstable and again through the separate frontSensor - and braked
+--- every frame instead of driving.
+function TestSteppingOffTheRoute:testTheStepAsideIsNotGatedOnWhatIsInFrontOfIt()
+    self.task:update(16)
+    lu.assertEquals(self.task.state, WaitForCallTask.STATE_MAKING_WAY, 'test setup: it has to be moving')
+
+    local seen = nil
+    self.parked.ad.specialDrivingModule.driveToPoint =
+        function(_, _, point, _, checkDynamicCollision) seen = checkDynamicCollision end
+
+    self.task:update(16)
+
+    lu.assertNotNil(seen ~= nil or seen == false, 'test setup: driveToPoint has to be reached')
+    lu.assertFalse(seen == true,
+        'a vehicle asked to clear a spot cannot be held there by the obstacle it is clearing')
+end
+
+
+--- The early-finish test is a spatial query; the two cheap tests in front of it decide most frames.
+--- Naming the reason in a log line must not cost a query on every ending frame. To see the
+--- difference at all the vehicle has to be PAST three quarters of the run - short of that the
+--- comparison short circuits on its own and both versions look identical.
+function TestSteppingOffTheRoute:testTheClearanceQueryIsSkippedWhenTheTimeoutEndsIt()
+    self.task:update(16)
+    lu.assertEquals(self.task.state, WaitForCallTask.STATE_MAKING_WAY, 'test setup: it has to be moving')
+    local distance = self.task.makeWayDistance
+    lu.assertNotNil(distance)
+
+    -- past three quarters, so the clearance branch is genuinely in play
+    moveTo(self.parked, 2 + distance * 0.8, 20)
+    local queries = 0
+    self.task.isClearOfTheRoute = function() queries = queries + 1 return false end
+
+    -- but the timeout ends it, so nothing has to be measured
+    self.task:update(WaitForCallTask.MAKE_WAY_TIMEOUT + 1)
+
+    lu.assertEquals(self.task.state, WaitForCallTask.STATE_WAITING)
+    lu.assertEquals(queries, 0, 'the timeout already ended it - the spatial query was not needed')
+end
+
 --- A request arriving mid-manoeuvre used to be accepted, never read, and then deleted by
 --- stopMakingWay - so the vehicle that sent it had spent its one ask per stuck episode on nothing,
 --- and fell through to reversing itself out fifteen seconds later.
