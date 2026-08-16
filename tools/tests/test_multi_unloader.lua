@@ -306,11 +306,40 @@ function TestOffRouteLookAhead:testTheTrafficVehicleIsReleasedWhenTheConflictCle
 
     self.vehicles = { far }
     lu.assertFalse(detectsTrafficFor(far))
-    local _, cleared = detectsTrafficFor(far)
     module:detectAdTrafficOffRoute()
 
     lu.assertNil(module.trafficVehicle,
         'a stale partner here makes the on-network check report traffic that is not there')
+end
+
+--- And the case that actually happens: the route leaves the field and joins the network, which is
+--- how every path search ends. That returns from the scan before any of the clearing at the bottom.
+function TestOffRouteLookAhead:testTheTrafficVehicleIsReleasedOnJoiningTheNetwork()
+    local near, far = convergingPair()
+    self.vehicles = { near, far }
+
+    local yields, module = detectsTrafficFor(far)
+    lu.assertTrue(yields)
+    lu.assertNotNil(module.trafficVehicle)
+
+    far.ad.drivePathModule.isOnRoadNetwork = function() return true end
+    lu.assertFalse(module:detectAdTrafficOffRoute())
+
+    lu.assertNil(module.trafficVehicle,
+        'leaving the field for the network must not carry the partner into the on-network check')
+    lu.assertNil(module.offRouteYieldStart, 'and the wait clock goes with it')
+end
+
+--- Same for a driver that is switched off mid-yield.
+function TestOffRouteLookAhead:testTheTrafficVehicleIsReleasedWhenTheDriverStops()
+    local near, far = convergingPair()
+    self.vehicles = { near, far }
+    local _, module = detectsTrafficFor(far)
+
+    far.ad.stateModule.isActive = function() return false end
+    module:detectAdTrafficOffRoute()
+
+    lu.assertNil(module.trafficVehicle)
 end
 
 function TestOffRouteLookAhead:testPathsThatDoNotMeetAreIgnored()

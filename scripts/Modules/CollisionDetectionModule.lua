@@ -108,10 +108,10 @@ end
 -- waiting for each other.
 function ADCollisionDetectionModule:detectAdTrafficOffRoute()
     if not self.vehicle.ad.stateModule:isActive() then
-        return false
+        return self:releaseOffRouteYield()
     end
     if self.vehicle.ad.drivePathModule:isOnRoadNetwork() then
-        return false -- handled by detectAdTrafficOnRoute
+        return self:releaseOffRouteYield() -- handled by detectAdTrafficOnRoute
     end
 
     -- same throttle and per-vehicle phase offset as the other scans
@@ -122,7 +122,7 @@ function ADCollisionDetectionModule:detectAdTrafficOffRoute()
 
     local ownPoints, ownDistances = self:getUpcomingPathPoints(self.vehicle)
     if ownPoints == nil or #ownPoints < 2 then
-        return false
+        return self:releaseOffRouteYield()
     end
 
     local ownX, _, ownZ = getWorldTranslation(self.vehicle.components[1].node)
@@ -182,14 +182,7 @@ function ADCollisionDetectionModule:detectAdTrafficOffRoute()
         end
     end
 
-    self.offRouteYieldStart = nil
-    self.offRouteYieldPartner = nil
-    -- trafficVehicle is shared with detectAdTrafficOnRoute, which on its non-gate frames answers
-    -- from nothing but whether this is nil. Leaving ours behind means that check reports traffic
-    -- for the rest of the drive - and a route moving from a field onto the network is the normal
-    -- end of every path search, so it would happen on most journeys.
-    self.trafficVehicle = nil
-    return false
+    return self:releaseOffRouteYield()
 end
 
 --- Whether to keep giving way, given that we have found somebody with the right of way.
@@ -199,6 +192,21 @@ end
 --- on something else entirely: a closed gate, a tree, a player parked across the track. Waiting for
 --- it would be indefinite, so the wait is capped. Afterwards we drive on and let the ordinary
 --- collision detection deal with whatever is actually there.
+--- Forget whoever we were giving way to.
+---
+--- trafficVehicle is shared with detectAdTrafficOnRoute, which on its own non-gate frames answers
+--- from nothing but whether that field is nil. Every exit from the scan that is not a yield has to
+--- come through here, including the early ones - a route leaving a field for the network returns at
+--- the isOnRoadNetwork check, and that transition is how every path search ends, so leaving a
+--- partner behind there would have the on-network check reporting traffic for the rest of the drive.
+function ADCollisionDetectionModule:releaseOffRouteYield()
+    self.offRouteYieldStart = nil
+    self.offRouteYieldPartner = nil
+    self.detectedOffRouteTraffic = false
+    self.trafficVehicle = nil
+    return false
+end
+
 --- Whether another vehicle is close enough that our upcoming paths could possibly meet. Cheap, and
 --- it stands in front of the two expensive things in the scan - walking that vehicle's path points
 --- and walking its implement list.
