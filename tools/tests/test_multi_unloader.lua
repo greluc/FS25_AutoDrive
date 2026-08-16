@@ -383,4 +383,115 @@ function TestRouteReservation:testAnInactiveVehicleReservesNothing()
     lu.assertFalse(AutoDrive.checkForVehiclePathInBox(boxAtEndOf(other.ad.drivePathModule:getWayPoints()), 5, mine))
 end
 
+
+------------------------------------------------------------------------------------------------------------------------
+--- A real crossing
+---
+--- Every scene above puts both vehicles on the same line with one path a subset of the other, which
+--- cannot produce the case the rule exists to arbitrate. This builds the case: two vehicles meeting
+--- at right angles, points three metres apart.
+---
+--- That geometry broke the first version of the rule. It decided on the FIRST pair of points within
+--- conflict range where "my distance is greater than theirs", and the pair test is symmetric - both
+--- vehicles walk the same pairs with the roles swapped. So A found its point three metres past the
+--- crossing (18 m along its path) against B's point three metres before it (12 m along B's) and
+--- gave way; B found the mirror of that pair and gave way too. Both stopped.
+------------------------------------------------------------------------------------------------------------------------
+TestCrossing = {}
+
+--- A vehicle approaching the origin along an axis, points every three metres.
+local function approaching(id, axis, startDistance, speed)
+    local points = {}
+    local d = startDistance - 3
+    while d > -12 do
+        if axis == 'x' then
+            points[#points + 1] = { x = -d, y = 0, z = 0 }
+        else
+            points[#points + 1] = { x = 0, y = 0, z = -d }
+        end
+        d = d - 3
+    end
+    local sx, sz = 0, 0
+    if axis == 'x' then sx = -startDistance else sz = -startDistance end
+
+    local v = TestSetup.vehicle()
+    v.id = id
+    v.components = { { node = 'c' .. id } }
+    MockEngine.nodePositions['c' .. id] = { x = sx, y = 0, z = sz }
+    v.lastSpeedReal = speed or 0.002
+    v.ad.stateModule = { isActive = function() return true end }
+    v.ad.drivePathModule = {
+        getWayPoints = function() return points, 1 end,
+        isOnRoadNetwork = function() return false end,
+    }
+    return v
+end
+
+function TestCrossing:setUp()
+    TestSetup.reset()
+    g_time = 10000
+    self.vehicles = nil
+    AutoDrive.getAllVehicles = function() return self.vehicles or {} end
+    AutoDrive.checkIsConnected = function() return false end
+    self.a = approaching(1, 'x', 15)
+    self.b = approaching(2, 'z', 15)
+    self.vehicles = { self.a, self.b }
+end
+
+--- The whole point of a right of way rule: it has to produce one answer, not two.
+function TestCrossing:testExactlyOneOfThemYields()
+    local aYields = detectsTrafficFor(self.a)
+    local bYields = detectsTrafficFor(self.b)
+
+    lu.assertNotEquals(aYields, bYields,
+        aYields and 'both vehicles gave way, so neither crossing gets used'
+               or 'neither vehicle gave way at a crossing they both reach at the same distance')
+end
+
+--- Whoever still has further to go is the one that waits.
+function TestCrossing:testTheFurtherOneYieldsAtACrossing()
+    self.b = approaching(2, 'z', 27)
+    self.vehicles = { self.a, self.b }
+
+    lu.assertTrue(detectsTrafficFor(self.b), 'the vehicle twelve metres further back has to wait')
+    lu.assertFalse(detectsTrafficFor(self.a))
+end
+
+--- Both answers have to be stable, not dependent on which vehicle happens to ask first.
+function TestCrossing:testTheDecisionDoesNotDependOnWhoAsksFirst()
+    local bFirst = detectsTrafficFor(self.b)
+    local aSecond = detectsTrafficFor(self.a)
+
+    TestSetup.reset()
+    g_time = 10000
+    self.a = approaching(1, 'x', 15)
+    self.b = approaching(2, 'z', 15)
+    self.vehicles = { self.a, self.b }
+    local aFirst = detectsTrafficFor(self.a)
+    local bSecond = detectsTrafficFor(self.b)
+
+    lu.assertEquals(aFirst, aSecond)
+    lu.assertEquals(bFirst, bSecond)
+end
+
+--- The wait is per partner. One shared clock would charge the time already spent waiting for one
+--- vehicle to the next one met, so a driver crossing a busy yard would arrive at a fresh conflict
+--- with its patience spent and drive straight through it.
+function TestCrossing:testTheWaitStartsAfreshForANewPartner()
+    local yields, module = detectsTrafficFor(self.b)
+    lu.assertTrue(yields, 'test setup: b has to be the one waiting here')
+
+    g_time = g_time + AutoDrive.AD_TRAFFIC_YIELD_TIMEOUT - 100
+
+    -- the first partner leaves and a different one arrives, closer than we are, so we are the one
+    -- waiting again on distance alone rather than on the identity tie break
+    local c = approaching(3, 'x', 9)
+    self.vehicles = { self.b, c }
+    g_updateLoopIndex = (AutoDrive.PERF_FRAMES - self.b.id) % AutoDrive.PERF_FRAMES
+
+    lu.assertTrue(module:detectAdTrafficOffRoute(),
+        'the new partner has to get the full wait, not the remains of the previous one')
+end
+
+
 os.exit(lu.LuaUnit.run())

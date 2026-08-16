@@ -167,13 +167,23 @@ function ADSpecialDrivingModule:driveToPoint(dt, point, maxFollowSpeed, checkDyn
     local x, y, z = getWorldTranslation(self.vehicle.components[1].node)
     self.distanceToChasePos = MathUtil.vector2Length(x - point.x, z - point.z)
 
+    -- Closing the last twenty metres faster than the following speed is deliberate - it is how an
+    -- unloader catches a moving harvester. What it must not do is escape the caller's own limit,
+    -- which is what assigning over `speed` did: both maxSpeed and the field limit were discarded
+    -- for the whole sub-20 m envelope, which for a chase is the entire chase.
+    --
+    -- Three of the four callers pass the same number for both arguments - the bale nudge asks for
+    -- 1 km/h, the reverse recovery and the make-way manoeuvre for 8 - and were getting up to 44
+    -- instead. A vehicle asked to shuffle eighteen metres out of somebody's way sprinted there.
+    local catchUp = speed
     if self.distanceToChasePos < 0.5 then
-        speed = maxFollowSpeed * 1
+        catchUp = maxFollowSpeed
     elseif self.distanceToChasePos < 7 then
-        speed = maxFollowSpeed + self.distanceToChasePos * 1.4
+        catchUp = maxFollowSpeed + self.distanceToChasePos * 1.4
     elseif self.distanceToChasePos < 20 then
-        speed = maxFollowSpeed + self.distanceToChasePos * 2
+        catchUp = maxFollowSpeed + self.distanceToChasePos * 2
     end
+    speed = math.min(speed, catchUp)
 
     --print("Targetspeed: " .. speed .. " distance: " .. self.distanceToChasePos .. " maxFollowSpeed: " .. maxFollowSpeed)
 

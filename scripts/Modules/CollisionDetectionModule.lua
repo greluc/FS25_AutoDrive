@@ -138,15 +138,35 @@ function ADCollisionDetectionModule:detectAdTrafficOffRoute()
 
             local otherPoints, otherDistances = self:getUpcomingPathPoints(other)
             if otherPoints ~= nil and #otherPoints >= 2 then
+                -- How far each of us still has to go to reach the contested stretch. Reduced to one
+                -- number per side before comparing anything, because the pair test below is
+                -- symmetric: both vehicles walk the same set of pairs with the roles swapped, so
+                -- deciding on the first pair that happens to satisfy "I am further" lets BOTH of
+                -- them find such a pair and both give way. Two nearest-approach distances cannot do
+                -- that - each side computes the same two numbers and reads the same answer out of
+                -- them - and the id settles the exact tie that a symmetric crossing produces.
+                local ownBest, otherBest = nil, nil
                 for i, a in ipairs(ownPoints) do
                     for j, b in ipairs(otherPoints) do
                         local dx, dz = a.x - b.x, a.z - b.z
                         if (dx * dx + dz * dz) < (AutoDrive.AD_TRAFFIC_CONFLICT_RANGE * AutoDrive.AD_TRAFFIC_CONFLICT_RANGE) then
-                            -- both reach roughly this point; the one still further away gives way
-                            if ownDistances[i] > otherDistances[j] then
-                                return self:holdOffRouteYield(other, ownDistances[i], otherDistances[j])
+                            if ownBest == nil or ownDistances[i] < ownBest then
+                                ownBest = ownDistances[i]
+                            end
+                            if otherBest == nil or otherDistances[j] < otherBest then
+                                otherBest = otherDistances[j]
                             end
                         end
+                    end
+                end
+
+                if ownBest ~= nil and otherBest ~= nil then
+                    local weYield = ownBest > otherBest
+                    if ownBest == otherBest then
+                        weYield = (self.vehicle.id or 0) > (other.id or 0)
+                    end
+                    if weYield then
+                        return self:holdOffRouteYield(other, ownBest, otherBest)
                     end
                 end
             end
@@ -154,6 +174,7 @@ function ADCollisionDetectionModule:detectAdTrafficOffRoute()
     end
 
     self.offRouteYieldStart = nil
+    self.offRouteYieldPartner = nil
     return false
 end
 
@@ -164,9 +185,13 @@ end
 --- on something else entirely: a closed gate, a tree, a player parked across the track. Waiting for
 --- it would be indefinite, so the wait is capped. Afterwards we drive on and let the ordinary
 --- collision detection deal with whatever is actually there.
+--- The clock belongs to one partner, not to us. A single shared timer would let the wait we already
+--- spent on one vehicle be charged to the next one we meet, so a driver crossing a busy yard could
+--- arrive at a fresh conflict with its patience already used up and drive straight through it.
 function ADCollisionDetectionModule:holdOffRouteYield(other, ownDistance, otherDistance)
-    if self.offRouteYieldStart == nil then
+    if self.offRouteYieldStart == nil or self.offRouteYieldPartner ~= other then
         self.offRouteYieldStart = g_time
+        self.offRouteYieldPartner = other
     end
 
     if (g_time - self.offRouteYieldStart) > AutoDrive.AD_TRAFFIC_YIELD_TIMEOUT then
@@ -482,8 +507,22 @@ function ADCollisionDetectionModule:checkReverseCollision()
         end
         ADSensor:handleSensors(trailer, 0)
         --trailer.ad.sensors.rearSensor.drawDebug = true
-        trailer.ad.sensors.rearSensor.enabled = true
-        local ret = trailer.ad.sensors.rearSensor:pollInfo()
+
+        -- Deliberately does NOT set enabled here, though it used to.
+        --
+        -- handleSensors above will not update an implement's sensors: ADSensor.shouldUpdateSensors
+        -- wants a stateModule or a recordingModule, and an implement has neither - the ad table it
+        -- gets a few lines up is bare. Updating is therefore left entirely to pollInfo, which does
+        -- it by toggling enabled from false to true, because ADSensor:setEnabled only refreshes on
+        -- that transition. Setting enabled to true beforehand removed the transition and with it
+        -- the only update the sensor was ever going to get, so it answered with the false it was
+        -- initialised with, for the whole session. Every reverse manoeuvre by a rig with an
+        -- implement ran with no rear check at all - and turning on the sensor debug channel made it
+        -- work again, because that is one of the things shouldUpdateSensors accepts.
+        --
+        -- forced, so the poll is not deferred by the execution delay. AutoDrive.isTrailerInCrop
+        -- does the same thing the same way.
+        local ret = trailer.ad.sensors.rearSensor:pollInfo(true)
 
         if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_SENSORINFO) then
             AutoDrive.debugMsg(self.vehicle, "CDM: checkReverseCollision 2 rearSensor:pollInfo %s"
