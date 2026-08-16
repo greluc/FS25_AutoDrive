@@ -440,6 +440,72 @@ function TestSteppingOffTheRoute:testTheMoveIsAcrossTheRouteNotAlongIt()
             math.abs(target.x - 2), math.abs(target.z - 20)))
 end
 
+--- Where the asker stands on OUR side, the escape crosses the route - and a crossing run has to be
+--- long enough to be worth making. It used to be a flat eighteen metres whichever way it went, so a
+--- vehicle nine metres out on one side ended nine metres out on the other: the same distance from
+--- the very route it was clearing.
+function TestSteppingOffTheRoute:testACrossingRunIsLongEnoughToActuallyClearTheRoute()
+    moveTo(self.parked, 9.5, 20)
+    self.task:setUp()
+    AutoDrive.setMakeWayRequest(self.parked, 17.5, 20)   -- on our side, further out
+
+    self.task:update(16)
+
+    local target = self.task.makeWayTarget
+    lu.assertNotNil(target)
+    lu.assertTrue(target.x < 0, 'test setup: this geometry has to cross the route')
+    lu.assertTrue(distanceToRoute(target.x, target.z) > AutoDrive.WAITING_NETWORK_CLEARANCE,
+        string.format('the crossing target sits %.1f m from the route, which is still on it',
+            distanceToRoute(target.x, target.z)))
+end
+
+--- And the manoeuvre must not report success before it gets there.
+---
+--- It used to end at three quarters of the distance with nothing checking where that was. On a
+--- crossing run three quarters of the way lands back inside the clearance on the far side, so it
+--- finished standing in exactly the state that had it asked to move in the first place - and spent
+--- one of its two attempts doing it.
+function TestSteppingOffTheRoute:testItDoesNotStopWhileStillOnTheRoute()
+    moveTo(self.parked, 6, 20)
+    self.task:setUp()
+    AutoDrive.setMakeWayRequest(self.parked, 14, 20)
+
+    self.task:update(16)
+    lu.assertEquals(self.task.state, WaitForCallTask.STATE_MAKING_WAY, 'test setup: it has to move at all')
+    lu.assertTrue(self.task.makeWayTarget.x < 0, 'test setup: this geometry has to cross the route')
+
+    -- three quarters of the way across: seven and a half metres past the line, still on the network
+    local threeQuarters = 6 - AutoDrive.MAKE_WAY_DISTANCE * 0.75
+    moveTo(self.parked, threeQuarters, 20)
+    self.task:update(16)
+    lu.assertEquals(self.task.state, WaitForCallTask.STATE_MAKING_WAY, string.format(
+        'it stopped %.1f m from the route, inside the %g m clearance it was moving out of',
+        distanceToRoute(threeQuarters, 20), AutoDrive.WAITING_NETWORK_CLEARANCE))
+
+    -- and it does finish once it is genuinely clear
+    moveTo(self.parked, 6 - AutoDrive.MAKE_WAY_DISTANCE, 20)
+    self.task:update(16)
+    lu.assertEquals(self.task.state, WaitForCallTask.STATE_WAITING,
+        'once it is off the route the manoeuvre is done, target reached or not')
+end
+
+--- The early finish is still an early finish where nothing is crossed. Requiring the full distance
+--- everywhere would walk every vehicle four metres further than it needs to go.
+function TestSteppingOffTheRoute:testARunAwayFromTheRouteStillFinishesEarly()
+    moveTo(self.parked, 6, 20)
+    self.task:setUp()
+    AutoDrive.setMakeWayRequest(self.parked, -14, 20)    -- the far side, so our own side is the escape
+
+    self.task:update(16)
+    lu.assertTrue(self.task.makeWayTarget.x > 6, 'test setup: this geometry must not cross the route')
+
+    moveTo(self.parked, 6 + AutoDrive.MAKE_WAY_DISTANCE * 0.75, 20)
+    self.task:update(16)
+
+    lu.assertEquals(self.task.state, WaitForCallTask.STATE_WAITING,
+        'three quarters of the way out is clear of the route, and clear is what the manoeuvre is for')
+end
+
 --- Standing exactly on a way point leaves no direction to work from, so it steps across its own
 --- axis instead - which for a vehicle aligned with the route is still off it.
 function TestSteppingOffTheRoute:testStandingExactlyOnTheRouteStillLeavesIt()

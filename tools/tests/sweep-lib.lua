@@ -110,6 +110,37 @@ function Sweeps.vertexRoute(spacing, angleDeg, straightCount)
     return points
 end
 
+--- A straight run, then a vertex every three points, turning by each of the given angles in turn.
+---
+--- One vertex proves nothing about a rule that SUMS over a window. With a single non-zero triple -
+--- and it the very first one the scan visits - every part of the rule that decides where the window
+--- ENDS only ever adds zeros to the total, so the window could be truncated to one point and the
+--- comparison would still match. Several vertices spread through the window put the whole rule on
+--- the compared path, and one past ninety degrees - a switchback, or a hand-placed hairpin - puts
+--- the clamp on it too.
+function Sweeps.multiVertexRoute(spacing, angles, straightCount)
+    local points = {}
+    for i = 1, straightCount do
+        points[i] = { x = (i - 1) * spacing, y = 0, z = 0 }
+    end
+    local heading = 0
+    local px, pz = points[#points].x, points[#points].z
+    local function run(count)
+        for _ = 1, count do
+            px = px + math.cos(heading) * spacing
+            pz = pz + math.sin(heading) * spacing
+            points[#points + 1] = { x = px, y = 0, z = pz }
+        end
+    end
+    for _, angleDeg in ipairs(angles) do
+        heading = heading + math.rad(angleDeg)
+        run(3)
+    end
+    -- and a straight run out past the last vertex, so the window can also end on straight points
+    run(8)
+    return points
+end
+
 --- A vehicle approaching the origin along a bearing, with its upcoming path points.
 function Sweeps.approachingOrigin(id, bearingDeg, distance, spacing)
     local rad = math.rad(bearingDeg)
@@ -141,12 +172,37 @@ end
 --- changing, which is exactly what has to be detectable here.
 ------------------------------------------------------------------------------------------------------------------------
 
---- Stepping aside has to end up clear of the ROUTE. Distance from the line, not distance gained:
+--- How close a run from (x, z) of `distance` metres in direction (ex, ez) passes the point (ax, az).
+---
+--- Sampled rather than solved, deliberately. The production code has a closed form for this and the
+--- side choice is made with it; a sweep that called the same closed form would share any error in it
+--- and could not notice. Sampling the path is an independent measurement of the same thing.
+function Sweeps.closestApproachOnRun(x, z, ex, ez, distance, ax, az)
+    local closest = math.huge
+    local steps = 120
+    for i = 0, steps do
+        local t = distance * i / steps
+        local d = MathUtil.vector2Length(ax - (x + ex * t), az - (z + ez * t))
+        if d < closest then
+            closest = d
+        end
+    end
+    return closest
+end
+
+--- Stepping aside has to end up clear of the ROUTE. Distance from the network, not distance gained:
 --- when the asker sits on our own side the correct move crosses the line and ends up beyond it, so a
 --- gain-based invariant would reject the right answer.
+---
+--- Measured where the manoeuvre actually ends, and by the same query that decides a vehicle is parked
+--- on the network. Measuring the eighteen metre target instead - which is what this swept first -
+--- asserts an invariant about a point updateMakingWay does not require the vehicle to reach, and it
+--- passed while the vehicle came to rest four metres from the line. The lateral grid runs out to the
+--- ten metre gate on the way-point branch, too: it used to stop at six, and every configuration that
+--- broke the rule lived between the two.
 function Sweeps.escapeLeavesTheRoute()
     local violations, worst, worstCase = 0, math.huge, nil
-    local checked = 0
+    local checked, onTheNetwork = 0, 0
 
     for _, headingDeg in ipairs({ 0, 17, 45, 90, 143, 216, 300 }) do
         for _, spacing in ipairs({ 1, 2, 4, 8, 12 }) do
@@ -154,7 +210,7 @@ function Sweeps.escapeLeavesTheRoute()
             local px, pz = -dz, dx
             -- includes the band under half a metre, where getEscapeDirection takes its other branch
             for _, alongFraction in ipairs({ 0, 0.17, 0.35, 0.5, 0.73, 0.9 }) do
-                for _, lateral in ipairs({ -6, -2.5, -0.45, -0.1, 0, 0.1, 0.45, 2.5, 6 }) do
+                for _, lateral in ipairs({ -9.5, -8, -6, -2.5, -0.45, -0.1, 0, 0.1, 0.45, 2.5, 6, 8, 9.5 }) do
                     for _, askerSide in ipairs({ -1, 1 }) do
                         local along = 20 * spacing + alongFraction * spacing
                         local x = dx * along + px * lateral
@@ -163,21 +219,28 @@ function Sweeps.escapeLeavesTheRoute()
                         local request = { time = g_time,
                             awayFromX = x + px * askerSide * 8, awayFromZ = z + pz * askerSide * 8 }
 
-                        local ex, ez = task:getEscapeDirection(x, z, request)
+                        local ex, ez, crossing = task:getEscapeDirection(x, z, request)
                         checked = checked + 1
                         if ex == nil then
                             violations = violations + 1
-                        else
-                            local tx = x + ex * AutoDrive.MAKE_WAY_DISTANCE
-                            local tz = z + ez * AutoDrive.MAKE_WAY_DISTANCE
+                        elseif ADGraphManager:getNearestWayPointWithin({x = x, z = z},
+                                AutoDrive.WAITING_NETWORK_CLEARANCE) ~= nil then
+                            -- only where we started ON the network is leaving it the thing to prove;
+                            -- further out getEscapeDirection has no route to take a bearing from and
+                            -- steers away from the asker instead, which is a different invariant
+                            onTheNetwork = onTheNetwork + 1
+                            local distance = WaitForCallTask.stepAsideDistance(crossing)
+                            local tx = x + ex * distance
+                            local tz = z + ez * distance
                             local clear = Sweeps.distanceToLine(tx, tz, dx, dz)
                             if clear < worst then
                                 worst = clear
                                 worstCase = string.format(
-                                    'heading %d, spacing %g, along %.2f, lateral %g, asker side %d: %.2f m from the route',
-                                    headingDeg, spacing, alongFraction, lateral, askerSide, clear)
+                                    'heading %d, spacing %g, along %.2f, lateral %g, asker side %d: %.2f m from the route after %.1f m',
+                                    headingDeg, spacing, alongFraction, lateral, askerSide, clear, distance)
                             end
-                            if clear <= AutoDrive.WAITING_NETWORK_CLEARANCE then
+                            if ADGraphManager:getNearestWayPointWithin({x = tx, z = tz},
+                                    AutoDrive.WAITING_NETWORK_CLEARANCE) ~= nil then
                                 violations = violations + 1
                             end
                         end
@@ -186,10 +249,20 @@ function Sweeps.escapeLeavesTheRoute()
             end
         end
     end
-    return violations, checked, worstCase
+    return violations, onTheNetwork, worstCase, checked
 end
 
---- And it has to open a gap for whoever asked, not close one.
+--- And it has to keep out of the asker's way.
+---
+--- Not "ends up further away", which is what this swept first and is strictly weaker than the
+--- property: a run that drives straight THROUGH the asker and out the far side ends up further away
+--- too, and that is precisely the failure the side choice exists to prevent. What matters is the
+--- closest the run ever comes, over the whole run rather than at its end.
+---
+--- The bound is the smaller of where we started and the passing clearance. Starting closer than the
+--- clearance is allowed - we cannot teleport - but the run must not make it worse; and a run that
+--- keeps a full clearance is far enough away that which side it took is nobody's business, which is
+--- what lets the rule prefer the side that also leaves the route.
 function Sweeps.escapeOpensAGapForTheAsker()
     local violations, worst, worstCase = 0, math.huge, nil
     local checked = 0
@@ -199,9 +272,14 @@ function Sweeps.escapeOpensAGapForTheAsker()
             local dx, dz = Sweeps.installRoute(headingDeg, spacing, 40)
             local px, pz = -dz, dx
             for _, alongFraction in ipairs({ 0, 0.3, 0.6, 0.95 }) do
-                for _, lateral in ipairs({ -5, -1, -0.2, 0.2, 1, 5 }) do
-                    for _, askerLateral in ipairs({ -9, -3, 3, 9 }) do
-                        for _, askerAlong in ipairs({ -6, 0, 6 }) do
+                for _, lateral in ipairs({ -5, -1, -0.2, 0.2, 1, 5, 9 }) do
+                    -- including an asker nearly in line with us, where the sign of the across
+                    -- component is decided by centimetres, and one far enough along the route that
+                    -- the along component dwarfs it - the queue geometry, which the first grid had
+                    -- no cell for at all
+                    for _, askerLateral in ipairs({ -9, -3, -0.3, 0.3, 3, 9,
+                                                    lateral - 0.2, lateral + 0.2 }) do
+                        for _, askerAlong in ipairs({ -25, -15, -6, 0, 6, 15, 25 }) do
                             local along = 20 * spacing + alongFraction * spacing
                             local x = dx * along + px * lateral
                             local z = dz * along + pz * lateral
@@ -209,22 +287,22 @@ function Sweeps.escapeOpensAGapForTheAsker()
                             local az = dz * (along + askerAlong) + pz * askerLateral
 
                             local task = Sweeps.parkedTask(x, z)
-                            local ex, ez = task:getEscapeDirection(x, z,
+                            local ex, ez, crossing = task:getEscapeDirection(x, z,
                                 { time = g_time, awayFromX = ax, awayFromZ = az })
                             checked = checked + 1
                             if ex ~= nil then
-                                local tx = x + ex * AutoDrive.MAKE_WAY_DISTANCE
-                                local tz = z + ez * AutoDrive.MAKE_WAY_DISTANCE
+                                local distance = WaitForCallTask.stepAsideDistance(crossing)
                                 local before = MathUtil.vector2Length(ax - x, az - z)
-                                local after = MathUtil.vector2Length(ax - tx, az - tz)
-                                local gained = after - before
-                                if gained < worst then
-                                    worst = gained
+                                local closest = Sweeps.closestApproachOnRun(x, z, ex, ez, distance, ax, az)
+                                local allowed = math.min(before, WaitForCallTask.ASKER_PASSING_CLEARANCE)
+                                local slack = closest - allowed
+                                if slack < worst then
+                                    worst = slack
                                     worstCase = string.format(
-                                        'heading %d spacing %g lateral %g, asker at %g across %g along: %.1f m -> %.1f m',
-                                        headingDeg, spacing, lateral, askerLateral, askerAlong, before, after)
+                                        'heading %d spacing %g lateral %g, asker at %g across %g along: started %.1f m, passed %.1f m, allowed %.1f m',
+                                        headingDeg, spacing, lateral, askerLateral, askerAlong, before, closest, allowed)
                                 end
-                                if after <= before then
+                                if closest < allowed - 0.0001 then
                                     violations = violations + 1
                                 end
                             end
@@ -300,15 +378,28 @@ function Sweeps.lateralBudgetIsRespected()
 end
 
 --- turnAngle has to equal the rule it replaced, everywhere - not just at the four metre spacing
---- every old fixture used.
+--- every old fixture used, and not just on a route with one bend in it.
 function Sweeps.turnAngleMatchesTheOriginal(originalRule)
     local violations, checked, worstCase = 0, 0, nil
 
+    -- one bend, then several - including a switchback past the ninety degree clamp, and a pair that
+    -- cancel, which is the shape that tells a clamped sum from an unclamped one
+    local shapes = {
+        { -70 }, { -25 }, { 0 }, { 25 }, { 70 },
+        { 30, 30, 30, 30 },
+        { 40, -40, 40, -40 },
+        { 150, -100, 20 },
+        { -175, 90, -20, 60 },
+        { 120, 120, 120 },
+    }
+
     for _, spacing in ipairs({ 1, 2, 4, 6, 12 }) do
-        for _, angleDeg in ipairs({ -70, -25, 0, 25, 70 }) do
+        for _, angles in ipairs(shapes) do
             for _, speed in ipairs({ 0, 3, 5, 10, 20, 40 }) do
                 for _, backOff in ipairs({ 0.1, 0.5, 0.95 }) do
-                    local points = Sweeps.vertexRoute(spacing, angleDeg, 6)
+                    local points = #angles == 1
+                        and Sweeps.vertexRoute(spacing, angles[1], 6)
+                        or Sweeps.multiVertexRoute(spacing, angles, 6)
                     local m = Sweeps.moduleOnRoute(points, speed)
                     m.wayPoints = points
                     m.currentWayPoint = 6
@@ -321,8 +412,8 @@ function Sweeps.turnAngleMatchesTheOriginal(originalRule)
                     if math.abs(m.turnAngle - expected) > 0.0001 then
                         violations = violations + 1
                         worstCase = worstCase or string.format(
-                            'spacing %g, vertex %d deg, %d km/h, %.2f back: %.4f against %.4f',
-                            spacing, angleDeg, speed, backOff, m.turnAngle, expected)
+                            'spacing %g, vertices %s, %d km/h, %.2f back: %.4f against %.4f',
+                            spacing, table.concat(angles, '/'), speed, backOff, m.turnAngle, expected)
                     end
                 end
             end
@@ -346,8 +437,7 @@ function Sweeps.exactlyOneYields()
 
                 local function yieldsFor(vehicle)
                     g_updateLoopIndex = (AutoDrive.PERF_FRAMES - vehicle.id) % AutoDrive.PERF_FRAMES
-                    local module = setmetatable({ vehicle = vehicle }, { __index = ADCollisionDetectionModule })
-                    return module:detectAdTrafficOffRoute()
+                    return ADCollisionDetectionModule:new(vehicle):detectAdTrafficOffRoute()
                 end
 
                 local aYields, bYields = yieldsFor(a), yieldsFor(b)
@@ -364,32 +454,116 @@ function Sweeps.exactlyOneYields()
     return violations, checked, worstCase
 end
 
---- The reverse controller must never be handed a target it refuses. Calls the production decision,
---- so putting the historical rule back shows up here.
+--- What the reverse controller refuses: more than this off the reverse node's rear axis and
+--- checkWayPointReached returns true without commanding drive or brake.
+Sweeps.REVERSE_REFUSAL_DEG = 80
+
+--- And what the sweep demands, which is less. A target that starts ON the refusal threshold is one
+--- the manoeuvre cannot finish: backing towards something off to the side SHRINKS the astern
+--- distance while the sideways offset stays, so the angle only grows from wherever it starts. The
+--- target has to begin far enough inside the acceptance that the whole reverse stays inside it.
+---
+--- Ten per cent of the threshold is the margin. It is a judgement, and worth knowing how much it
+--- binds: at the shipped cone of 0.4 the worst target in this sweep sits at 56.6 deg, and the bound
+--- is first crossed at a cone of 0.6. So it catches the cone being widened by half or dropped
+--- outright, and would not notice it moving from 0.4 to 0.5. A tolerance that binds, not a tight one.
+Sweeps.REVERSE_DRIVABLE_DEG = Sweeps.REVERSE_REFUSAL_DEG * 0.9
+
+--- The reverse controller must never be handed a target it cannot drive to. Calls the production
+--- decision, so putting the historical rule back shows up here.
+---
+--- Swept over the whole range of step-aside distances, not just the nominal one. At eighteen metres
+--- the astern margin ALONE caps the angle at atan(18/4) = 77.5 deg, under the controller's own 80 deg
+--- refusal - so a check at that threshold could not fire whatever the cone was set to, and the whole
+--- suite stayed green with the cone widened twenty-five fold or deleted outright. Two things fix
+--- that: a crossing run reaches twice the distance, where a target abeam sits at 83 deg, and the
+--- bound is the one the manoeuvre needs rather than the one the controller happens to reject at.
 function Sweeps.reverseTargetsAreDrivableTo()
     local violations, chosen, worstCase = 0, 0, nil
+    local worst = 0
 
     for _, trainLength in ipairs({ 0, 4, 7, 9, 14, 20 }) do
-        for bearingDeg = 0, 355, 5 do
-            local rad = math.rad(bearingDeg)
-            local localX = math.sin(rad) * AutoDrive.MAKE_WAY_DISTANCE
-            local localZ = math.cos(rad) * AutoDrive.MAKE_WAY_DISTANCE
+        for _, crossing in ipairs({ 0, 4, 8, 10, 16, 30 }) do
+            local distance = WaitForCallTask.stepAsideDistance(crossing)
+            for bearingDeg = 0, 355, 5 do
+                local rad = math.rad(bearingDeg)
+                local localX = math.sin(rad) * distance
+                local localZ = math.cos(rad) * distance
 
-            if WaitForCallTask.shouldReverseTo(localX, localZ, trainLength) then
-                chosen = chosen + 1
-                -- the controller's own view, from the reverse node trainLength behind the root
-                local fromNodeX, fromNodeZ = localX, localZ + trainLength
-                local angle = math.deg(math.atan2(math.abs(fromNodeX), -fromNodeZ))
-                if angle > 80 then
-                    violations = violations + 1
-                    worstCase = worstCase or string.format(
-                        'train %g m, bearing %d deg: %.1f deg off the rear axis, which it refuses',
-                        trainLength, bearingDeg, angle)
+                if WaitForCallTask.shouldReverseTo(localX, localZ, trainLength) then
+                    chosen = chosen + 1
+                    -- the controller's own view, from the reverse node trainLength behind the root
+                    local fromNodeX, fromNodeZ = localX, localZ + trainLength
+                    local angle = math.deg(math.atan2(math.abs(fromNodeX), -fromNodeZ))
+                    if angle > worst then
+                        worst = angle
+                        worstCase = string.format(
+                            'train %g m, %.1f m out, bearing %d deg: %.1f deg off the rear axis',
+                            trainLength, distance, bearingDeg, angle)
+                    end
+                    if angle > Sweeps.REVERSE_DRIVABLE_DEG then
+                        violations = violations + 1
+                    end
                 end
             end
         end
     end
     return violations, chosen, worstCase
+end
+
+--- Crossing the route is a cost, and it is only worth paying to get out of the asker's way.
+---
+--- The side we are already on is the one that leaves the route; the other one has to drive back
+--- across it first. The rule this replaced flipped on the bare sign of a dot product, so an asker
+--- twenty centimetres to one side and twenty-five metres along the route - which passes at
+--- twenty-five metres whichever way we go - forced the crossing anyway. Nothing measured that,
+--- because both sides satisfy every invariant about the asker: the waste is the whole of the harm,
+--- so the waste is what has to be asserted.
+function Sweeps.escapeDoesNotCrossWithoutReason()
+    local violations, checked, worstCase = 0, 0, nil
+
+    for _, headingDeg in ipairs({ 0, 33, 90, 155, 270 }) do
+        for _, spacing in ipairs({ 1, 4, 12 }) do
+            local dx, dz = Sweeps.installRoute(headingDeg, spacing, 40)
+            local px, pz = -dz, dx
+            for _, alongFraction in ipairs({ 0, 0.3, 0.6, 0.95 }) do
+                -- only where our own side is well defined; under half a metre from the line
+                -- getEscapeDirection takes its other branch and neither side is "ours"
+                for _, lateral in ipairs({ -9, -5, -1, 1, 5, 9 }) do
+                    for _, askerLateral in ipairs({ -9, -3, -0.3, 0.3, 3, 9,
+                                                    lateral - 0.2, lateral + 0.2 }) do
+                        for _, askerAlong in ipairs({ -25, -15, -6, 0, 6, 15, 25 }) do
+                            local along = 20 * spacing + alongFraction * spacing
+                            local x = dx * along + px * lateral
+                            local z = dz * along + pz * lateral
+                            local ax = dx * (along + askerAlong) + px * askerLateral
+                            local az = dz * (along + askerAlong) + pz * askerLateral
+
+                            local side = lateral > 0 and 1 or -1
+                            local ownX, ownZ = px * side, pz * side
+                            local ownPass = Sweeps.closestApproachOnRun(x, z, ownX, ownZ,
+                                AutoDrive.MAKE_WAY_DISTANCE, ax, az)
+
+                            local task = Sweeps.parkedTask(x, z)
+                            local ex, ez, crossing = task:getEscapeDirection(x, z,
+                                { time = g_time, awayFromX = ax, awayFromZ = az })
+                            checked = checked + 1
+                            -- a hair of slack, because the sweep samples the run and the rule solves
+                            -- it, and the two need not agree to the last centimetre on the boundary
+                            if ex ~= nil and ownPass >= WaitForCallTask.ASKER_PASSING_CLEARANCE + 0.05
+                                and (crossing or 0) > 0 then
+                                violations = violations + 1
+                                worstCase = worstCase or string.format(
+                                    'heading %d spacing %g lateral %g, asker at %g across %g along: own side passes at %.1f m and it crossed anyway',
+                                    headingDeg, spacing, lateral, askerLateral, askerAlong, ownPass)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return violations, checked, worstCase
 end
 
 --- getHighestApproachingAngle exactly as it was before it was folded into the corner scan:

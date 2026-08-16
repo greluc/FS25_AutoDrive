@@ -14,6 +14,11 @@ function ADCollisionDetectionModule:new(vehicle)
     o.reverseSectionClear.elapsedTime = 20000
     o.detectedCollision = false
     o.lastReverseCheck = false
+    o.reverseTrafficVehicle = nil
+    -- Everyone we have already waited the full cap on, and the scan that last saw each of them still
+    -- in conflict. Weak keys, so a vehicle that leaves the game is not held alive by this.
+    o.offRouteYieldGaveUpOn = setmetatable({}, {__mode = "k"})
+    o.offRouteYieldScan = 0
     return o
 end
 
@@ -125,10 +130,19 @@ function ADCollisionDetectionModule:detectAdTrafficOffRoute()
         return self:releaseOffRouteYield()
     end
 
-    -- Whether we stepped over the partner we have already given up on. Remembered across the scan,
+    -- Whether we stepped over a partner we have already given up on. Remembered across the scan,
     -- because the release at the bottom would otherwise clear the give-up and the next gate frame
     -- would start the whole wait again - a cap that restarts is not a cap.
+    --
+    -- One entry per vehicle, not one slot: with two of them in the way - which is the multi-unloader
+    -- case this scan exists for - a single slot is overwritten by the second give-up, so the first
+    -- vehicle is met as a stranger again and charged another full timeout, then the second, and the
+    -- two of them alternate for as long as they keep shuffling about. Each entry carries the scan
+    -- that last saw it still in conflict, so partners are forgiven individually as they clear.
     local skippedGivenUpPartner = false
+    local gaveUpOn = self.offRouteYieldGaveUpOn
+    self.offRouteYieldScan = (self.offRouteYieldScan or 0) + 1
+    local thisScan = self.offRouteYieldScan
 
     local ownX, _, ownZ = getWorldTranslation(self.vehicle.components[1].node)
     -- Nothing beyond this can possibly share a point with us: getUpcomingPathPoints seeds from each
@@ -174,9 +188,10 @@ function ADCollisionDetectionModule:detectAdTrafficOffRoute()
                     end
                 end
 
-                if ownBest ~= nil and otherBest ~= nil and other == self.offRouteYieldGaveUpOn then
+                if ownBest ~= nil and otherBest ~= nil and gaveUpOn[other] ~= nil then
                     -- already waited the full cap on this one and drove on; it does not get to stop
                     -- us again until the conflict has genuinely cleared
+                    gaveUpOn[other] = thisScan
                     skippedGivenUpPartner = true
                 elseif ownBest ~= nil and otherBest ~= nil then
                     local weYield = ownBest > otherBest
@@ -194,7 +209,17 @@ function ADCollisionDetectionModule:detectAdTrafficOffRoute()
     if not skippedGivenUpPartner then
         -- nothing left that conflicts with us, so whoever we gave up on earlier is forgiven and may
         -- stop us again next time. Kept out of releaseOffRouteYield, which the give-up itself calls.
-        self.offRouteYieldGaveUpOn = nil
+        for vehicle in pairs(gaveUpOn) do
+            gaveUpOn[vehicle] = nil
+        end
+    else
+        -- at least one is still in the way, so the rest of them are forgiven individually: an entry
+        -- nobody marked this time round belongs to a vehicle that has gone or moved out of conflict.
+        for vehicle, seenInScan in pairs(gaveUpOn) do
+            if seenInScan ~= thisScan then
+                gaveUpOn[vehicle] = nil
+            end
+        end
     end
     return self:releaseOffRouteYield()
 end
@@ -257,7 +282,7 @@ function ADCollisionDetectionModule:holdOffRouteYield(other, ownDistance, otherD
         -- recorded AFTER that release, which knows nothing about it, so the next gate frame steps
         -- over this vehicle rather than starting the whole wait afresh.
         self:releaseOffRouteYield()
-        self.offRouteYieldGaveUpOn = other
+        self.offRouteYieldGaveUpOn[other] = self.offRouteYieldScan
         return false
     end
 
@@ -420,6 +445,7 @@ function ADCollisionDetectionModule:detectTrafficOnUpcomingReverseSection()
         -- offset by vehicle id, see detectObstacle
         if ((g_updateLoopIndex + self.vehicle.id) % AutoDrive.PERF_FRAMES == 0) then
             self.lastReverseCheck = false
+            self.reverseTrafficVehicle = nil
             local idToCheck = 1
 
             if wayPoints[currentWayPoint + idToCheck] ~= nil and wayPoints[currentWayPoint + idToCheck + 1] ~= nil then
@@ -506,13 +532,25 @@ function ADCollisionDetectionModule:detectTrafficOnUpcomingReverseSection()
                                 end
 
                                 --print(self.vehicle.ad.stateModule:getName() .. " - detected reverse section ahead - another vehicle on it")
-                                self.trafficVehicle = other
+                                -- Its own field, not trafficVehicle. hasDetectedObstable runs this
+                                -- scan first and detectAdTrafficOnRoute a few lines later, under the
+                                -- very same conditions and the very same gate, and that one opens by
+                                -- clearing trafficVehicle - so a partner recorded here was wiped in
+                                -- the same frame, every time, and this vehicle told everyone asking
+                                -- that nothing was holding it up. The one thing keeping two vehicles
+                                -- from waiting for each other is that check reading a blocked
+                                -- neighbour as blocked.
+                                self.reverseTrafficVehicle = other
                                 self.lastReverseCheck = true
                             end
                         end
                     end
                 end
             end
+
+            -- What this frame actually found. Falling through to the return below instead threw the
+            -- freshly computed answer away and left the block to the cached flag on the next frame.
+            return self.lastReverseCheck
         else
 
             if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_SENSORINFO) then
@@ -523,20 +561,33 @@ function ADCollisionDetectionModule:detectTrafficOnUpcomingReverseSection()
 
             return self.lastReverseCheck
         end
+    else
+        -- The same mirror detectAdTrafficOnRoute has, and for the same reason. The flag is recomputed
+        -- only inside the gate branch above, so one left standing at true survives the vehicle being
+        -- switched off, moved, or handed a path-finder route - and rejoining the network on any of
+        -- the nineteen non-gate frames in twenty then reads that stale true, resets the ten second
+        -- all-clear timer and parks the vehicle for ten seconds with nothing anywhere near it.
+        self.lastReverseCheck = false
+        self.reverseTrafficVehicle = nil
     end
 
     return false
 end
 
+--- Whoever is holding this vehicle up, from any of the three scans that can be holding it. Read by
+--- the on-route check on OTHER vehicles, which drives past a neighbour that is itself blocked rather
+--- than join it in waiting - so a scan whose partner is not reported here cannot be seen from
+--- outside, and both vehicles wait for each other.
 function ADCollisionDetectionModule:getDetectedVehicle()
 
     if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_SENSORINFO) then
-        AutoDrive.debugMsg(self.vehicle, "CDM: getDetectedVehicle self.trafficVehicle %s"
+        AutoDrive.debugMsg(self.vehicle, "CDM: getDetectedVehicle self.trafficVehicle %s reverse %s"
         , tostring(self.trafficVehicle and self.trafficVehicle.getName and self.trafficVehicle:getName() or "nil")
+        , tostring(self.reverseTrafficVehicle and self.reverseTrafficVehicle.getName and self.reverseTrafficVehicle:getName() or "nil")
         )
     end
 
-    return self.trafficVehicle
+    return self.trafficVehicle or self.reverseTrafficVehicle
 end
 
 function ADCollisionDetectionModule:checkReverseCollision()

@@ -40,22 +40,35 @@ function TestSweeps:setUp()
 end
 
 --- Stepping aside has to end up clear of the route, from anywhere along it, on either side, at any
---- spacing, whichever way the route runs, and wherever the asker stands.
+--- spacing, whichever way the route runs, and wherever the asker stands. Measured where the
+--- manoeuvre actually ends, and only for the configurations that started on the network - further
+--- out there is no route to take a bearing from and a different rule applies.
 function TestSweeps:testTheStepAsideAlwaysLeavesTheRoute()
-    local violations, checked, worstCase = Sweeps.escapeLeavesTheRoute()
+    local violations, onNetwork, worstCase, checked = Sweeps.escapeLeavesTheRoute()
 
     lu.assertTrue(checked > 1000, string.format('only %d configurations swept', checked))
+    lu.assertTrue(onNetwork > 1000, string.format('only %d of them started on the network', onNetwork))
     lu.assertEquals(violations, 0, string.format('%d of %d configurations stayed on the route, worst: %s',
-        violations, checked, tostring(worstCase)))
+        violations, onNetwork, tostring(worstCase)))
 end
 
---- And it has to open a gap for whoever asked. Leaving the route while driving AT the asker frees
---- nothing and stalls on its own front sensor.
-function TestSweeps:testTheStepAsideOpensAGapForTheAsker()
+--- And it has to keep out of the asker's way for the WHOLE run. Driving straight through it and out
+--- the far side ends up further away and frees nothing - it stalls on its own front sensor first.
+function TestSweeps:testTheStepAsideKeepsClearOfTheAsker()
     local violations, checked, worstCase = Sweeps.escapeOpensAGapForTheAsker()
 
     lu.assertTrue(checked > 500, string.format('only %d configurations swept', checked))
     lu.assertEquals(violations, 0, string.format('%d of %d closed on the asker, worst: %s',
+        violations, checked, tostring(worstCase)))
+end
+
+--- And it must not pay the cost of crossing the route when the side it is already on serves the
+--- asker just as well.
+function TestSweeps:testTheStepAsideDoesNotCrossTheRouteForNothing()
+    local violations, checked, worstCase = Sweeps.escapeDoesNotCrossWithoutReason()
+
+    lu.assertTrue(checked > 500, string.format('only %d configurations swept', checked))
+    lu.assertEquals(violations, 0, string.format('%d of %d crossed for no gain, worst: %s',
         violations, checked, tostring(worstCase)))
 end
 
@@ -94,8 +107,9 @@ end
 function TestSweeps:testEveryReverseTargetIsOneTheControllerWillDriveTo()
     local violations, chosen, worstCase = Sweeps.reverseTargetsAreDrivableTo()
 
-    lu.assertTrue(chosen > 0, 'the sweep has to actually choose reverse sometimes, or it proves nothing')
-    lu.assertEquals(violations, 0, string.format('%d of %d reverse choices would be refused: %s',
+    lu.assertTrue(chosen > 100, string.format(
+        'only %d reverse choices swept - the sweep has to choose reverse often enough to prove anything', chosen))
+    lu.assertEquals(violations, 0, string.format('%d of %d reverse choices are not drivable to: %s',
         violations, chosen, tostring(worstCase)))
 end
 

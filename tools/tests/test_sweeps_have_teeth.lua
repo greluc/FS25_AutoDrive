@@ -144,6 +144,59 @@ function TestSweepsHaveTeeth:testTheAskerSweepRejectsTheVersionThatIgnoresTheAsk
         'driving straight at the asker passed the asker sweep, so that sweep proves nothing')
 end
 
+--- Commit 2761361: the side was flipped whenever the asker had ANY positive component along it,
+--- which is true for an asker essentially in line with us far down the route - where both sides
+--- serve it identically and only one keeps us off the network.
+local function sideOnTheRawDotSign(self, acrossX, acrossZ, x, z, request)
+    if request == nil or request.awayFromX == nil or request.awayFromZ == nil then
+        return acrossX, acrossZ
+    end
+    local toAskerX, toAskerZ = request.awayFromX - x, request.awayFromZ - z
+    if (acrossX * toAskerX + acrossZ * toAskerZ) > 0 then
+        return -acrossX, -acrossZ
+    end
+    return acrossX, acrossZ
+end
+
+--- This one is worth the extra sweep, and worth recording WHY the other two cannot see it.
+---
+--- The raw sign rule never drives at the asker - flipping away from it is always safe for the asker -
+--- so the asker sweep is satisfied. And since a crossing run is now lengthened by what it has to
+--- undo, it still ends up clear of the route, so the route sweep is satisfied too. Its whole harm is
+--- the crossing itself: a longer run, across the very line the asker wants, bought for nothing. A
+--- defect that costs only waste needs a sweep that measures waste.
+function TestSweepsHaveTeeth:testOnlyTheCrossingSweepCatchesTheRawSignRule()
+    local routeViolations = withReplaced(WaitForCallTask, 'sideAwayFrom', sideOnTheRawDotSign,
+        function() return Sweeps.escapeLeavesTheRoute() end)
+    local askerViolations = withReplaced(WaitForCallTask, 'sideAwayFrom', sideOnTheRawDotSign,
+        function() return Sweeps.escapeOpensAGapForTheAsker() end)
+    local crossViolations = withReplaced(WaitForCallTask, 'sideAwayFrom', sideOnTheRawDotSign,
+        function() return Sweeps.escapeDoesNotCrossWithoutReason() end)
+
+    lu.assertEquals(routeViolations, 0,
+        'the raw sign rule does still leave the route - if this caught it, the sweeps are not independent')
+    lu.assertEquals(askerViolations, 0,
+        'and it never drives at the asker, so the asker sweep cannot be the one that catches it')
+    lu.assertTrue(crossViolations > 0,
+        'so the crossing sweep has to catch it, or nothing in the suite covers the rule at all')
+end
+
+--- Commit 2761361 again: the run was a flat eighteen metres whichever way it went, so a crossing
+--- from nine metres out ended nine metres out on the other side - still on the network it was
+--- clearing. Only visible once the route sweep measures where the manoeuvre ends rather than where
+--- its target sits, and only in the lateral band that sweep used not to reach.
+local function flatStepAsideDistance()
+    return AutoDrive.MAKE_WAY_DISTANCE
+end
+
+function TestSweepsHaveTeeth:testTheRouteSweepRejectsTheUnextendedCrossingRun()
+    local violations = withReplaced(WaitForCallTask, 'stepAsideDistance', flatStepAsideDistance,
+        function() return Sweeps.escapeLeavesTheRoute() end)
+
+    lu.assertTrue(violations > 0,
+        'a flat eighteen metre crossing run left the route everywhere, which it does not')
+end
+
 --- And the fixture the old tests used - exactly abeam a way point - lets the broken rule through.
 --- This is the entire explanation for the rounds of green tests over wrong code.
 function TestSweepsHaveTeeth:testTheOldPointFixtureAcceptsTheBrokenVersion()
@@ -205,6 +258,79 @@ function TestSweepsHaveTeeth:testTheTurnAngleSweepRejectsTheTestFirstVersion()
 
     lu.assertTrue(violations > 0,
         'testing the window before accumulating passed the sweep, so the sweep proves nothing')
+end
+
+--- The two mutations above swap the PRODUCTION rule. These two swap the transcription it is compared
+--- against, which is the only way to ask whether the fixture puts a given part of the rule on the
+--- compared path at all.
+---
+--- It did not, until this commit. Every route the sweep built had exactly one bend in it, and that
+--- bend was the first triple the scan visits - so the window rules and the ninety degree clamp only
+--- ever contributed zeros to the compared total, and the whole suite stayed green with the clamp
+--- deleted outright. A fixture can be swept over five spacings and six speeds and still be degenerate
+--- in the one dimension the rule lives in.
+
+--- The transcription with the clamp taken out. If no swept vertex exceeds ninety degrees, the two
+--- agree anyway and the clamp is not being compared.
+local function unclampedOriginalRule(module)
+    local wayPoints = module.wayPoints
+    local index = module:getCurrentWayPointIndex()
+    if index + 2 >= #wayPoints then
+        return 0
+    end
+    local turnAngle = 0
+    local reach = module:getCurrentLookAheadDistance()
+    local x, _, z = getWorldTranslation(module.vehicle.components[1].node)
+    local anchor = wayPoints[index]
+    local base = MathUtil.vector2Length(anchor.x - x, anchor.z - z)
+
+    local point = 1
+    while point <= ADDrivePathModule.MAXLOOKAHEADPOINTS do
+        local ahead = wayPoints[index + point]
+        if ahead == nil then
+            break
+        end
+        local current, ref = wayPoints[index + point - 1], wayPoints[index + point - 2]
+        turnAngle = turnAngle + AutoDrive.angleBetween(
+            {x = ahead.x - current.x, z = ahead.z - current.z},
+            {x = current.x - ref.x, z = current.z - ref.z})
+        if MathUtil.vector2Length(anchor.x - ahead.x, anchor.z - ahead.z) > (reach - base) then
+            break
+        end
+        point = point + 1
+    end
+    return turnAngle
+end
+
+--- And the transcription cut off after the first triple. If the fixture has only one bend and it is
+--- that triple, the two agree anyway and the window is not being compared.
+local function firstTripleOnlyRule(module)
+    local wayPoints = module.wayPoints
+    local index = module:getCurrentWayPointIndex()
+    if index + 2 >= #wayPoints then
+        return 0
+    end
+    local ahead, current, ref = wayPoints[index + 1], wayPoints[index], wayPoints[index - 1]
+    if ahead == nil or ref == nil then
+        return 0
+    end
+    return math.clamp(AutoDrive.angleBetween(
+        {x = ahead.x - current.x, z = ahead.z - current.z},
+        {x = current.x - ref.x, z = current.z - ref.z}), -90, 90)
+end
+
+function TestSweepsHaveTeeth:testTheTurnAngleFixtureActuallyReachesTheClamp()
+    local violations = Sweeps.turnAngleMatchesTheOriginal(unclampedOriginalRule)
+
+    lu.assertTrue(violations > 0,
+        'no swept route bends past ninety degrees, so the clamp is not on the compared path')
+end
+
+function TestSweepsHaveTeeth:testTheTurnAngleFixtureActuallyReachesBeyondTheFirstTriple()
+    local violations = Sweeps.turnAngleMatchesTheOriginal(firstTripleOnlyRule)
+
+    lu.assertTrue(violations > 0,
+        'every swept route has one bend and it is the first triple, so the window is not on the compared path')
 end
 
 ------------------------------------------------------------------------------------------------------------------------
@@ -310,6 +436,23 @@ function TestSweepsHaveTeeth:testTheReverseSweepRejectsTheAnythingBehindVersion(
 
     lu.assertTrue(violations > 0,
         'reversing to anything behind produced no refused target, so the sweep proves nothing')
+end
+
+--- The rule has two clauses and the mutation above removes both, so passing it said nothing about
+--- either one on its own. The astern margin alone bounded the angle below the sweep's threshold at
+--- every distance the sweep used, so the cone was pinned by nothing in the entire suite: it could be
+--- widened twenty-five fold, or deleted, with 552 tests green.
+function TestSweepsHaveTeeth:testTheReverseSweepRejectsTheConeBeingDroppedOnItsOwn()
+    local widened = withReplaced(WaitForCallTask, 'REVERSE_CONE', 10,
+        function() return Sweeps.reverseTargetsAreDrivableTo() end)
+    local gone = withReplaced(WaitForCallTask, 'shouldReverseTo',
+        function(targetLocalX, targetLocalZ, trainLength)
+            return targetLocalZ < -((trainLength or 0) + WaitForCallTask.REVERSE_ASTERN_MARGIN)
+        end,
+        function() return Sweeps.reverseTargetsAreDrivableTo() end)
+
+    lu.assertTrue(widened > 0, 'a cone widened twenty-five fold passed the sweep, so the cone is unconstrained')
+    lu.assertTrue(gone > 0, 'the cone clause can be deleted and the sweep still passes')
 end
 
 os.exit(lu.LuaUnit.run())

@@ -40,6 +40,29 @@ WaitForCallTask.MAKE_WAY_TIMEOUT = 20000
 WaitForCallTask.REVERSE_ASTERN_MARGIN = 4
 WaitForCallTask.REVERSE_CONE = 0.4
 
+--- How far past the network clearance a crossing run aims, so that arriving slightly short of the
+--- target still ends up out of the way.
+WaitForCallTask.CLEARANCE_MARGIN = 2
+
+--- How far to step aside, given how much of the offset we already have the chosen side has to undo
+--- before it gains anything.
+---
+--- A run that crosses the line spends that offset first: nine metres out on one side, eighteen
+--- across, and it ends nine metres out on the other - the same distance from the very route it was
+--- asked to clear. So a crossing run is lengthened by what it has to undo. Capped, because the job
+--- is to step aside, not to drive off the field.
+---
+--- Its own function so a sweep can drive it rather than restate it.
+function WaitForCallTask.stepAsideDistance(crossing)
+    if (crossing or 0) <= 0 then
+        return AutoDrive.MAKE_WAY_DISTANCE
+    end
+    return math.min(
+        math.max(AutoDrive.MAKE_WAY_DISTANCE,
+            crossing + AutoDrive.WAITING_NETWORK_CLEARANCE + WaitForCallTask.CLEARANCE_MARGIN),
+        AutoDrive.MAKE_WAY_DISTANCE * 2)
+end
+
 --- Whether a target at these vehicle-local coordinates is one to reverse to.
 ---
 --- Astern of the WHOLE train and near enough dead astern to be driven to. A train longer than the
@@ -113,6 +136,26 @@ function WaitForCallTask:isParkedOnItsOwnMarker()
     return MathUtil.vector2Length(wayPoint.x - x, wayPoint.z - z) < AutoDrive.WAITING_NETWORK_CLEARANCE
 end
 
+--- The way point we are standing on, if we are standing on one. nil means we are out of the way.
+function WaitForCallTask:nearestWayPointToUs()
+    local x, _, z = getWorldTranslation(self.vehicle.components[1].node)
+    -- reused, so the query does not allocate a point per call
+    local query = self.networkQueryPoint
+    if query == nil then
+        query = {x = 0, z = 0}
+        self.networkQueryPoint = query
+    end
+    query.x, query.z = x, z
+    return ADGraphManager:getNearestWayPointWithin(query, AutoDrive.WAITING_NETWORK_CLEARANCE)
+end
+
+--- Whether we are out of the way, by the same measure that decides we are in it. The two have to be
+--- the same measure: a manoeuvre that reports success in a spot checkParkedOnNetwork calls parked
+--- sends the vehicle straight back out again, for one of the two attempts it is allowed.
+function WaitForCallTask:isClearOfTheRoute()
+    return self:nearestWayPointToUs() == nil
+end
+
 --- Nobody has to complain for a spot to be a bad one. A vehicle that comes to rest on the way point
 --- network is standing on somebody's route - on many fields a collection route runs along the inside
 --- of the border, all the way round to the exit - and every full trailer heading that way has to get
@@ -143,15 +186,7 @@ function WaitForCallTask:checkParkedOnNetwork()
         return
     end
 
-    local x, _, z = getWorldTranslation(self.vehicle.components[1].node)
-    -- reused, so the query does not allocate a point per call
-    local query = self.networkQueryPoint
-    if query == nil then
-        query = {x = 0, z = 0}
-        self.networkQueryPoint = query
-    end
-    query.x, query.z = x, z
-    local wayPoint = ADGraphManager:getNearestWayPointWithin(query, AutoDrive.WAITING_NETWORK_CLEARANCE)
+    local wayPoint = self:nearestWayPointToUs()
     if wayPoint == nil then
         return
     end
@@ -186,20 +221,53 @@ end
 ---
 --- Only when there is no route nearby does the asker's own position become the best available
 --- direction, and there the point IS the thing to get away from.
+--- How close the step-aside may pass whoever asked before the far side is worth the crossing.
+---
+--- Roughly a vehicle's width plus the reach of the front sensor: nearer than this and the sensor
+--- stops the manoeuvre dead, further and the asker is simply somewhere else on the field.
+WaitForCallTask.ASKER_PASSING_CLEARANCE = 6
+
+--- How close a straight run of `distance` metres in direction (dirX, dirZ) passes a point at
+--- (toX, toZ), both measured from where the run starts. Clamped to the run, so a point behind the
+--- start or beyond the end is measured from the end that is actually driven.
+---
+--- Its own function so a sweep can drive it rather than restate it.
+function WaitForCallTask.closestApproachTo(dirX, dirZ, toX, toZ, distance)
+    local along = toX * dirX + toZ * dirZ
+    along = math.max(0, math.min(distance, along))
+    return MathUtil.vector2Length(toX - along * dirX, toZ - along * dirZ)
+end
+
 --- Which of the two ways across the route to take.
 ---
 --- Leaving the route is only half the job; the other half is opening a gap for whoever asked. The
 --- perpendicular has two useful signs, and taking the one our own lateral offset happens to give
 --- means that when the asker is on that same side we drive straight AT it - eighteen metres, past
 --- and beyond it - and the front sensor then stalls the manoeuvre for its whole timeout while the
---- asker has already spent its one ask. Which side that lands on is otherwise pure luck of where the
---- two vehicles were standing.
+--- asker has already spent its one ask.
+---
+--- But the first rule for that flipped on the bare sign of the dot product, which asks whether we
+--- close on the asker at ANY point of the run - true for an asker twenty centimetres to one side and
+--- twenty-five metres along the route, where the run passes it at twenty-five metres and both signs
+--- serve it exactly as well. That centimetre then decided an eighteen metre manoeuvre, and half the
+--- time it decided on the side that crosses the route and parks back on it. So the question is not
+--- which way the asker lies but how close we would actually pass it: the side we are already on is
+--- the one that leaves the route, and it is given up only when the run would come near the asker,
+--- and only for a side that genuinely passes wider.
 function WaitForCallTask:sideAwayFrom(acrossX, acrossZ, x, z, request)
     if request == nil or request.awayFromX == nil or request.awayFromZ == nil then
         return acrossX, acrossZ
     end
     local toAskerX, toAskerZ = request.awayFromX - x, request.awayFromZ - z
-    if (acrossX * toAskerX + acrossZ * toAskerZ) > 0 then
+    local distance = AutoDrive.MAKE_WAY_DISTANCE
+
+    local ownSide = WaitForCallTask.closestApproachTo(acrossX, acrossZ, toAskerX, toAskerZ, distance)
+    if ownSide >= WaitForCallTask.ASKER_PASSING_CLEARANCE then
+        return acrossX, acrossZ
+    end
+
+    local farSide = WaitForCallTask.closestApproachTo(-acrossX, -acrossZ, toAskerX, toAskerZ, distance)
+    if farSide > ownSide then
         return -acrossX, -acrossZ
     end
     return acrossX, acrossZ
@@ -238,7 +306,11 @@ function WaitForCallTask:getEscapeDirection(x, z, request)
                     -- standing on the line itself, so neither side is further from it than the other
                     acrossX, acrossZ = -routeZ, routeX
                 end
-                return self:sideAwayFrom(acrossX, acrossZ, x, z, request)
+                local dirX, dirZ = self:sideAwayFrom(acrossX, acrossZ, x, z, request)
+                -- How much of the offset we already have this direction has to undo before it buys
+                -- any clearance at all. Zero unless the chosen side crosses the line.
+                local crossing = -(offsetX * dirX + offsetZ * dirZ)
+                return dirX, dirZ, math.max(0, crossing)
             end
         end
     end
@@ -265,14 +337,17 @@ function WaitForCallTask:startMakingWay()
     end
 
     local sx, sy, sz = getWorldTranslation(self.vehicle.components[1].node)
-    local dx, dz = self:getEscapeDirection(sx, sz, request)
+    local dx, dz, crossing = self:getEscapeDirection(sx, sz, request)
     if dx == nil then
         AutoDrive.clearMakeWayRequest(self.vehicle)
         return
     end
 
-    local tx = sx + dx * AutoDrive.MAKE_WAY_DISTANCE
-    local tz = sz + dz * AutoDrive.MAKE_WAY_DISTANCE
+    local distance = WaitForCallTask.stepAsideDistance(crossing)
+    self.makeWayDistance = distance
+
+    local tx = sx + dx * distance
+    local tz = sz + dz * distance
     local ty = getTerrainHeightAtWorldPos(g_currentMission.terrainRootNode, tx, 300, tz)
     self.makeWayTarget = { x = tx, y = ty, z = tz }
 
@@ -300,10 +375,18 @@ function WaitForCallTask:updateMakingWay(dt)
     local timedOut = self.makeWayTimer:timer(true, WaitForCallTask.MAKE_WAY_TIMEOUT, dt)
     local x, _, z = getWorldTranslation(self.vehicle.components[1].node)
     local moved = MathUtil.vector2Length(x - self.makeWayStart.x, z - self.makeWayStart.z)
+    local distance = self.makeWayDistance or AutoDrive.MAKE_WAY_DISTANCE
 
-    -- Far enough counts as done well before the target is reached: the spot is free once we are
-    -- out of it, and insisting on the full distance would walk the vehicle into the next problem.
-    if timedOut or moved >= (AutoDrive.MAKE_WAY_DISTANCE * 0.75) then
+    -- Far enough counts as done before the target is reached: the spot is free once we are out of
+    -- it, and insisting on the full distance would walk the vehicle into the next problem. But far
+    -- enough is not the whole of it. Three quarters of the way was once the only test, and where the
+    -- run crosses the route - which is exactly what it does when the asker is on our own side - the
+    -- vehicle ends those thirteen and a half metres on the far side of the line and still within the
+    -- clearance it was moving out of. It reported success standing in the state that had it asked to
+    -- move in the first place, and spent one of its two attempts doing it. So the early finish now
+    -- has to be somewhere the vehicle is actually clear; if it never is, the full distance and the
+    -- timeout still end the manoeuvre.
+    if timedOut or moved >= distance or (moved >= (distance * 0.75) and self:isClearOfTheRoute()) then
         self:stopMakingWay()
         return
     end
@@ -335,6 +418,7 @@ function WaitForCallTask:stopMakingWay()
     self.servedRequest = nil
     self.makeWayTarget = nil
     self.makeWayStart = nil
+    self.makeWayDistance = nil
     self.makeWayTimer:timer(false)
     self.state = WaitForCallTask.STATE_WAITING
     self.vehicle.ad.specialDrivingModule:stopVehicle()

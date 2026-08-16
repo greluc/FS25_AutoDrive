@@ -18,6 +18,9 @@ require('UtilFuncs')
 require('PathFinderUtils')
 require('CollisionDetectionUtils')
 require('AutoDriveTON')
+require('SortedQueue')
+require('PathCalculation')
+require('GraphManager')
 require('HarvestManager')
 require('CollisionDetectionModule')
 
@@ -168,10 +171,16 @@ end
 --- do not all scan on the same frame. A test that does not put the loop index on that vehicle's
 --- frame gets the cached answer instead of running the scan - and every assertFalse then passes for
 --- the wrong reason, which is how the first version of these tests fooled itself.
+--- Built through the real constructor, not by hanging a metatable on an empty table: state the
+--- module sets up for itself is state the scan is entitled to assume, and a hand-built stand-in that
+--- happens to lack it tests a module that cannot exist in the game.
+local function collisionModuleFor(vehicle)
+    return ADCollisionDetectionModule:new(vehicle)
+end
+
 local function detectsTrafficFor(vehicle)
     g_updateLoopIndex = (AutoDrive.PERF_FRAMES - vehicle.id) % AutoDrive.PERF_FRAMES
-    local o = setmetatable({}, { __index = ADCollisionDetectionModule })
-    o.vehicle = vehicle
+    local o = collisionModuleFor(vehicle)
     return o:detectAdTrafficOffRoute(), o
 end
 
@@ -189,7 +198,7 @@ function TestOffRouteLookAhead:testPathPointsAreLimitedToTheLookAhead()
     local far = {}
     for i = 1, 40 do far[i] = { x = i * 5, y = 0, z = 0 } end
     local v = unloaderOnPath(1, 0, 0, far, false)
-    local o = setmetatable({ vehicle = v }, { __index = ADCollisionDetectionModule })
+    local o = collisionModuleFor(v)
     local points, distances = o:getUpcomingPathPoints(v)
     lu.assertTrue(#points > 0)
     lu.assertTrue(#points < 40, 'the look-ahead must not walk the whole path')
@@ -396,6 +405,72 @@ function TestOffRouteLookAhead:testTheTimeoutDoesNotRearmOnTheNextFrame()
     end
 end
 
+--- Three vehicles, which is the situation this scan was written for - one harvester and two
+--- unloaders shuffling about it, with a third waiting to get in.
+---
+--- One remembered give-up is not enough for that. Giving up on the second blocker overwrote the
+--- memory of the first, so the first was met as a stranger again and charged another full ten
+--- seconds, then the second, and the two of them alternated for as long as they both kept moving
+--- without clearing. Fifty seconds in, it was still holding. A cap that restarts is not a cap, and
+--- with more than one partner a single slot always restarts.
+local function twoBlockersAheadOfUs()
+    -- we are twenty metres from the meeting point, both of them within ten
+    local us = unloaderOnPath(1, 30, 0, { { x = 40, y = 0, z = 0 }, { x = 50, y = 0, z = 0 } }, false)
+    local first = unloaderOnPath(2, 42, 0, { { x = 46, y = 0, z = 0 }, { x = 50, y = 0, z = 0 } }, false)
+    local second = unloaderOnPath(3, 50, -8, { { x = 50, y = 0, z = -4 }, { x = 50, y = 0, z = 0 } }, false)
+    return us, first, second
+end
+
+--- How long the scan holds us up over a stretch of simulated time. The per-partner clock is not the
+--- thing to assert here - it was already right - but the TOTAL, which is what a driver stuck behind
+--- two shuffling unloaders actually experiences and what nothing measured.
+local function millisecondsHeldUp(module, steps, step)
+    local held = 0
+    for _ = 1, steps do
+        g_time = g_time + step
+        if module:detectAdTrafficOffRoute() then
+            held = held + step
+        end
+    end
+    return held
+end
+
+function TestOffRouteLookAhead:testTwoBlockersCostAtMostOneCapEach()
+    local us, first, second = twoBlockersAheadOfUs()
+    self.vehicles = { us, first, second }
+
+    local yields, module = detectsTrafficFor(us)
+    lu.assertTrue(yields, 'test setup: we are further from the meeting point than either of them')
+
+    -- a full minute in which neither of them moves or clears
+    local held = millisecondsHeldUp(module, 60, 1000)
+
+    lu.assertTrue(held <= AutoDrive.AD_TRAFFIC_YIELD_TIMEOUT * 2 + 2000, string.format(
+        'held up for %d ms by two vehicles with a %d ms cap - the cap is restarting, not capping',
+        held, AutoDrive.AD_TRAFFIC_YIELD_TIMEOUT))
+    lu.assertTrue(held >= AutoDrive.AD_TRAFFIC_YIELD_TIMEOUT, string.format(
+        'test setup: it has to actually give way first, and it only held %d ms', held))
+end
+
+--- And each of them is forgiven on its own, rather than all of them waiting for the last one to go.
+function TestOffRouteLookAhead:testEachBlockerIsForgivenSeparately()
+    local us, first, second = twoBlockersAheadOfUs()
+    self.vehicles = { us, first, second }
+    local _, module = detectsTrafficFor(us)
+
+    millisecondsHeldUp(module, 60, 1000)
+    lu.assertFalse(module:detectAdTrafficOffRoute(), 'test setup: both given up on by now')
+
+    -- the first one drives off, the second stays in the way and stays given up on
+    self.vehicles = { us, second }
+    lu.assertFalse(module:detectAdTrafficOffRoute())
+
+    -- and when it comes back it is a stranger again
+    self.vehicles = { us, first, second }
+    lu.assertTrue(module:detectAdTrafficOffRoute(),
+        'a vehicle whose conflict cleared has to get the full wait again when it returns')
+end
+
 --- But once the conflict genuinely clears, that vehicle is forgiven and may stop us next time.
 function TestOffRouteLookAhead:testTheGiveUpIsForgottenWhenTheConflictClears()
     local near, far = convergingPair()
@@ -471,6 +546,126 @@ function TestOffRouteLookAhead:testTheAnswerIsHeldBetweenScanFrames()
     g_updateLoopIndex = g_updateLoopIndex + 1
     lu.assertTrue(module:detectAdTrafficOffRoute(),
         'an off-frame call must keep the last answer, not flicker back to clear')
+end
+
+------------------------------------------------------------------------------------------------------------------------
+--- 2b. The upcoming reverse section
+---
+--- Nothing in this suite ran this scan at all, and neither did anything run the real
+--- hasDetectedObstable - which is where two of its three defects lived, one of them purely in the
+--- ORDER the scans are called in.
+------------------------------------------------------------------------------------------------------------------------
+TestReverseSection = {}
+
+function TestReverseSection:setUp()
+    TestSetup.reset()
+    g_time = 10000
+    self.vehicles = nil
+    AutoDrive.getAllVehicles = function() return self.vehicles or {} end
+    AutoDrive.checkIsConnected = function() return false end
+    AutoDrive.testSettings['enableTrafficDetection'] = 0    -- the short sensor path, off
+    AutoDrive.checkForVehicleCollision = function() return false end
+end
+
+--- A route whose second segment is a reverse road: 2 leads on to 3, and 3 does not list 2 as
+--- incoming, which is exactly how ADGraphManager:isReverseRoad reads one.
+local function routeWithAReverseSection()
+    local wps = {}
+    for i = 1, 8 do
+        wps[i] = TestSetup.waypoint(i, i * 4, 0, { i + 1 }, { i - 1 })
+    end
+    wps[3].incoming = {}
+    return wps
+end
+
+local function vehicleOnNetworkRoute(id, points, currentWayPoint)
+    local v = TestSetup.vehicle()
+    v.id = id
+    v.components = { { node = 'rs' .. id } }
+    MockEngine.nodePositions['rs' .. id] = { x = id * 10, y = 0, z = 0 }
+    v.lastSpeedReal = 0.002
+    v.ad.stateModule = { isActive = function() return true end }
+    v.ad.drivePathModule = {
+        getWayPoints = function() return points, currentWayPoint end,
+        isOnRoadNetwork = function() return true end,
+    }
+    v.ad.taskModule = {
+        getActiveTask = function()
+            return { getExcludedVehiclesForCollisionCheck = function() return {} end }
+        end,
+    }
+    v.ad.sensors = {
+        frontSensorDynamicLong = {
+            getBoxShape = function()
+                return { topLeft = {}, topRight = {}, downRight = {}, downLeft = {}, y = 0 }
+            end,
+        },
+    }
+    v.ad.collisionDetectionModule = ADCollisionDetectionModule:new(v)
+    return v
+end
+
+local function blockedByAnOccupiedReverseSection()
+    local route = routeWithAReverseSection()
+    local blocked = vehicleOnNetworkRoute(1, route, 1)
+    local occupant = vehicleOnNetworkRoute(2, { route[2] }, 1)
+    return blocked, occupant
+end
+
+--- The whole point of getDetectedVehicle: another driver reads it to decide whether this one is
+--- itself blocked, and drives past instead of joining it in waiting. A vehicle held by the reverse
+--- section used to record its blocker in trafficVehicle - which detectAdTrafficOnRoute, called a few
+--- lines later in the same frame under the very same conditions and the very same gate, opens by
+--- clearing. So the write could never be read, this vehicle advertised itself as free, and the one
+--- behind it stopped and waited for a vehicle that was waiting too.
+function TestReverseSection:testTheBlockerOnTheReverseSectionIsVisibleFromOutside()
+    local blocked, occupant = blockedByAnOccupiedReverseSection()
+    self.vehicles = { blocked, occupant }
+    local module = blocked.ad.collisionDetectionModule
+
+    g_updateLoopIndex = (AutoDrive.PERF_FRAMES - blocked.id) % AutoDrive.PERF_FRAMES
+    lu.assertTrue(module:hasDetectedObstable(16), 'test setup: the reverse section has to read as blocked')
+
+    lu.assertIs(module:getDetectedVehicle(), occupant,
+        'a vehicle stopped by the reverse section that reports nothing holding it deadlocks whoever is behind it')
+end
+
+--- And the gate frame has to answer with what it just found, rather than throwing it away and
+--- leaving the block to the cached flag on the following frame.
+function TestReverseSection:testTheScanReturnsWhatTheGateFrameFound()
+    local blocked, occupant = blockedByAnOccupiedReverseSection()
+    self.vehicles = { blocked, occupant }
+    local module = blocked.ad.collisionDetectionModule
+
+    g_updateLoopIndex = (AutoDrive.PERF_FRAMES - blocked.id) % AutoDrive.PERF_FRAMES
+    lu.assertTrue(module:detectTrafficOnUpcomingReverseSection())
+end
+
+--- The mirror detectAdTrafficOnRoute has and this scan did not. The flag is recomputed only inside
+--- the gate branch while the vehicle is on the network, so one left standing at true survived the
+--- driver being switched off, moved, or handed a path-finder route - and rejoining the network on any
+--- of the nineteen non-gate frames in twenty read that stale true, reset the ten second all-clear
+--- timer, and parked the vehicle for ten seconds with nothing anywhere near it.
+function TestReverseSection:testLeavingTheNetworkClearsTheStaleBlock()
+    local blocked, occupant = blockedByAnOccupiedReverseSection()
+    self.vehicles = { blocked, occupant }
+    local module = blocked.ad.collisionDetectionModule
+
+    g_updateLoopIndex = (AutoDrive.PERF_FRAMES - blocked.id) % AutoDrive.PERF_FRAMES
+    lu.assertTrue(module:detectTrafficOnUpcomingReverseSection(), 'test setup: blocked to begin with')
+
+    blocked.ad.drivePathModule.isOnRoadNetwork = function() return false end
+    lu.assertFalse(module:detectTrafficOnUpcomingReverseSection())
+
+    -- the occupant is long gone, and the route rejoins the network on a frame that does not rescan
+    self.vehicles = { blocked }
+    blocked.ad.drivePathModule.isOnRoadNetwork = function() return true end
+    g_updateLoopIndex = g_updateLoopIndex + 1
+
+    lu.assertFalse(module:detectTrafficOnUpcomingReverseSection(),
+        'a block left over from before the vehicle went off the network costs ten seconds of standing still')
+    lu.assertNil(module:getDetectedVehicle(),
+        'and it must not still be naming the vehicle that was on the section back then')
 end
 
 ------------------------------------------------------------------------------------------------------------------------
