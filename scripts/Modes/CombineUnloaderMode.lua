@@ -868,9 +868,32 @@ end
 --- cannot see (a second unloader, a parked tractor), and anything static in a field is the
 --- pathfinder's business. Returns true whenever it cannot say otherwise, so a frame in which
 --- nothing is in the way behaves exactly as it did before this check existed.
-function CombineUnloaderMode:isChaseSideReachable(chasePos)
+--- Whether the straight line to a chase position is clear of other vehicles.
+---
+--- Throttled to one answer per PERF_FRAMES window per side, because getPipeChasePosition is called
+--- every frame from FollowCombineTask:updateStates and this was the one thing in it that is not
+--- rate limited - the eight sensor polls above it already are, through ADSensor.EXECUTION_DELAY.
+--- Holding the answer for a window is defensible because both machines move under a metre in it.
+---
+--- Keyed on the side, not on the position: a coordinate is not an identity, and any key built from
+--- one collides for mirrored positions - the left and right chase spots of a harvester are mirror
+--- images by construction, so that is the collision that would actually happen.
+function CombineUnloaderMode:isChaseSideReachable(chasePos, side)
     if chasePos == nil or self.vehicle == nil or self.combine == nil then
         return true
+    end
+
+    local bucket = math.floor(g_updateLoopIndex / AutoDrive.PERF_FRAMES)
+    if side ~= nil then
+        local cached = self.chaseReachability
+        if cached == nil then
+            cached = {}
+            self.chaseReachability = cached
+        end
+        local entry = cached[side]
+        if entry ~= nil and entry.bucket == bucket then
+            return entry.value
+        end
     end
 
     local x, _, z = getWorldTranslation(self.vehicle.components[1].node)
@@ -899,7 +922,16 @@ function CombineUnloaderMode:isChaseSideReachable(chasePos)
         DebugUtil.drawOverlapBox(centerX, centerY, centerZ, 0, angleRad, 0, halfWidth, 1.5, halfLength, r, g, b)
     end
 
-    return not self.chaseSideBlocked
+    local reachable = not self.chaseSideBlocked
+    if side ~= nil then
+        local entry = self.chaseReachability[side]
+        if entry == nil then
+            entry = {}
+            self.chaseReachability[side] = entry
+        end
+        entry.bucket, entry.value = bucket, reachable
+    end
+    return reachable
 end
 
 function CombineUnloaderMode:isChaseSideReachable_Callback(transformId)
@@ -988,10 +1020,10 @@ function CombineUnloaderMode:getPipeChasePosition(planningPhase)
             -- the answer can still change the outcome: an explicit chaseSide is the player's call and
             -- a fixed pipe chopper never uses these two positions at all. A side already ruled out
             -- cannot be ruled out twice either.
-            if (not leftBlocked) and (not self:isChaseSideReachable(leftChasePos)) then
+            if (not leftBlocked) and (not self:isChaseSideReachable(leftChasePos, AutoDrive.CHASEPOS_LEFT)) then
                 leftBlocked = true
             end
-            if (not rightBlocked) and (not self:isChaseSideReachable(rightChasePos)) then
+            if (not rightBlocked) and (not self:isChaseSideReachable(rightChasePos, AutoDrive.CHASEPOS_RIGHT)) then
                 rightBlocked = true
             end
         end
@@ -1051,9 +1083,9 @@ function CombineUnloaderMode:getPipeChasePosition(planningPhase)
         -- Same as for the chopper: the sensors belong to the harvester and cannot tell us whether we
         -- can get to the pipe side. Done before the rear chase offset is derived, so that a side we
         -- cannot reach is not the one the rear position leans towards either.
-        if self.pipeSide == AutoDrive.CHASEPOS_LEFT and (not leftBlocked) and (not self:isChaseSideReachable(sideChasePos)) then
+        if self.pipeSide == AutoDrive.CHASEPOS_LEFT and (not leftBlocked) and (not self:isChaseSideReachable(sideChasePos, AutoDrive.CHASEPOS_LEFT)) then
             leftBlocked = true
-        elseif self.pipeSide == AutoDrive.CHASEPOS_RIGHT and (not rightBlocked) and (not self:isChaseSideReachable(sideChasePos)) then
+        elseif self.pipeSide == AutoDrive.CHASEPOS_RIGHT and (not rightBlocked) and (not self:isChaseSideReachable(sideChasePos, AutoDrive.CHASEPOS_RIGHT)) then
             rightBlocked = true
         end
 

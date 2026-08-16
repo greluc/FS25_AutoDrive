@@ -684,7 +684,7 @@ function TestTestNextCells:testNewCellsAreChecked()
     lu.assertEquals(#checked, 3)
     lu.assertTrue(cell.visited)
     for _, out in ipairs(cell.out) do
-        lu.assertIs(pf.grid[string.format('%d|%d|%d', out.x, out.z, out.direction)], out)
+        lu.assertIs(pf.grid[PathFinderModule.gridKeyOf(out.x, out.z, out.direction)], out)
     end
 end
 
@@ -694,7 +694,7 @@ end
 function TestTestNextCells:testSameCellWithAnotherDirectionIsCheckedAgain()
     local pf = self.pf
     local known = outCell(pf, 1, 0, pf.PP_UP)
-    pf.grid[string.format('%d|%d|%d', known.x, known.z, known.direction)] = known
+    pf.grid[PathFinderModule.gridKeyOf(known.x, known.z, known.direction)] = known
     local checked = {}
     pf.checkGridCell = function(_, cell) table.insert(checked, cell) end
     local fromOther = outCell(pf, 1, 0, pf.PP_UP_RIGHT)
@@ -704,15 +704,15 @@ function TestTestNextCells:testSameCellWithAnotherDirectionIsCheckedAgain()
 
     lu.assertEquals(#checked, 1)
     lu.assertIs(checked[1], fromOther)
-    lu.assertIs(pf.grid[string.format('%d|%d|%d', 1, 0, pf.PP_UP_RIGHT)], fromOther)
-    lu.assertIs(pf.grid[string.format('%d|%d|%d', 1, 0, pf.PP_UP)], known, 'the known cell stays')
+    lu.assertIs(pf.grid[PathFinderModule.gridKeyOf(1, 0, pf.PP_UP_RIGHT)], fromOther)
+    lu.assertIs(pf.grid[PathFinderModule.gridKeyOf(1, 0, pf.PP_UP)], known, 'the known cell stays')
 end
 
 function TestTestNextCells:testKnownCellWithSameDirectionIsNotRecreated()
     local pf = self.pf
     local known = outCell(pf, 1, 0, pf.PP_UP)
     known.steps = 9
-    pf.grid[string.format('%d|%d|%d', known.x, known.z, known.direction)] = known
+    pf.grid[PathFinderModule.gridKeyOf(known.x, known.z, known.direction)] = known
     local checked = 0
     pf.checkGridCell = function() checked = checked + 1 end
     local cell = { x = 0, z = 0, direction = pf.PP_UP, steps = 0, bordercells = 0,

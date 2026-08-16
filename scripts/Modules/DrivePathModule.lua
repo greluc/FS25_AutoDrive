@@ -42,6 +42,10 @@ ADDrivePathModule.CORNER_LATERAL_ACCELERATION = 3.0   -- m/s^2
 ADDrivePathModule.MIN_CORNER_RADIUS = 3
 -- Above this it is a straight as far as speed is concerned.
 ADDrivePathModule.MAX_CORNER_RADIUS = 400
+-- A route recorded at a quarter of a metre through a long bend would otherwise put several hundred
+-- way points inside one scan. Generous enough that it only bites on that case, where the tight
+-- geometry has already produced a low limit long before the cap is reached.
+ADDrivePathModule.MAX_CORNER_SCAN_POINTS = 400
 ADDrivePathModule.MAX_STEERING_ANGLE = 30
 ADDrivePathModule.PAUSE_TIMEOUT = 3000
 ADDrivePathModule.BLINK_TIMEOUT = 1000
@@ -339,9 +343,9 @@ function ADDrivePathModule:followWaypoints(dt)
             self.speedLimit = self.vehicle.ad.stateModule:getFieldSpeedLimit() --math.min(self.vehicle.ad.stateModule:getFieldSpeedLimit(), self.speedLimit)
         end
         if self.wayPoints[self:getCurrentWayPointIndex() - 1] ~= nil and self:getNextWayPoint() ~= nil then
-            -- still called for its own sake: it accumulates self.turnAngle, which drives the
-            -- indicators. Its return value is no longer what governs the speed.
-            self:getHighestApproachingAngle()
+            -- The indicator window depends on this and so does the branch below, so it is set here
+            -- rather than as a side effect of a scan that no longer runs.
+            self.distanceToLookAhead = self:getCurrentLookAheadDistance()
 
             -- Pathfinder output is full of 45 degree steps that need not be crawled, so off the road
             -- network the corner speeds are relaxed. Passed in rather than applied to the result:
@@ -525,95 +529,6 @@ function ADDrivePathModule:getCurrentLookAheadDistance()
     return math.min(ADDrivePathModule.LOOKAHEADDISTANCE * massFactor * speedFactor, 150)
 end
 
-function ADDrivePathModule:getHighestApproachingAngle()
-    self.turnAngle = 0
-    self.distanceToLookAhead = self:getCurrentLookAheadDistance()
-    if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
-        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_DEVINFO, "ADDrivePathModule:getHighestApproachingAngle -> Lookahead distance: " .. self.distanceToLookAhead)
-    end
-    local pointsToLookAhead = ADDrivePathModule.MAXLOOKAHEADPOINTS
-    local x, y, z = getWorldTranslation(self.vehicle.components[1].node)
-
-    if self:getCurrentWayPointIndex() + 2 >= #self.wayPoints then
-        return 0
-    end
-
-    local baseDistance = MathUtil.vector2Length(self:getCurrentWayPoint().x - x, self:getCurrentWayPoint().z - z)
-
-    local highestAngle = 0
-    local doneCheckingRoute = false
-    local currentLookAheadPoint = 1
-    while not doneCheckingRoute and currentLookAheadPoint <= pointsToLookAhead do
-        if self.wayPoints[self:getCurrentWayPointIndex() + currentLookAheadPoint] ~= nil then
-            local wp_ahead = self.wayPoints[self:getCurrentWayPointIndex() + currentLookAheadPoint]
-            local wp_current = self.wayPoints[self:getCurrentWayPointIndex() + currentLookAheadPoint - 1]
-            local wp_ref = self.wayPoints[self:getCurrentWayPointIndex() + currentLookAheadPoint - 2]
-            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
-                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_DEVINFO, "ADDrivePathModule:getHighestApproachingAngle -> wp_ahead: " .. wp_ahead.x .. " / " .. wp_ahead.z)
-                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_DEVINFO, "ADDrivePathModule:getHighestApproachingAngle -> wp_current: " .. wp_current.x .. " / " .. wp_current.z)
-                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_DEVINFO, "ADDrivePathModule:getHighestApproachingAngle -> wp_ref: " .. wp_ref.x .. " / " .. wp_ref.z)
-            end
-            local angle = AutoDrive.angleBetween({x = wp_ahead.x - wp_current.x, z = wp_ahead.z - wp_current.z}, {x = wp_current.x - wp_ref.x, z = wp_current.z - wp_ref.z})
-
-            if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_PATHINFO) then
-                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_DEVINFO, "ADDrivePathModule:getHighestApproachingAngle -> angle: " .. angle)
-            end
-
-            self.turnAngle = self.turnAngle + math.clamp(angle, -90, 90)
-
-            angle = math.abs(angle)
-
-            if MathUtil.vector2Length(self:getCurrentWayPoint().x - wp_ahead.x, self:getCurrentWayPoint().z - wp_ahead.z) <= (self.distanceToLookAhead - baseDistance) then
-                if angle < 180 then
-                    highestAngle = math.max(highestAngle, angle)
-                end
-            else
-                doneCheckingRoute = true
-            end
-        else
-            doneCheckingRoute = true
-        end
-        currentLookAheadPoint = currentLookAheadPoint + 1
-    end
-
-    return highestAngle
-
-    --new function. Take the angle of the current ref node and then go through x-points until the distance (not geometric but pathwise) is bigger than y-
-    -- 1.) Take the angle of the current ref node and then go through x-points until the distance (not geometric but pathwise) is bigger than y
-    -- 2.) Increase ref node index
-    -- 3.) Repeat until either index > ADDrivePathModule.MAXLOOKAHEADPOINTS or ref node distance (geometric) > distanceToLookAhead
-    --[[
-    local refNodeIndex = self:getCurrentWayPointIndex()
-    local lookAheadIndex = 1
-    local wp_ref = self.wayPoints[refNodeIndex]
-    local refNodeDistance = MathUtil.vector2Length(wp_ref.x - x, wp_ref.z - z)
-    local wp_current = self.wayPoints[refNodeIndex + lookAheadIndex]
-    local wp_ahead = self.wayPoints[refNodeIndex + lookAheadIndex + 1]
-    local refVector = {x = wp_current.x - wp_ref.x, z = wp_current.z - wp_ref.z}
-    local nextVector = {x = wp_ahead.x - wp_current.x, z = wp_ahead.z - wp_current.z}
-    local maxAngle = math.abs(AutoDrive.angleBetween(nextVector, refVector))
-
-    while refNodeIndex < (self:getCurrentWayPointIndex() + self.MAXLOOKAHEADPOINTS) and refNodeDistance < self.distanceToLookAhead and (refNodeIndex + 1) < #self.wayPoints do
-        lookAheadIndex = 1
-        while self:getDistanceBetweenWayPoints(refNodeIndex, refNodeIndex + lookAheadIndex) < 15 and (refNodeIndex + lookAheadIndex + 1) < #self.wayPoints do
-            wp_current = self.wayPoints[refNodeIndex + lookAheadIndex]
-            wp_ahead = self.wayPoints[refNodeIndex + lookAheadIndex + 1]
-            nextVector = {x = wp_ahead.x - wp_current.x, z = wp_ahead.z - wp_current.z}
-            maxAngle = math.max(maxAngle, math.abs(AutoDrive.angleBetween(nextVector, refVector)))
-            
-            lookAheadIndex = lookAheadIndex + 1
-        end
-        refNodeIndex = refNodeIndex + 1
-        wp_ref = self.wayPoints[refNodeIndex]
-        refNodeDistance = self:getDistanceBetweenWayPoints(self:getCurrentWayPointIndex(), refNodeIndex)
-        wp_current = self.wayPoints[refNodeIndex + 1]
-        refVector = {x = wp_current.x - wp_ref.x, z = wp_current.z - wp_ref.z}
-    end
-    --print("MaxAngle: " .. maxAngle)
-    return maxAngle
-    --]]
-end
-
 function ADDrivePathModule:getDistanceBetweenWayPoints(indexStart, indexTarget)
     local distance = 0
     while indexStart < indexTarget do
@@ -652,33 +567,42 @@ end
 ---
 --- The per-vehicle cornerSpeed setting still scales the result, and is the knob for anyone who
 --- wants the old, faster feel back.
-function ADDrivePathModule:getMaxSpeedForRadius(radius)
+--- The curve on its own, with no settings lookup, so the scan can call it once per way point
+--- without going through the settings layer several hundred times on a densely recorded route.
+function ADDrivePathModule.speedForRadius(radius)
     if radius == nil or radius >= ADDrivePathModule.MAX_CORNER_RADIUS then
         return math.huge
     end
     local effective = math.max(radius, ADDrivePathModule.MIN_CORNER_RADIUS)
     return math.sqrt(ADDrivePathModule.CORNER_LATERAL_ACCELERATION * effective) * 3.6
-        * AutoDrive.getSetting("cornerSpeed", self.vehicle)
+end
+
+function ADDrivePathModule:getMaxSpeedForRadius(radius)
+    return ADDrivePathModule.speedForRadius(radius) * AutoDrive.getSetting("cornerSpeed", self.vehicle)
 end
 
 --- The radius of the bend through three consecutive way points. On a circular arc the turn between
 --- successive chords of length L is L/R, so R is the chord length over the turn in radians.
+---
+--- Returns radius, the turn in degrees, and the same turn with its sign - the sign says which way
+--- the route bends, which is what the indicators are driven from.
 function ADDrivePathModule:getCornerRadius(ref, current, ahead)
     if ref == nil or current == nil or ahead == nil then
         return nil
     end
     local d1 = MathUtil.vector2Length(current.x - ref.x, current.z - ref.z)
     local d2 = MathUtil.vector2Length(ahead.x - current.x, ahead.z - current.z)
-    if d1 <= 0 or d2 <= 0 then
-        return nil
-    end
-    local angle = math.abs(AutoDrive.angleBetween(
+    local signed = AutoDrive.angleBetween(
         {x = ahead.x - current.x, z = ahead.z - current.z},
-        {x = current.x - ref.x, z = current.z - ref.z}))
-    if angle <= 0 or angle >= 180 then
-        return nil
+        {x = current.x - ref.x, z = current.z - ref.z})
+    if d1 <= 0 or d2 <= 0 then
+        return nil, nil, signed
     end
-    return ((d1 + d2) * 0.5) / math.rad(angle), angle
+    local angle = math.abs(signed)
+    if angle <= 0 or angle >= 180 then
+        return nil, nil, signed
+    end
+    return ((d1 + d2) * 0.5) / math.rad(angle), angle, signed
 end
 
 --- The speed we may be doing right now, given every corner that lies ahead of us.
@@ -704,6 +628,9 @@ end
 function ADDrivePathModule:getCornerSpeedLimit(currentLimit, cornerScale, cornerFloor)
     local wayPoints = self.wayPoints
     local index = self:getCurrentWayPointIndex()
+    -- Before the guard, not after: the indicators read this every frame, and leaving the last
+    -- accumulated turn standing when the route runs short would keep them blinking into a straight.
+    self.turnAngle = 0
     if wayPoints == nil or index == nil or index < 2 or (index + 1) > #wayPoints then
         return math.huge
     end
@@ -717,11 +644,27 @@ function ADDrivePathModule:getCornerSpeedLimit(currentLimit, cornerScale, corner
         ADDrivePathModule.MAX_CORNER_SCAN_DISTANCE)
 
     local x, _, z = getWorldTranslation(self.vehicle.components[1].node)
-    local travelled = MathUtil.vector2Length(wayPoints[index].x - x, wayPoints[index].z - z)
+    local anchor = wayPoints[index]
+    local baseDistance = MathUtil.vector2Length(anchor.x - x, anchor.z - z)
+    local travelled = baseDistance
     local limit = math.huge
     local i = index
+    -- Hoisted: the loop below runs once per way point, and a route recorded at a quarter of a metre
+    -- would otherwise go through the settings layer several hundred times for one answer.
+    local cornerSpeedSetting = AutoDrive.getSetting("cornerSpeed", self.vehicle) or 1
+    local scanned = 0
 
-    while (i + 1) <= #wayPoints and travelled <= scanDistance do
+    -- The indicators are driven from the accumulated signed turn ahead, over a window that is NOT
+    -- the one used for speed: it is straight line distance from the current way point, capped at
+    -- MAXLOOKAHEADPOINTS, and it grows with speed. Both windows walk the same triples in the same
+    -- order, so they share this pass rather than each running their own - but each keeps its own
+    -- rule for when to stop, or the indicators would start behaving like a brake.
+    local turnAngleOpen = (index + 2) < #wayPoints
+    local turnAngleReach = (self.distanceToLookAhead or 0) - baseDistance
+
+    while (i + 1) <= #wayPoints and (travelled <= scanDistance or turnAngleOpen)
+        and scanned < ADDrivePathModule.MAX_CORNER_SCAN_POINTS do
+        scanned = scanned + 1
         local ref = wayPoints[i - 1]
         local current = wayPoints[i]
         local ahead = wayPoints[i + 1]
@@ -729,10 +672,22 @@ function ADDrivePathModule:getCornerSpeedLimit(currentLimit, cornerScale, corner
             break
         end
 
-        local radius, angle = self:getCornerRadius(ref, current, ahead)
+        local radius, angle, signed = self:getCornerRadius(ref, current, ahead)
 
-        if radius ~= nil then
-            local cornerSpeed = self:getMaxSpeedForRadius(radius) * (cornerScale or 1)
+        if turnAngleOpen then
+            if (i - index + 1) <= ADDrivePathModule.MAXLOOKAHEADPOINTS
+                and MathUtil.vector2Length(anchor.x - ahead.x, anchor.z - ahead.z) <= turnAngleReach then
+                if signed ~= nil then
+                    self.turnAngle = self.turnAngle + math.clamp(signed, -90, 90)
+                end
+            else
+                turnAngleOpen = false
+            end
+        end
+
+        if radius ~= nil and travelled <= scanDistance then
+            local cornerSpeed = ADDrivePathModule.speedForRadius(radius)
+                * cornerSpeedSetting * (cornerScale or 1)
             if cornerFloor ~= nil then
                 cornerSpeed = math.max(cornerSpeed, cornerFloor)
             end

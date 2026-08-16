@@ -29,8 +29,16 @@ end
 --- without anything having to notice.
 ADHarvestManager.CLAIM_VALID_TIME = 4000
 
-local function claimKey(harvester, side)
-    return tostring(harvester) .. "|" .. tostring(side)
+--- Claims live in a map keyed on the harvester table itself, then on the side. Keyed on the table
+--- rather than on tostring(table): that string is only an identity by accident of the address being
+--- in it, and building one per frame per chasing unloader was the cost of the accident.
+local function claimsFor(manager, harvester, create)
+    local sides = manager.approachClaims[harvester]
+    if sides == nil and create then
+        sides = {}
+        manager.approachClaims[harvester] = sides
+    end
+    return sides
 end
 
 --- Ask for a side of a harvester. Returns true when the caller may use it.
@@ -41,20 +49,25 @@ function ADHarvestManager:claimApproach(unloader, harvester, side)
     if unloader == nil or harvester == nil or side == nil then
         return false
     end
-    local key = claimKey(harvester, side)
-    local claim = self.approachClaims[key]
+    local sides = claimsFor(self, harvester, true)
+    local claim = sides[side]
 
     if claim ~= nil and claim.unloader ~= unloader and (g_time - claim.time) <= ADHarvestManager.CLAIM_VALID_TIME then
         return false -- somebody else holds it and is still refreshing
     end
 
-    self.approachClaims[key] = {unloader = unloader, time = g_time}
+    if claim == nil then
+        claim = {}
+        sides[side] = claim
+    end
+    claim.unloader, claim.time = unloader, g_time
     return true
 end
 
 --- Whether a side is taken by someone other than the caller.
 function ADHarvestManager:isApproachClaimedByOther(unloader, harvester, side)
-    local claim = self.approachClaims[claimKey(harvester, side)]
+    local sides = claimsFor(self, harvester, false)
+    local claim = sides ~= nil and sides[side] or nil
     if claim == nil or claim.unloader == unloader then
         return false
     end
@@ -64,9 +77,16 @@ end
 --- Give up every side this unloader holds. Called when it stops chasing; a claim that is simply no
 --- longer refreshed also expires on its own, so this is a courtesy rather than a requirement.
 function ADHarvestManager:releaseApproachClaims(unloader)
-    for key, claim in pairs(self.approachClaims) do
-        if claim.unloader == unloader then
-            self.approachClaims[key] = nil
+    for harvester, sides in pairs(self.approachClaims) do
+        for side, claim in pairs(sides) do
+            if claim.unloader == unloader then
+                sides[side] = nil
+            end
+        end
+        if next(sides) == nil then
+            -- drop the harvester entry too, or this table grows one entry per harvester ever seen
+            -- and keeps each of them from being collected
+            self.approachClaims[harvester] = nil
         end
     end
 end

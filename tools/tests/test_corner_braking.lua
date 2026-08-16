@@ -336,4 +336,122 @@ function TestSteeringLimiter:testTheEndpointsAreUnchanged()
 end
 
 
+------------------------------------------------------------------------------------------------------------------------
+--- The indicator window, folded into the same pass
+---
+--- turnAngle drives the indicators and used to be accumulated by getHighestApproachingAngle, a
+--- second walk over the same way point triples in the same order. The two are now one pass - but
+--- they keep separate stopping rules, because the indicator window is straight line distance from
+--- the current way point, capped at MAXLOOKAHEADPOINTS, and grows with speed, while the speed window
+--- is path distance bounded by the braking distance. Folding them under one rule would have made the
+--- indicators behave like a brake.
+---
+--- These reimplement the ORIGINAL rule independently and demand the same number out of the merged
+--- scan, so the refactor cannot quietly move the window.
+------------------------------------------------------------------------------------------------------------------------
+TestTurnAngle = {}
+
+function TestTurnAngle:setUp()
+    TestSetup.reset()
+    AutoDrive.testSettings['cornerSpeed'] = 1.0
+end
+
+--- getHighestApproachingAngle as it was, transcribed.
+local function turnAngleTheOldWay(module)
+    local wayPoints = module.wayPoints
+    local index = module:getCurrentWayPointIndex()
+    local turnAngle = 0
+    local distanceToLookAhead = module:getCurrentLookAheadDistance()
+    local x, _, z = getWorldTranslation(module.vehicle.components[1].node)
+
+    if index + 2 >= #wayPoints then
+        return 0
+    end
+    local anchor = wayPoints[index]
+    local baseDistance = MathUtil.vector2Length(anchor.x - x, anchor.z - z)
+
+    local point = 1
+    while point <= ADDrivePathModule.MAXLOOKAHEADPOINTS do
+        local ahead = wayPoints[index + point]
+        if ahead == nil then
+            break
+        end
+        local current = wayPoints[index + point - 1]
+        local ref = wayPoints[index + point - 2]
+        local angle = AutoDrive.angleBetween(
+            {x = ahead.x - current.x, z = ahead.z - current.z},
+            {x = current.x - ref.x, z = current.z - ref.z})
+        turnAngle = turnAngle + math.clamp(angle, -90, 90)
+        if MathUtil.vector2Length(anchor.x - ahead.x, anchor.z - ahead.z) > (distanceToLookAhead - baseDistance) then
+            break
+        end
+        point = point + 1
+    end
+    return turnAngle
+end
+
+local function checkAgainstTheOldRule(self, points, speed, label)
+    local m = moduleOn(points, speed)
+    m.vehicle.getTotalMass = function() return 30 end
+    m.distanceToLookAhead = m:getCurrentLookAheadDistance()
+    local expected = turnAngleTheOldWay(m)
+
+    m:getCornerSpeedLimit(50)
+
+    lu.assertAlmostEquals(m.turnAngle, expected, 0.0001,
+        string.format('%s: merged pass gave %.4f, the original rule gives %.4f',
+            label, m.turnAngle, expected))
+end
+
+function TestTurnAngle:testALeftBendMatchesTheOriginalRule()
+    checkAgainstTheOldRule(self, straightThenCorner(20, 40), 40, 'left bend')
+end
+
+function TestTurnAngle:testARightBendMatchesTheOriginalRule()
+    checkAgainstTheOldRule(self, straightThenCorner(20, -40), 40, 'right bend')
+end
+
+function TestTurnAngle:testAStraightMatchesTheOriginalRule()
+    local straight = {}
+    for i = 1, 40 do straight[i] = { x = (i - 1) * SPACING, y = 0, z = 0 } end
+    checkAgainstTheOldRule(self, straight, 40, 'straight')
+end
+
+function TestTurnAngle:testItMatchesAtEverySpeed()
+    for _, speed in ipairs({ 5, 15, 30, 50 }) do
+        checkAgainstTheOldRule(self, straightThenCorner(30, 35), speed,
+            string.format('%d km/h', speed))
+    end
+end
+
+--- The sign has to survive, or the indicators pick the wrong side.
+function TestTurnAngle:testTheSignFollowsTheBend()
+    local left = moduleOn(straightThenCorner(20, 40), 40)
+    left.distanceToLookAhead = 100
+    left:getCornerSpeedLimit(50)
+
+    local right = moduleOn(straightThenCorner(20, -40), 40)
+    right.distanceToLookAhead = 100
+    right:getCornerSpeedLimit(50)
+
+    -- Which sign means which way is angleBetween's convention, not something to assert blind. What
+    -- has to hold is that the two bends come out opposite and neither is zero, because that is what
+    -- the indicator code reads.
+    lu.assertTrue(math.abs(left.turnAngle) > 1, string.format('left bend gave %.1f', left.turnAngle))
+    lu.assertTrue(math.abs(right.turnAngle) > 1, string.format('right bend gave %.1f', right.turnAngle))
+    lu.assertTrue((left.turnAngle > 0) ~= (right.turnAngle > 0),
+        string.format('the two bends have to differ in sign: %.1f and %.1f', left.turnAngle, right.turnAngle))
+end
+
+--- Near the end of a route there is nothing left to look at.
+function TestTurnAngle:testAShortRouteGivesZero()
+    local m = moduleOn({ { x = 0, y = 0, z = 0 }, { x = 4, y = 0, z = 0 } }, 20)
+    m.distanceToLookAhead = 100
+
+    m:getCornerSpeedLimit(50)
+
+    lu.assertEquals(m.turnAngle, 0)
+end
+
+
 os.exit(lu.LuaUnit.run())

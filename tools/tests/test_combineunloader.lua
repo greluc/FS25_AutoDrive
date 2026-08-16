@@ -833,4 +833,86 @@ function TestDeadCombine:testNoHarvesterIsNotAnError()
 end
 
 
+------------------------------------------------------------------------------------------------------------------------
+--- Holding the reachability answer for a throttle window
+---
+--- getPipeChasePosition is called every frame from FollowCombineTask:updateStates, and the physics
+--- query in isChaseSideReachable was the one thing in it without a rate limit - the eight sensor
+--- polls above it already have one through ADSensor.EXECUTION_DELAY.
+------------------------------------------------------------------------------------------------------------------------
+TestReachabilityCache = {}
+
+function TestReachabilityCache:setUp()
+    TestSetup.reset()
+    installStubs()
+    self.vehicle = makeVehicle(true)
+    AutoDrive.copySettingsToVehicle(self.vehicle)
+    self.mode = makeMode(self.vehicle)
+    self.mode.combine = makeVehicle(false)
+    self.mode.combineRootVehicle = self.mode.combine
+    g_updateLoopIndex = 0
+    overlapBoxCalls = 0
+end
+
+local function chasePosAt(x, z)
+    return { x = x, y = 0, z = z }
+end
+
+function TestReachabilityCache:testTheQueryRunsOncePerWindow()
+    self.mode:isChaseSideReachable(chasePosAt(6, 6), AutoDrive.CHASEPOS_LEFT)
+    local afterFirst = overlapBoxCalls
+    lu.assertTrue(afterFirst > 0, 'test setup: the first call has to actually query')
+
+    for _ = 1, 5 do
+        self.mode:isChaseSideReachable(chasePosAt(6, 6), AutoDrive.CHASEPOS_LEFT)
+    end
+
+    lu.assertEquals(overlapBoxCalls, afterFirst,
+        'repeat calls inside one window must answer from the held result')
+end
+
+function TestReachabilityCache:testTheQueryRunsAgainInTheNextWindow()
+    self.mode:isChaseSideReachable(chasePosAt(6, 6), AutoDrive.CHASEPOS_LEFT)
+    local afterFirst = overlapBoxCalls
+
+    g_updateLoopIndex = g_updateLoopIndex + AutoDrive.PERF_FRAMES
+    self.mode:isChaseSideReachable(chasePosAt(6, 6), AutoDrive.CHASEPOS_LEFT)
+
+    lu.assertTrue(overlapBoxCalls > afterFirst, 'the answer must not be held forever')
+end
+
+--- The reason the key is the side and not the position: the left and right chase spots are mirror
+--- images of each other by construction, so anything derived from their coordinates - a sum, a
+--- length - is identical for both, and one side would answer for the other.
+function TestReachabilityCache:testTheTwoFlanksDoNotShareAnAnswer()
+    self.mode:isChaseSideReachable(chasePosAt(-6, 6), AutoDrive.CHASEPOS_LEFT)
+    local afterLeft = overlapBoxCalls
+
+    self.mode:isChaseSideReachable(chasePosAt(6, -6), AutoDrive.CHASEPOS_RIGHT)
+
+    lu.assertTrue(overlapBoxCalls > afterLeft,
+        'the mirrored right hand position must be asked about in its own right')
+end
+
+--- Without a side there is nothing to key on, so it simply always queries.
+function TestReachabilityCache:testWithoutASideItAlwaysQueries()
+    self.mode:isChaseSideReachable(chasePosAt(6, 6))
+    local afterFirst = overlapBoxCalls
+
+    self.mode:isChaseSideReachable(chasePosAt(6, 6))
+
+    lu.assertTrue(overlapBoxCalls > afterFirst)
+end
+
+--- The early outs still short circuit: on top of the spot, or far enough that only the pathfinder
+--- can answer, there is nothing to query.
+function TestReachabilityCache:testTheEarlyOutsStillSkipTheQuery()
+    -- the vehicle stands at z = -20, so these are 0.2 m and 500 m from it
+    lu.assertTrue(self.mode:isChaseSideReachable(chasePosAt(0.2, -20), AutoDrive.CHASEPOS_LEFT))
+    lu.assertTrue(self.mode:isChaseSideReachable(chasePosAt(500, -20), AutoDrive.CHASEPOS_RIGHT))
+
+    lu.assertEquals(overlapBoxCalls, 0)
+end
+
+
 os.exit(lu.LuaUnit.run())

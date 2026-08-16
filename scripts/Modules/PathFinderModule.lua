@@ -89,6 +89,21 @@ from Giants Engine:
 AITurnStrategy.SLOPE_DETECTION_THRESHOLD  = 0.5235987755983
 ]]
 
+--- Grid cells are keyed on one number rather than a formatted string. The old key was
+--- string.format("%d|%d|%d", x, z, direction), built fresh for every neighbour of every expanded
+--- cell - several hundred short lived strings per frame while a path is being planned, all of them
+--- used once as a table index and dropped. Cell coordinates stay well inside the range that keeps
+--- this injective, and direction is -1 through 7, which is what the sixteen is for.
+---
+--- Mirrors ADGraphManager's spatialKey, which does the same thing for the same reason.
+local function gridKeyOf(x, z, direction)
+    return ((x * 100000) + z) * 16 + (direction + 1)
+end
+
+--- Exposed so anything reasoning about the grid derives the key from here rather than restating the
+--- formula. The uses inside this file go through the local above.
+PathFinderModule.gridKeyOf = gridKeyOf
+
 function PathFinderModule:new(vehicle)
     local o = {}
     setmetatable(o, self)
@@ -586,7 +601,7 @@ function PathFinderModule:startPathPlanningTo(targetPoint, targetVector)
     self.behind = {x = vehicleWorldX + vehicleBehindX, z = vehicleWorldZ + vehicleBehindZ}
 
     -- table.insert(self.grid, self.startCell)
-    local gridKey = string.format("%d|%d|%d", self.startCell.x, self.startCell.z, self.startCell.direction)
+    local gridKey = gridKeyOf(self.startCell.x, self.startCell.z, self.startCell.direction)
     self.grid[gridKey] = self.startCell
 
     self.smoothStep = 0
@@ -762,7 +777,7 @@ function PathFinderModule:autoRestart()
     self.startCell.out = nil
     self.currentCell = nil
 
-    local gridKey = string.format("%d|%d|%d", self.startCell.x, self.startCell.z, self.startCell.direction)
+    local gridKey = gridKeyOf(self.startCell.x, self.startCell.z, self.startCell.direction)
     self.grid[gridKey] = self.startCell
 
     self:determineBlockedCells(self.targetCell)
@@ -1174,7 +1189,7 @@ function PathFinderModule:update(dt)
 
                 local outCells = {}
                 for _, outCell in pairs(self.currentCell.out) do
-                    local gridKey = string.format("%d|%d|%d", outCell.x, outCell.z, outCell.direction)
+                    local gridKey = gridKeyOf(outCell.x, outCell.z, outCell.direction)
                     if self.grid[gridKey] ~= nil then
                         table.insert(outCells, self.grid[gridKey])
                     end
@@ -1260,7 +1275,7 @@ function PathFinderModule:testNextCells(cell)
             )
         end
         for i = -1, self.PP_UP_LEFT, 1 do -- important: do not break this loop to check for all directions!
-            local gridKey = string.format("%d|%d|%d", location.x, location.z, i)
+            local gridKey = gridKeyOf(location.x, location.z, i)
             if self.grid[gridKey] ~= nil then
                 -- cell is already in the grid
                 if self.vehicle ~= nil and self.vehicle.ad ~= nil and self.vehicle.ad.debug ~= nil and AutoDrive.debugVehicleMsg ~= nil then
@@ -1302,7 +1317,7 @@ function PathFinderModule:testNextCells(cell)
                 )
             end
             self:checkGridCell(location)
-            local gridKey = string.format("%d|%d|%d", location.x, location.z, location.direction)
+            local gridKey = gridKeyOf(location.x, location.z, location.direction)
             self.grid[gridKey] = location
         end
     end
@@ -1474,29 +1489,29 @@ function PathFinderModule:determineBlockedCells(cell)
     table.insert(self.grid, {x = cell.x + 1, z = cell.z + 1, direction = -1, isRestricted = true, hasCollision = true, steps = 1000, bordercells = 0})   -- PP_UP_RIGHT
     table.insert(self.grid, {x = cell.x + 0, z = cell.z - 1, direction = -1, isRestricted = true, hasCollision = true, steps = 1000, bordercells = 0})   -- PP_LEFT
 ]]
-    local gridKey = ""
+    local gridKey
     local direction = -1
     local x = 0
     local z = 0
     x = cell.x + 1
     z = cell.z + 0
-    gridKey = string.format("%d|%d|%d", x, z, direction)
+    gridKey = gridKeyOf(x, z, direction)
     self.grid[gridKey] = {x = x, z = z, direction = direction, isRestricted = true, hasCollision = true, steps = 100000, bordercells = 0}
     x = cell.x + 1
     z = cell.z - 1
-    gridKey = string.format("%d|%d|%d", x, z, direction)
+    gridKey = gridKeyOf(x, z, direction)
     self.grid[gridKey] = {x = x, z = z, direction = direction, isRestricted = true, hasCollision = true, steps = 100000, bordercells = 0}
     x = cell.x + 0
     z = cell.z + 1
-    gridKey = string.format("%d|%d|%d", x, z, direction)
+    gridKey = gridKeyOf(x, z, direction)
     self.grid[gridKey] = {x = x, z = z, direction = direction, isRestricted = true, hasCollision = true, steps = 100000, bordercells = 0}
     x = cell.x + 1
     z = cell.z + 1
-    gridKey = string.format("%d|%d|%d", x, z, direction)
+    gridKey = gridKeyOf(x, z, direction)
     self.grid[gridKey] = {x = x, z = z, direction = direction, isRestricted = true, hasCollision = true, steps = 100000, bordercells = 0}
     x = cell.x + 0
     z = cell.z - 1
-    gridKey = string.format("%d|%d|%d", x, z, direction)
+    gridKey = gridKeyOf(x, z, direction)
     self.grid[gridKey] = {x = x, z = z, direction = direction, isRestricted = true, hasCollision = true, steps = 100000, bordercells = 0}
 end
 
