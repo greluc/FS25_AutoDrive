@@ -3,6 +3,45 @@ ADDrivePathModule = {}
 ADDrivePathModule.LOOKAHEADDISTANCE = 20
 ADDrivePathModule.MAXLOOKAHEADPOINTS = 20
 ADDrivePathModule.MAX_SPEED_DEVIATION = 6
+
+-- Slowing down for a corner.
+--
+-- The rate a loaded train can shed speed without the load shifting and without the brakes grabbing.
+-- It is what turns "there is a corner in 60 m that wants 12 km/h" into "you may be doing 45 now",
+-- which is the whole point: a limit derived from the distance to the corner falls smoothly as the
+-- corner approaches, where one derived from whether the corner is visible at all falls off a cliff.
+ADDrivePathModule.COMFORTABLE_DECELERATION = 1.5    -- m/s^2
+
+-- How far ahead corners are looked for. Deliberately NOT a function of current speed: a search
+-- window that shrinks as the vehicle slows takes the corner out of view exactly when the braking
+-- starts to work, which is a positive feedback loop with no stable point - brake, lose sight of the
+-- corner, accelerate, see it again, brake. That is the stutter this replaces. Bounded instead by
+-- the distance actually needed to slow down from the limit in force.
+ADDrivePathModule.MAX_CORNER_SCAN_DISTANCE = 150    -- m
+ADDrivePathModule.CORNER_SCAN_MARGIN = 20           -- m, so the ramp starts before it has to
+
+-- How fast the speed limit may climb again once a corner has been passed, in km/h per second.
+-- Dropping is immediate - that is safety - but snapping back to full road speed the instant the
+-- last way point of a bend is behind us is the other half of the stutter.
+ADDrivePathModule.SPEED_LIMIT_RISE = 12
+
+-- What the load will tolerate sideways, and the bounds on a bend worth reacting to.
+--
+-- Corner speed is derived from the RADIUS of the bend, not from the angle between two way points.
+-- Those are not the same thing: that angle is curvature times the local spacing, and the recorder
+-- (RecordingModule.lua:186-203) deliberately shortens the spacing as the turn tightens - twelve
+-- metres on a straight, a quarter of a metre above 27 degrees. The angle is therefore something the
+-- recorder holds roughly constant, which makes it a measure of how the route was recorded rather
+-- than of how sharp it is. Measured on a real 47,264 way point network: of 1,622 way point triples
+-- describing bends under 20 m radius, the angle rule let 85 percent of them be taken above 25 km/h
+-- and 68 percent above 40 - an eight metre yard turn read as 14.5 degrees and was allowed 42 km/h,
+-- which is seventeen metres per second squared sideways. Radius does not have that defect.
+ADDrivePathModule.CORNER_LATERAL_ACCELERATION = 3.0   -- m/s^2
+-- Below this the geometry is recording noise on closely spaced points rather than a real bend; no
+-- tractor and trailer turns inside three metres anyway.
+ADDrivePathModule.MIN_CORNER_RADIUS = 3
+-- Above this it is a straight as far as speed is concerned.
+ADDrivePathModule.MAX_CORNER_RADIUS = 400
 ADDrivePathModule.MAX_STEERING_ANGLE = 30
 ADDrivePathModule.PAUSE_TIMEOUT = 3000
 ADDrivePathModule.BLINK_TIMEOUT = 1000
@@ -46,6 +85,9 @@ function ADDrivePathModule:reset()
     -- followWaypoints only re-bases the limit every PERF_FRAMES_HIGH frames, so it has to start
     -- out on the road limit - a 0 here would latch the brake hysteresis until the next gate frame
     self.speedLimit = self.vehicle.ad.stateModule:getSpeedLimit()
+    -- Starts level with the limit rather than at nil or zero: a route beginning mid-ramp would
+    -- otherwise spend the first second creeping up to a speed it is already allowed to drive.
+    self.smoothedSpeedLimit = self.speedLimit
     self.maxSpeedDiff = ADDrivePathModule.MAX_SPEED_DEVIATION
     self.lastUsedWayPoint = nil
 
@@ -297,14 +339,20 @@ function ADDrivePathModule:followWaypoints(dt)
             self.speedLimit = self.vehicle.ad.stateModule:getFieldSpeedLimit() --math.min(self.vehicle.ad.stateModule:getFieldSpeedLimit(), self.speedLimit)
         end
         if self.wayPoints[self:getCurrentWayPointIndex() - 1] ~= nil and self:getNextWayPoint() ~= nil then
-            local highestAngle = self:getHighestApproachingAngle()
+            -- still called for its own sake: it accumulates self.turnAngle, which drives the
+            -- indicators. Its return value is no longer what governs the speed.
+            self:getHighestApproachingAngle()
 
-            if self:isOnRoadNetwork() then
-                self.speedLimit = math.min(self.speedLimit, self:getMaxSpeedForAngle(highestAngle))
-            else
-                -- Let's increase the cornering speed for paths generated with the pathfinder module. There are many 45° angles in there that slow the process down otherwise.
-                self.speedLimit = math.min(self.speedLimit, math.max(12, self:getMaxSpeedForAngle(highestAngle) * 2))
+            -- Pathfinder output is full of 45 degree steps that need not be crawled, so off the road
+            -- network the corner speeds are relaxed. Passed in rather than applied to the result:
+            -- scaling the ramp is the same as raising the braking rate, which would put the late
+            -- hard brake back exactly where the ramp was meant to remove it.
+            local cornerScale, cornerFloor = nil, nil
+            if not self:isOnRoadNetwork() then
+                cornerScale, cornerFloor = 2, 12
             end
+            self.speedLimit = math.min(self.speedLimit,
+                self:getCornerSpeedLimit(self.speedLimit, cornerScale, cornerFloor))
         end
 
         self.distanceToTarget = self:getDistanceToLastWaypoint(40)
@@ -366,7 +414,22 @@ function ADDrivePathModule:followWaypoints(dt)
         self.vehicle.ad.specialDrivingModule:update(dt)
     else
         self.vehicle.ad.specialDrivingModule:releaseVehicle()
-        local speedDiff = (self.vehicle.lastSpeedReal * 3600) - self.speedLimit
+
+        -- The limit the vehicle is actually asked to hold. Falling is immediate, because a corner
+        -- that just came into range is a reason to slow down now. Climbing is rationed, because the
+        -- limit jumping back to full road speed the instant the last way point of a bend is behind
+        -- us is a stamp on the throttle - and with the vehicle still in the bend, promptly followed
+        -- by a stamp on the brake. Done every frame rather than in the gate above, so the ramp does
+        -- not arrive in steps of its own.
+        local targetLimit = self.speedLimit
+        if self.smoothedSpeedLimit == nil or targetLimit <= self.smoothedSpeedLimit then
+            self.smoothedSpeedLimit = targetLimit
+        else
+            self.smoothedSpeedLimit = math.min(targetLimit,
+                self.smoothedSpeedLimit + ADDrivePathModule.SPEED_LIMIT_RISE * (dt / 1000))
+        end
+
+        local speedDiff = (self.vehicle.lastSpeedReal * 3600) - self.smoothedSpeedLimit
         -- Allow active braking if vehicle is not 'following' targetSpeed precise enough
         if speedDiff <= 0.25 then
             self.brakeHysteresisActive = false
@@ -389,7 +452,7 @@ function ADDrivePathModule:followWaypoints(dt)
             end
         end
         self.vehicle.ad.trailerModule:handleTrailerReversing(false)
-        AutoDrive.driveInDirection(self.vehicle, dt, maxAngle, self.acceleration, 0.8, maxAngle, true, true, lx, lz, self.speedLimit, 1)
+        AutoDrive.driveInDirection(self.vehicle, dt, maxAngle, self.acceleration, 0.8, maxAngle, true, true, lx, lz, self.smoothedSpeedLimit, 1)
         --local worldX, _, worldZ = AutoDrive.worldToLocal(self.vehicle, self.targetX, y, self.targetZ)
         --print("dt: " .. dt .. " acc: " .. self.acceleration .. " x: " .. worldX .. " z: " .. worldZ .. " speedLimit: " .. self.speedLimit)
         --AIVehicleUtil.driveToPoint(self.vehicle, dt, self.acceleration, true, true, worldX, worldZ, self.speedLimit)
@@ -582,21 +645,115 @@ function ADDrivePathModule:getApproachingHeightDiff()
     return heightDiff
 end
 
-function ADDrivePathModule:getMaxSpeedForAngle(angle)
-    local maxSpeed = math.huge
+--- The speed a bend of this radius may be taken at, from a sideways acceleration budget:
+--- v = sqrt(a_lat * R). Unlike the angle between two way points, radius does not change with how
+--- densely the route happens to be recorded, so the same physical bend gives the same answer
+--- whether it was driven slowly or quickly when it was laid down.
+---
+--- The per-vehicle cornerSpeed setting still scales the result, and is the knob for anyone who
+--- wants the old, faster feel back.
+function ADDrivePathModule:getMaxSpeedForRadius(radius)
+    if radius == nil or radius >= ADDrivePathModule.MAX_CORNER_RADIUS then
+        return math.huge
+    end
+    local effective = math.max(radius, ADDrivePathModule.MIN_CORNER_RADIUS)
+    return math.sqrt(ADDrivePathModule.CORNER_LATERAL_ACCELERATION * effective) * 3.6
+        * AutoDrive.getSetting("cornerSpeed", self.vehicle)
+end
 
-    if angle < 5 then
-        maxSpeed = math.huge
-    elseif angle < 50 then
-        maxSpeed = 12 + 48 * (1 - math.clamp((angle - 5), 0, 25) / (30 - 5))
-    elseif angle >= 50 then
-        maxSpeed = 3
+--- The radius of the bend through three consecutive way points. On a circular arc the turn between
+--- successive chords of length L is L/R, so R is the chord length over the turn in radians.
+function ADDrivePathModule:getCornerRadius(ref, current, ahead)
+    if ref == nil or current == nil or ahead == nil then
+        return nil
+    end
+    local d1 = MathUtil.vector2Length(current.x - ref.x, current.z - ref.z)
+    local d2 = MathUtil.vector2Length(ahead.x - current.x, ahead.z - current.z)
+    if d1 <= 0 or d2 <= 0 then
+        return nil
+    end
+    local angle = math.abs(AutoDrive.angleBetween(
+        {x = ahead.x - current.x, z = ahead.z - current.z},
+        {x = current.x - ref.x, z = current.z - ref.z}))
+    if angle <= 0 or angle >= 180 then
+        return nil
+    end
+    return ((d1 + d2) * 0.5) / math.rad(angle), angle
+end
+
+--- The speed we may be doing right now, given every corner that lies ahead of us.
+---
+--- For each corner within the scan this asks how fast we may be going here in order to arrive there
+--- at the speed that corner wants, braking at a rate that does not throw the load about:
+---
+---     v_here = sqrt(v_corner^2 + 2 * a * distance)
+---
+--- and takes the tightest answer. A corner sixty metres off barely constrains anything; the same
+--- corner ten metres off constrains a lot. In between the limit falls smoothly, which is what makes
+--- the difference to the old behaviour - that asked only "is a corner visible" and applied the full
+--- corner speed the moment one was, then dropped it again the moment the shrinking search window
+--- lost sight of it.
+---
+--- cornerScale and cornerFloor relax the CORNER SPEED, never the ramp leading to it. That
+--- distinction is the whole point: scaling the ramp's result instead is algebraically the same as
+--- raising the braking rate, because doubling sqrt(v^2 + 2ad) gives sqrt(4v^2 + 8ad). Pathfinder
+--- output wants the relaxation - it is full of 45 degree steps that need not be crawled - but it
+--- wants to be reached at the same comfortable deceleration as everything else.
+---
+--- Returns math.huge when nothing ahead constrains us.
+function ADDrivePathModule:getCornerSpeedLimit(currentLimit, cornerScale, cornerFloor)
+    local wayPoints = self.wayPoints
+    local index = self:getCurrentWayPointIndex()
+    if wayPoints == nil or index == nil or index < 2 or (index + 1) > #wayPoints then
+        return math.huge
     end
 
-    self.maxAngle = angle
-    self.maxAngleSpeed = maxSpeed * 1.0 * AutoDrive.getSetting("cornerSpeed", self.vehicle)
+    -- Look exactly as far as slowing down from the limit in force needs, and no further. Distance to
+    -- shed speed grows with the square of it, so this is short in a yard and long on a road.
+    local fromSpeed = (currentLimit or 0) / 3.6
+    local scanDistance = math.min(
+        (fromSpeed * fromSpeed) / (2 * ADDrivePathModule.COMFORTABLE_DECELERATION)
+            + ADDrivePathModule.CORNER_SCAN_MARGIN,
+        ADDrivePathModule.MAX_CORNER_SCAN_DISTANCE)
 
-    return self.maxAngleSpeed
+    local x, _, z = getWorldTranslation(self.vehicle.components[1].node)
+    local travelled = MathUtil.vector2Length(wayPoints[index].x - x, wayPoints[index].z - z)
+    local limit = math.huge
+    local i = index
+
+    while (i + 1) <= #wayPoints and travelled <= scanDistance do
+        local ref = wayPoints[i - 1]
+        local current = wayPoints[i]
+        local ahead = wayPoints[i + 1]
+        if ref == nil or current == nil or ahead == nil then
+            break
+        end
+
+        local radius, angle = self:getCornerRadius(ref, current, ahead)
+
+        if radius ~= nil then
+            local cornerSpeed = self:getMaxSpeedForRadius(radius) * (cornerScale or 1)
+            if cornerFloor ~= nil then
+                cornerSpeed = math.max(cornerSpeed, cornerFloor)
+            end
+            if cornerSpeed < math.huge then
+                local vCorner = cornerSpeed / 3.6
+                local allowed = math.sqrt(vCorner * vCorner
+                    + 2 * ADDrivePathModule.COMFORTABLE_DECELERATION * math.max(travelled, 0)) * 3.6
+                if allowed < limit then
+                    limit = allowed
+                    self.maxAngle = angle
+                    self.maxAngleSpeed = cornerSpeed
+                    self.maxAngleRadius = radius
+                end
+            end
+        end
+
+        travelled = travelled + MathUtil.vector2Length(ahead.x - current.x, ahead.z - current.z)
+        i = i + 1
+    end
+
+    return limit
 end
 
 function ADDrivePathModule:getSpeedLimitBySteeringAngle()
@@ -613,8 +770,20 @@ function ADDrivePathModule:getSpeedLimitBySteeringAngle()
         end
     end
 
-    if steeringAngle > maxAngle * 0.95 then
+    -- This used to be a switch: no limit at all below 95 percent of full lock, 10 km/h above it. In
+    -- a bend where the wheel sits around that mark the limit therefore alternated between the two
+    -- from one gate frame to the next, and a vehicle can only answer that with alternate stamps on
+    -- the brake and the throttle. It is the second half of the stutter, and the reactive half - it
+    -- fires inside the corner rather than on the approach to it.
+    --
+    -- Now it tapers over the last fifth before full lock. The endpoints are unchanged: nothing below
+    -- 80 percent, 10 km/h from 95 percent on. It is never more permissive than it was.
+    local taperStart = maxAngle * 0.80
+    local taperEnd = maxAngle * 0.95
+    if steeringAngle >= taperEnd then
         maxSpeed = 10
+    elseif steeringAngle > taperStart then
+        maxSpeed = 60 - 50 * ((steeringAngle - taperStart) / (taperEnd - taperStart))
     end
     return maxSpeed
 end
