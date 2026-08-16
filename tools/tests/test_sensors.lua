@@ -10,6 +10,8 @@ lu = require('luaunit')
 require('test-setup')
 require('UtilFuncs')
 require('VirtualSensors')
+require('CollSensor')
+require('CollSensorSplit')
 
 local function sensorVehicle(overrides)
     local v = TestSetup.vehicle(overrides)
@@ -161,6 +163,102 @@ function TestSensorGeometry:testPartialMeasurementIsIgnored()
     local w, l = ADSensor.getTrainDimensions(v)
     lu.assertEquals(w, 3, 'a half measured hull must not be trusted')
     lu.assertEquals(l, 6)
+end
+
+------------------------------------------------------------------------------------------------------------------------
+--- A collision sensor has to answer with the scan it just ran
+---
+--- Both collision sensors latched the PREVIOUS scan's outcome at the top of onUpdate and only then
+--- ran the new one. That is harmless when a sensor is updated every frame - and these are not. They
+--- are only actually run once per ADSensor.EXECUTION_DELAY polls, so the deferral cost a full ten
+--- frames on top of that throttle, measured at exactly ten in every phase of the throttle lattice.
+--- At 60 fps that is a sixth of a second of continuing to drive at a closed gate, a fence or a tree
+--- at a field entrance - obstacles for which this is the only thing looking.
+---
+--- overlapBox is synchronous, which the mod itself relies on elsewhere by reading its hit count on
+--- the very next line, so there was nothing to wait for.
+------------------------------------------------------------------------------------------------------------------------
+TestSensorLatch = {}
+
+local savedOverlapBox
+
+function TestSensorLatch:setUp()
+    TestSetup.reset()
+    savedOverlapBox = overlapBox
+end
+
+function TestSensorLatch:tearDown()
+    overlapBox = savedOverlapBox
+end
+
+--- The scan finds something, or does not, according to `hit`.
+local function scanFinds(hit)
+    overlapBox = function(_, _, _, _, _, _, _, _, _, _, target)
+        if target ~= nil then target.newHit = hit end
+    end
+end
+
+local function splitSensor()
+    local s = setmetatable({}, { __index = ADCollSensorSplit })
+    s.vehicle = TestSetup.vehicle()
+    s.sensorParameters = { minDynamicLengthForVehicles = 5 }
+    s.triggered = false
+    s.setTriggered = function(self, value) self.triggered = value end
+    s.getBoxShapes = function() return { { x = 0, y = 0, z = 0, rx = 0, ry = 0, size = { 1, 1, 1 } } } end
+    s.onDrawDebug = function() end
+    return s
+end
+
+local function plainSensor()
+    local s = setmetatable({}, { __index = ADCollSensor })
+    s.vehicle = TestSetup.vehicle()
+    s.triggered = false
+    s.setTriggered = function(self, value) self.triggered = value end
+    s.getMask = function() return 0 end
+    s.getBoxShape = function() return { x = 0, y = 0, z = 0, rx = 0, ry = 0, size = { 1, 1, 1 } } end
+    s.onDrawDebug = function() end
+    return s
+end
+
+function TestSensorLatch:testTheSplitSensorReportsWhatItJustFound()
+    local s = splitSensor()
+    scanFinds(true)
+
+    s:onUpdate(16)
+
+    lu.assertTrue(s.triggered,
+        'the obstacle is in the box during this very scan - waiting for the next one costs ten frames')
+end
+
+function TestSensorLatch:testTheSplitSensorClearsInTheSameUpdate()
+    local s = splitSensor()
+    scanFinds(true)
+    s:onUpdate(16)
+    scanFinds(false)
+
+    s:onUpdate(16)
+
+    lu.assertFalse(s.triggered, 'and it must let go of an obstacle as promptly as it took it up')
+end
+
+function TestSensorLatch:testThePlainSensorReportsWhatItJustFound()
+    local s = plainSensor()
+    scanFinds(true)
+
+    s:onUpdate(16)
+
+    lu.assertTrue(s.triggered)
+end
+
+function TestSensorLatch:testThePlainSensorClearsInTheSameUpdate()
+    local s = plainSensor()
+    scanFinds(true)
+    s:onUpdate(16)
+    scanFinds(false)
+
+    s:onUpdate(16)
+
+    lu.assertFalse(s.triggered)
 end
 
 os.exit(lu.LuaUnit.run())

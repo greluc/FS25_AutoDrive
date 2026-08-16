@@ -17,6 +17,14 @@ function ADSpecialDrivingModule:reset()
     self.motorShouldBeStopped = false
     self.unloadingIntoBunkerSilo = false
     self.stoppedTimer = AutoDriveTON:new()
+    -- Its own timer, and not stoppedTimer, which belongs to the stop-and-hold path: releaseVehicle
+    -- resets that one, which is right where it stands and fatal one line later. driveToPoint called
+    -- releaseVehicle and then ticked the timer it had just zeroed, so a vehicle standing perfectly
+    -- still accumulated one frame and no more - measured at sixteen milliseconds after sixty seconds
+    -- of standstill, with isBlocked false throughout. Sharing it back would only restore that, and
+    -- dropping the reset instead would let a released vehicle carry a stale standstill into the next
+    -- time it stops and cut short the ten seconds before its motor is switched off.
+    self.blockedTimer = AutoDriveTON:new()
     self.vehicle.trailer = {}
     self.isReversing = false
 end
@@ -195,7 +203,7 @@ function ADSpecialDrivingModule:driveToPoint(dt, point, maxFollowSpeed, checkDyn
     else
         self:releaseVehicle()
 
-        self.isBlocked = self.stoppedTimer:timer(self.vehicle.lastSpeedReal < 0.00028, 15000, dt)
+        self.isBlocked = self.blockedTimer:timer(self.vehicle.lastSpeedReal < 0.00028, 15000, dt)
         -- Allow active braking if vehicle is not 'following' targetSpeed precise enough.
         -- Writes the local, not self.acceleration: that member is read by nobody, and the value
         -- passed to driveInDirection below is this local, so the braking never reached the vehicle.

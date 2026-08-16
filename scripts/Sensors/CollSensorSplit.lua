@@ -35,8 +35,6 @@ function ADCollSensorSplit:onUpdate(dt)
     --               \/
 
 
-    self.hit = self.newHit
-    self:setTriggered(self.hit)
     self.newHit = false
     self.boxes = nil
 
@@ -60,6 +58,12 @@ function ADCollSensorSplit:onUpdate(dt)
             end
         end
     end
+    -- Latched AFTER the scans, not before them. See the note in ADCollSensor:onUpdate: the sensor is
+    -- only actually run once per ADSensor.EXECUTION_DELAY polls, so answering with the previous
+    -- scan's outcome cost a full ten frames on top of that throttle - measured at exactly ten in
+    -- every phase. This is the sensor the driver is stopped on.
+    self.hit = self.newHit
+    self:setTriggered(self.hit)
     self:onDrawDebug(self.boxes)
 end
 

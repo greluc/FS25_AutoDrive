@@ -24,6 +24,8 @@ require('StateModule')
 require('TrailerModule')
 require('TrainModule')
 require('CollisionDetectionModule')
+require('AutoDriveTON')
+require('SpecialDrivingModule')
 
 ------------------------------------------------------------------------------------------------------------------------
 --- Globals the engine provides and mock-engine.lua does not (yet) - defined here so this file
@@ -657,6 +659,74 @@ function TestCollisionDetection:testSoloVehicleFallsBackToItsOwnRearSensor()
     module:checkReverseCollision()
 
     lu.assertEquals(polled.object, module.vehicle)
+end
+
+
+------------------------------------------------------------------------------------------------------------------------
+--- driveToPoint has to be able to notice it is not moving
+---
+--- The standstill detection ticked stoppedTimer - the timer releaseVehicle resets - on the line
+--- after calling releaseVehicle. A TON handed a false signal zeroes its elapsed time, so the
+--- standstill could never accumulate past a single frame: measured at sixteen milliseconds after
+--- sixty seconds of standing perfectly still. isBlocked, whose only reader is the stuck recovery
+--- gate in CombineUnloaderMode, was therefore false no matter how long the vehicle was wedged.
+------------------------------------------------------------------------------------------------------------------------
+TestDriveToPointBlocked = {}
+
+local function drivingModule(speed)
+    local m = setmetatable({}, { __index = ADSpecialDrivingModule })
+    m.vehicle = TestSetup.vehicle()
+    m.vehicle.components = { { node = 'dtp' } }
+    MockEngine.nodePositions['dtp'] = { x = 0, y = 0, z = 0 }
+    m.vehicle.lastSpeedReal = speed
+    m.vehicle.ad.stateModule = { getFieldSpeedLimit = function() return 20 end }
+    m.vehicle.ad.trailerModule = { handleTrailerReversing = function() end }
+    ADSpecialDrivingModule.reset(m)
+    AutoDrive.getDriveDirection = function() return 0, 1 end
+    AutoDrive.driveInDirection = function() end
+    return m
+end
+
+function TestDriveToPointBlocked:setUp()
+    TestSetup.reset()
+end
+
+function TestDriveToPointBlocked:testStandingStillEventuallyCountsAsBlocked()
+    local m = drivingModule(0)
+    local point = { x = 0, y = 0, z = 50 }
+
+    -- twenty seconds of being told to drive while not moving an inch
+    for _ = 1, 1250 do
+        m:driveToPoint(16, point, 10, false, 1, 20)
+    end
+
+    lu.assertTrue(m.isBlocked,
+        'a vehicle commanded to drive that has not moved for twenty seconds is blocked, and the '
+        .. 'stuck recovery has nothing else to read')
+end
+
+function TestDriveToPointBlocked:testAMovingVehicleIsNeverBlocked()
+    local m = drivingModule(0.005)
+    local point = { x = 0, y = 0, z = 50 }
+
+    for _ = 1, 1250 do
+        m:driveToPoint(16, point, 10, false, 1, 20)
+    end
+
+    lu.assertFalse(m.isBlocked)
+end
+
+--- And the motor-stop timer keeps its own life: releasing the vehicle still clears it, or a driver
+--- that stopped once would carry that standstill into the next time it halts and cut the ten
+--- seconds before its engine is switched off.
+function TestDriveToPointBlocked:testReleasingStillClearsTheMotorStopTimer()
+    local m = drivingModule(0)
+    m.stoppedTimer:timer(true, 10000, 9000)
+    lu.assertTrue(m.stoppedTimer.elapsedTime > 0, 'test setup')
+
+    m:releaseVehicle()
+
+    lu.assertEquals(m.stoppedTimer.elapsedTime, 0)
 end
 
 os.exit(lu.LuaUnit.run())

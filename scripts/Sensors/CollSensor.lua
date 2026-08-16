@@ -51,13 +51,21 @@ end
 function ADCollSensor:onUpdate(dt)
     self.mask = self:getMask()
     local box = self:getBoxShape()
-    self.hit = self.newHit
-    self:setTriggered(self.hit)
     self.newHit = false
 
     local offsetCompensation = math.max(-math.tan(box.rx) * box.size[3], 0)
     box.y = math.max(getTerrainHeightAtWorldPos(g_currentMission.terrainRootNode, box.x, 300, box.z), box.y) + offsetCompensation
     overlapBox(box.x, box.y, box.z, box.rx, box.ry, 0, box.size[1], box.size[2], box.size[3], "collisionTestCallback", self, self.mask, true, true, true, true)
+
+    -- Latched AFTER the scan, not before it. Answering with the PREVIOUS scan's outcome would be
+    -- harmless if this ran every frame, but it does not: the sensor is only actually run once per
+    -- ADSensor.EXECUTION_DELAY polls, so the deferral costs a full ten frames on top of that
+    -- throttle - measured at exactly ten in every phase of the throttle lattice, which at 60 fps is
+    -- a sixth of a second of continuing to drive at an obstacle. overlapBox is synchronous, as the
+    -- mod's own dimension sensor relies on when it reads its hit count on the very next line, so
+    -- there was nothing to wait for.
+    self.hit = self.newHit
+    self:setTriggered(self.hit)
     self:onDrawDebug(box)
 end
 
