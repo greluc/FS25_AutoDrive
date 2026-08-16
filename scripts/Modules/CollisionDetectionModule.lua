@@ -125,6 +125,11 @@ function ADCollisionDetectionModule:detectAdTrafficOffRoute()
         return self:releaseOffRouteYield()
     end
 
+    -- Whether we stepped over the partner we have already given up on. Remembered across the scan,
+    -- because the release at the bottom would otherwise clear the give-up and the next gate frame
+    -- would start the whole wait again - a cap that restarts is not a cap.
+    local skippedGivenUpPartner = false
+
     local ownX, _, ownZ = getWorldTranslation(self.vehicle.components[1].node)
     -- Nothing beyond this can possibly share a point with us: getUpcomingPathPoints seeds from each
     -- vehicle's own position and stops at AD_TRAFFIC_LOOKAHEAD, so every point it returns lies
@@ -169,7 +174,11 @@ function ADCollisionDetectionModule:detectAdTrafficOffRoute()
                     end
                 end
 
-                if ownBest ~= nil and otherBest ~= nil then
+                if ownBest ~= nil and otherBest ~= nil and other == self.offRouteYieldGaveUpOn then
+                    -- already waited the full cap on this one and drove on; it does not get to stop
+                    -- us again until the conflict has genuinely cleared
+                    skippedGivenUpPartner = true
+                elseif ownBest ~= nil and otherBest ~= nil then
                     local weYield = ownBest > otherBest
                     if ownBest == otherBest then
                         weYield = (self.vehicle.id or 0) > (other.id or 0)
@@ -182,6 +191,11 @@ function ADCollisionDetectionModule:detectAdTrafficOffRoute()
         end
     end
 
+    if not skippedGivenUpPartner then
+        -- nothing left that conflicts with us, so whoever we gave up on earlier is forgiven and may
+        -- stop us again next time. Kept out of releaseOffRouteYield, which the give-up itself calls.
+        self.offRouteYieldGaveUpOn = nil
+    end
     return self:releaseOffRouteYield()
 end
 
@@ -239,8 +253,12 @@ function ADCollisionDetectionModule:holdOffRouteYield(other, ownDistance, otherD
             , tostring(other.getName and other:getName()), g_time - self.offRouteYieldStart)
         end
         -- Through the same release as every other non-yielding exit: giving up on this partner has
-        -- to drop the partner too, or we drive on still nominally held up by it.
-        return self:releaseOffRouteYield()
+        -- to drop the partner too, or we drive on still nominally held up by it. The give-up is
+        -- recorded AFTER that release, which knows nothing about it, so the next gate frame steps
+        -- over this vehicle rather than starting the whole wait afresh.
+        self:releaseOffRouteYield()
+        self.offRouteYieldGaveUpOn = other
+        return false
     end
 
     self.detectedOffRouteTraffic = true
@@ -386,6 +404,12 @@ function ADCollisionDetectionModule:detectAdTrafficOnRoute()
             end
             return self.trafficVehicle ~= nil
         end
+    else
+        -- The mirror of the release in the off-route scan. A partner recorded here and then left
+        -- behind when the route turns off onto a field would sit there unread until the vehicle
+        -- rejoined the network - where the branch above answers from this field alone on its
+        -- non-gate frames, and would report traffic that had long since gone.
+        self.trafficVehicle = nil
     end
     return false
 end

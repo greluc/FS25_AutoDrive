@@ -545,9 +545,12 @@ function TestSteppingOffTheRoute:testALateralTargetIsDrivenToForwards()
         'a target out to the side has to be steered to, not reversed at')
 end
 
+--- Away from any route there is no line to cross, so the asker's own position is the direction -
+--- and an asker straight ahead puts the target straight behind.
 function TestSteppingOffTheRoute:testATargetDeadAsternIsReversedTo()
     AutoDrive.getTractorTrainLength = function() return 0 end
-    local asker = vehicleAt(2, 2, 40, nil)   -- straight ahead, so the target is straight behind
+    moveTo(self.parked, 500, 500)
+    local asker = vehicleAt(2, 500, 520, nil)
     AutoDrive:requestMakeWay(self.parked, asker)
 
     self.task:update(16)
@@ -559,7 +562,8 @@ end
 --- has to degrade to driving forwards rather than to reversing at something it will refuse.
 function TestSteppingOffTheRoute:testALongTrainNeverReverses()
     AutoDrive.getTractorTrainLength = function() return 30 end
-    local asker = vehicleAt(2, 2, 40, nil)
+    moveTo(self.parked, 500, 500)
+    local asker = vehicleAt(2, 500, 520, nil)
     AutoDrive:requestMakeWay(self.parked, asker)
 
     self.task:update(16)
@@ -571,7 +575,8 @@ end
 --- nothing more to give, so the manoeuvre ends and the vehicle is braked again.
 function TestSteppingOffTheRoute:testAnArrivedReverseEndsTheManoeuvre()
     AutoDrive.getTractorTrainLength = function() return 0 end
-    AutoDrive:requestMakeWay(self.parked, vehicleAt(2, 2, 40, nil))
+    moveTo(self.parked, 500, 500)
+    AutoDrive:requestMakeWay(self.parked, vehicleAt(2, 500, 520, nil))
     self.task:update(16)
     lu.assertEquals(self.task.state, WaitForCallTask.STATE_MAKING_WAY)
 
@@ -614,6 +619,75 @@ function TestSteppingOffTheRoute:testTheFrameItArrivesOnStillBrakes()
 
     lu.assertEquals(self.task.state, WaitForCallTask.STATE_WAITING)
     lu.assertEquals(updates, 1)
+end
+
+
+--- The case the earlier fixtures could not express.
+---
+--- Every direction assertion so far placed the vehicle exactly abeam a way point, so the offset from
+--- that point was purely across the route BY CONSTRUCTION and any rule at all would have looked
+--- right. A vehicle parked BETWEEN way points has the nearest one mostly ahead of or behind it, and
+--- "away from the nearest point" is then mostly along the route - the very thing this exists to
+--- stop. What has to be left is the line, so the direction is across it wherever we stand on it.
+function TestSteppingOffTheRoute:testTheDirectionIsAcrossTheRouteWhereverWeStandAlongIt()
+    -- way points sit at z = 0, 4, 8...; park midway between two of them and barely off the line
+    for _, offsetAlong in ipairs({ 0, 1, 2, 3 }) do
+        moveTo(self.parked, 1, 20 + offsetAlong)
+        self.task:setUp()
+
+        self.task:update(16)
+
+        local target = self.task.makeWayTarget
+        lu.assertNotNil(target, string.format('no manoeuvre at offset %d', offsetAlong))
+        local across = math.abs(target.x - 1)
+        local along = math.abs(target.z - (20 + offsetAlong))
+        lu.assertTrue(across > along * 3,
+            string.format('parked %d m along between way points: moved %.1f across and %.1f along',
+                offsetAlong, across, along))
+    end
+end
+
+--- And it must actually end up clear of the line, not merely point away from a point on it.
+function TestSteppingOffTheRoute:testItEndsUpClearOfTheRouteFromAnywhereAlongIt()
+    for _, offsetAlong in ipairs({ 0, 1, 2, 3 }) do
+        moveTo(self.parked, 1, 20 + offsetAlong)
+        self.task:setUp()
+
+        self.task:update(16)
+
+        local target = self.task.makeWayTarget
+        lu.assertTrue(distanceToRoute(target.x, target.z) > AutoDrive.WAITING_NETWORK_CLEARANCE,
+            string.format('offset %d: target still %.1f m from the route',
+                offsetAlong, distanceToRoute(target.x, target.z)))
+    end
+end
+
+--- A request arriving mid-manoeuvre used to be accepted, never read, and then deleted by
+--- stopMakingWay - so the vehicle that sent it had spent its one ask per stuck episode on nothing,
+--- and fell through to reversing itself out fifteen seconds later.
+function TestSteppingOffTheRoute:testARequestArrivingMidManoeuvreSurvivesIt()
+    self.task:update(16)
+    lu.assertEquals(self.task.state, WaitForCallTask.STATE_MAKING_WAY, 'test setup: it has to be moving')
+
+    lu.assertTrue(AutoDrive:requestMakeWay(self.parked, vehicleAt(2, 2, 40, nil)),
+        'a vehicle that is manoeuvring can still be asked, it just cannot act yet')
+
+    self.task:update(WaitForCallTask.MAKE_WAY_TIMEOUT + 1)
+
+    lu.assertEquals(self.task.state, WaitForCallTask.STATE_WAITING)
+    lu.assertNotNil(AutoDrive.getMakeWayRequest(self.parked),
+        'the newer request has never been read and must not be thrown away unread')
+end
+
+function TestSteppingOffTheRoute:testTheServedRequestIsStillCleared()
+    self.task:update(16)
+    local served = AutoDrive.getMakeWayRequest(self.parked)
+    lu.assertNotNil(served)
+
+    self.task:update(WaitForCallTask.MAKE_WAY_TIMEOUT + 1)
+
+    lu.assertNil(AutoDrive.getMakeWayRequest(self.parked),
+        'the one it actually served has to go, or it repeats forever')
 end
 
 

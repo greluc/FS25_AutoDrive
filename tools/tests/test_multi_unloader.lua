@@ -375,6 +375,61 @@ function TestOffRouteLookAhead:testTheTimeoutReleasesThePartner()
         'driving on while still nominally held up by it is the worst of both')
 end
 
+--- A cap that restarts is not a cap. Releasing the yield clears the clock, so without remembering
+--- who we gave up on, the very next gate frame found the same conflict, started a fresh ten second
+--- wait, and the vehicle spent its life alternating between waiting and one frame of driving.
+function TestOffRouteLookAhead:testTheTimeoutDoesNotRearmOnTheNextFrame()
+    local near, far = convergingPair()
+    self.vehicles = { near, far }
+
+    local yields, module = detectsTrafficFor(far)
+    lu.assertTrue(yields)
+
+    g_time = g_time + AutoDrive.AD_TRAFFIC_YIELD_TIMEOUT + 1
+    lu.assertFalse(module:detectAdTrafficOffRoute(), 'the give-up frame itself')
+
+    -- the conflict is unchanged, so a re-arm would show up here
+    for _ = 1, 4 do
+        g_time = g_time + 100
+        lu.assertFalse(module:detectAdTrafficOffRoute(),
+            'having waited the full cap on this vehicle, it must not stop us again')
+    end
+end
+
+--- But once the conflict genuinely clears, that vehicle is forgiven and may stop us next time.
+function TestOffRouteLookAhead:testTheGiveUpIsForgottenWhenTheConflictClears()
+    local near, far = convergingPair()
+    self.vehicles = { near, far }
+    local _, module = detectsTrafficFor(far)
+    g_time = g_time + AutoDrive.AD_TRAFFIC_YIELD_TIMEOUT + 1
+    lu.assertFalse(module:detectAdTrafficOffRoute())
+
+    self.vehicles = { far }
+    lu.assertFalse(module:detectAdTrafficOffRoute(), 'alone, nothing to yield to')
+
+    self.vehicles = { near, far }
+    lu.assertTrue(module:detectAdTrafficOffRoute(),
+        'a fresh encounter with the same vehicle gets the full wait again')
+end
+
+--- The mirror of the off-route release: a partner recorded ON the network and then left behind when
+--- the route turns off onto a field would sit there until the vehicle rejoined the network.
+function TestOffRouteLookAhead:testTheOnRouteScanReleasesItsOwnPartnerOnLeavingTheNetwork()
+    local near, far = convergingPair()
+    self.vehicles = { near, far }
+    local _, module = detectsTrafficFor(far)
+
+    -- as the on-route scan would leave it
+    module.trafficVehicle = near
+    module.offRouteYieldPartner = nil
+    far.ad.drivePathModule.isOnRoadNetwork = function() return false end
+
+    module:detectAdTrafficOnRoute()
+
+    lu.assertNil(module.trafficVehicle,
+        'off the network the on-route scan has to let go of whoever it was holding')
+end
+
 function TestOffRouteLookAhead:testPathsThatDoNotMeetAreIgnored()
     local a = unloaderOnPath(1, 0, 0, { { x = 5, y = 0, z = 0 }, { x = 10, y = 0, z = 0 } }, false)
     local b = unloaderOnPath(2, 0, 500, { { x = 5, y = 0, z = 500 }, { x = 10, y = 0, z = 500 } }, false)

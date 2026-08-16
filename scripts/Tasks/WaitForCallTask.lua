@@ -164,6 +164,67 @@ end
 ---
 --- driveToPoint steers towards the target, so a target off to the side is reached on a curve. Which
 --- is the whole manoeuvre: leave the line, do not travel along it.
+--- Which way to step, as a unit vector in world space.
+---
+--- Away from the nearest way point is NOT it, though that is the obvious answer and was the first
+--- two attempts at this. A vehicle parked between two way points has the nearest one mostly AHEAD of
+--- or BEHIND it along the route, so "away from it" is mostly along the route - which is the very
+--- thing this manoeuvre exists to stop. What has to be left is the LINE, not a point on it, so the
+--- direction is across it: perpendicular to the route where we are standing, towards the side we are
+--- already on.
+---
+--- Only when there is no route nearby does the asker's own position become the best available
+--- direction, and there the point IS the thing to get away from.
+function WaitForCallTask:getEscapeDirection(x, z, request)
+    -- A vehicle can be asked to move before any network exists - a fresh save, or one recorded
+    -- entirely elsewhere - and there is then no line to take a bearing across.
+    local wayPoint = nil
+    if ADGraphManager ~= nil and ADGraphManager.wayPoints ~= nil and #ADGraphManager.wayPoints > 0 then
+        wayPoint = ADGraphManager:getNearestWayPointWithin({x = x, z = z}, AutoDrive.WAITING_NETWORK_CLEARANCE)
+    end
+    if wayPoint ~= nil then
+        local neighbour = nil
+        if wayPoint.out ~= nil and wayPoint.out[1] ~= nil then
+            neighbour = ADGraphManager:getWayPointById(wayPoint.out[1])
+        end
+        if neighbour == nil and wayPoint.incoming ~= nil and wayPoint.incoming[1] ~= nil then
+            neighbour = ADGraphManager:getWayPointById(wayPoint.incoming[1])
+        end
+        if neighbour ~= nil then
+            local routeX, routeZ = neighbour.x - wayPoint.x, neighbour.z - wayPoint.z
+            local routeLength = MathUtil.vector2Length(routeX, routeZ)
+            if routeLength > 0.001 then
+                routeX, routeZ = routeX / routeLength, routeZ / routeLength
+                -- split our offset from the way point into along the route and across it, and keep
+                -- only the across part
+                local offsetX, offsetZ = x - wayPoint.x, z - wayPoint.z
+                local along = offsetX * routeX + offsetZ * routeZ
+                local acrossX = offsetX - along * routeX
+                local acrossZ = offsetZ - along * routeZ
+                local acrossLength = MathUtil.vector2Length(acrossX, acrossZ)
+                if acrossLength > 0.5 then
+                    return acrossX / acrossLength, acrossZ / acrossLength
+                end
+                -- standing on the line itself, so neither side is further from it than the other
+                return -routeZ, routeX
+            end
+        end
+    end
+
+    local dx, dz = x - request.awayFromX, z - request.awayFromZ
+    local length = MathUtil.vector2Length(dx, dz)
+    if length > 0.001 then
+        return dx / length, dz / length
+    end
+    -- standing on the very thing we are clearing, with no route to take a bearing from
+    local rightX, _, rightZ = AutoDrive.localDirectionToWorld(self.vehicle, 1, 0, 0)
+    local rightLength = MathUtil.vector2Length(rightX, rightZ)
+    if rightLength > 0.001 then
+        return rightX / rightLength, rightZ / rightLength
+    end
+    return nil, nil
+end
+
 function WaitForCallTask:startMakingWay()
     local request = AutoDrive.getMakeWayRequest(self.vehicle)
     if request == nil or request.awayFromX == nil or request.awayFromZ == nil then
@@ -172,22 +233,14 @@ function WaitForCallTask:startMakingWay()
     end
 
     local sx, sy, sz = getWorldTranslation(self.vehicle.components[1].node)
-    local dx, dz = sx - request.awayFromX, sz - request.awayFromZ
-    local length = MathUtil.vector2Length(dx, dz)
-    if length < 1 then
-        -- Standing on the very thing we are clearing, so the line through it has no direction in it.
-        -- Our own right is at least across whatever we are lined up with, which is what is wanted.
-        local rx, _, rz = AutoDrive.localDirectionToWorld(self.vehicle, 1, 0, 0)
-        dx, dz = rx, rz
-        length = MathUtil.vector2Length(dx, dz)
-    end
-    if length < 0.001 then
+    local dx, dz = self:getEscapeDirection(sx, sz, request)
+    if dx == nil then
         AutoDrive.clearMakeWayRequest(self.vehicle)
         return
     end
 
-    local tx = sx + (dx / length) * AutoDrive.MAKE_WAY_DISTANCE
-    local tz = sz + (dz / length) * AutoDrive.MAKE_WAY_DISTANCE
+    local tx = sx + dx * AutoDrive.MAKE_WAY_DISTANCE
+    local tz = sz + dz * AutoDrive.MAKE_WAY_DISTANCE
     local ty = getTerrainHeightAtWorldPos(g_currentMission.terrainRootNode, tx, 300, tz)
     self.makeWayTarget = { x = tx, y = ty, z = tz }
 
@@ -204,6 +257,11 @@ function WaitForCallTask:startMakingWay()
         and math.abs(targetLocalX) < math.abs(targetLocalZ) * WaitForCallTask.REVERSE_CONE
 
     self.makeWayStart = { x = sx, y = sy, z = sz }
+    -- Which request this manoeuvre is serving. A second one can arrive while it runs - requestMakeWay
+    -- gates on canMakeWay, a class constant that is true in both states - and it is not read until
+    -- the next waiting frame. Without remembering ours, stopMakingWay would delete that newer
+    -- request unread, and the vehicle that sent it would have spent its one ask for nothing.
+    self.servedRequest = request
 
     self.makeWayTimer:timer(false)
     self.state = WaitForCallTask.STATE_MAKING_WAY
@@ -236,7 +294,12 @@ function WaitForCallTask:updateMakingWay(dt)
 end
 
 function WaitForCallTask:stopMakingWay()
-    AutoDrive.clearMakeWayRequest(self.vehicle)
+    -- Only the request this manoeuvre was for. Anything newer arrived while we were moving, has
+    -- never been read, and the next waiting frame starts a fresh manoeuvre towards it.
+    if AutoDrive.getMakeWayRequest(self.vehicle) == self.servedRequest then
+        AutoDrive.clearMakeWayRequest(self.vehicle)
+    end
+    self.servedRequest = nil
     self.makeWayTarget = nil
     self.makeWayStart = nil
     self.makeWayTimer:timer(false)
