@@ -64,7 +64,7 @@
 		<text name="hud_avoidFruit"									text="AD: Avoid fruit" />
 		<text name="hud_startHelper"									text="AD: Start AI/CP at destination" />
 		<text name="AD_parkVehicle_noPosSet"							text="No parking destination assigned." />
-		<text name="AD_parkVehicle_selected"							text="Chosen parking destination: " />
+		<text name="AD_parkVehicle_selected"							text="Chosen parking destination:" />
 		<text name="AD_parkVehicle_deleted"							text="parking destination deleted!" />
 		<text name="AD_Driver_of"										text="Driver of" />
 		<text name="AD_has_reached"									text="has reached" />
@@ -283,7 +283,7 @@
 		<text name="gui_ad_FoldImplements"								text="Fold implements" />
 		<text name="gui_ad_FoldImplements_tooltip"						text="AutoDrive will wait for implements to fold up before starting" />
 		<text name="gui_ad_RecordWhileNotInVehicle"					text="Record without driver" />
-		<text name="gui_ad_RecordWhileNotInVehicle_tooltip"			text="AutoDrive will keep recording if driver leaves the vehicle.  This setting will not be stored by intention!" />
+		<text name="gui_ad_RecordWhileNotInVehicle_tooltip"			text="AutoDrive will keep recording if driver leaves the vehicle. This setting will not be stored by intention!" />
 		<text name="gui_ad_RecordDriveDirectionOffset"					text="Record offset in driving direction" />
 		<text name="gui_ad_RecordDriveDirectionOffset_tooltip"			text="Move recording from vehicle to the left (-0.1 .. -6m) or right (0.1 .. 6m). Driving reverse wil stop recording!" />
 		<text name="gui_ad_RecordOppositeDriveDirectionOffset"			text="Record offset in opposite driving direction" />

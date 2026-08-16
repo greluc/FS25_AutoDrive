@@ -64,7 +64,7 @@
 		<text name="hud_avoidFruit"									text="AD: Evitar plantações" />
 		<text name="hud_startHelper"									text="AD: Iniciar AI/CP no destino" />
 		<text name="AD_parkVehicle_noPosSet"							text="Nenhum destino de estacionamento atribuído." />
-		<text name="AD_parkVehicle_selected"							text="Destino de estacionamento escolhido: " />
+		<text name="AD_parkVehicle_selected"							text="Destino de estacionamento escolhido:" />
 		<text name="AD_parkVehicle_deleted"							text="destino de estacionamento excluído!" />
 		<text name="AD_Driver_of"										text="Motorista de" />
 		<text name="AD_has_reached"									text="atingiu" />
@@ -130,7 +130,7 @@
 		<text name="gui_ad_autoConnect_end_tooltip"					text="Conecte automaticamente o nó adequado no final da gravação" />
 		<text name="gui_ad_parkInField"								text="Estacionar em campo" />
 		<text name="gui_ad_parkInField_tooltip"						text="Após descarregar uma colheitadeira - se não estiver estacionada na plantação" />
-		<text name="gui_ad_unloadFillLevel"							text="Nível de Descarregamento " />
+		<text name="gui_ad_unloadFillLevel"							text="Nível de Descarregamento" />
 		<text name="gui_ad_unloadFillLevel_tooltip"					text="Descarregar neste n´vel de enchimento." />
 		<text name="gui_ad_findDriver"									text="Procurar motorista" />
 		<text name="gui_ad_findDriver_tooltip"							text="Pesquisar por motoristas próximos (Ignorar destino)" />
@@ -271,7 +271,7 @@
 		<text name="gui_ad_pathfinder"									text="Pathfinder algoritmo" />
 		<text name="gui_ad_pathfinder_tooltip"							text="Escolha qual algoritmo do pathfinder será usado (quando não estiver na rede)" />
 		<text name="gui_ad_pathfinder_astar"							text="A-Star + Dubbins" />
-		<text name="gui_ad_pathfinder_custom"							text="Customizar AutoDrive " />
+		<text name="gui_ad_pathfinder_custom"							text="Customizar AutoDrive" />
 		<text name="gui_ad_enableRoutesManagerOnDediServer"			text="Gerenciador de rotas no Servidor" />
 		<text name="gui_ad_enableRoutesManagerOnDediServer_tooltip"	text="Ativar o gerenciador de rotas em servidores dedicados" />
 		<text name="gui_ad_autostartHelpers"							text="Reiniciar automaticamente os ajudantes" />
@@ -314,7 +314,7 @@
 		<text name="gui_ad_debugChannelPath"							text="Pathfinding" />
 		<text name="gui_ad_debugChannelSensor"							text="Sensores" />
 		<text name="gui_ad_debugChannelNetwork"						text="Rede" />
-		<text name="gui_ad_debugChannelExternalInterface"				text="Interface Externo " />
+		<text name="gui_ad_debugChannelExternalInterface"				text="Interface Externo" />
 		<text name="gui_ad_debugChannelRender"							text="Renderização" />
 		<text name="gui_ad_debugChannelRoadNetwork"					text="Rodovias" />
 		<text name="gui_ad_debugChannelBGA"							text="Modo BGA" />
@@ -354,7 +354,7 @@
 		<text name="ad_color_rightOfWayCenter"							text="29 Right of way Center waypoint" />
 		<text name="button_delete_all"									text="Deletar Todos" />
 		<text name="button_reset_selected"								text="Redefinir selecionado" />
-		<text name="AD_task_pathfinding"								text="Planejando Caminho " />
+		<text name="AD_task_pathfinding"								text="Planejando Caminho" />
 		<text name="AD_task_catch_up_with_combine"						text="Combinar com colheitadeira" />
 		<text name="AD_task_clearcrop"									text="Limpando a colheita" />
 		<text name="AD_task_drive_to_destination"						text="Dirigindo para o destino" />

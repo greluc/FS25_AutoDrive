@@ -64,7 +64,7 @@
 		<text name="hud_avoidFruit"									text="AD: Unikaj upraw" />
 		<text name="hud_startHelper"									text="AD: Uruchom AI/CP po dotarciu do celu" />
 		<text name="AD_parkVehicle_noPosSet"							text="Nie przydzielono parkingu." />
-		<text name="AD_parkVehicle_selected"							text="Obecnie wybrany parking: " />
+		<text name="AD_parkVehicle_selected"							text="Obecnie wybrany parking:" />
 		<text name="AD_parkVehicle_deleted"							text="miejsce parkowania skasowane!" />
 		<text name="AD_Driver_of"										text="Kierowca" />
 		<text name="AD_has_reached"									text="dotarł do" />
@@ -103,7 +103,7 @@
 		<text name="gui_ad_lookahead_turning"							text="Odległość patrzenia w przód (skręcanie)" />
 		<text name="gui_ad_lookahead_turning_tooltip"					text="Odległość jaką pojazd sprawdza przed sobą, aby dostosować sterowanie do następnego segmentu trasy" />
 		<text name="gui_ad_useFastestRoute"							text="Użyj najszybszej trasy" />
-		<text name="gui_ad_useFastestRoute_tooltip"					text="Obliczając najlepsze trasy, weź pod uwagę prędkość jazdy zamiast  samej odległości" />
+		<text name="gui_ad_useFastestRoute_tooltip"					text="Obliczając najlepsze trasy, weź pod uwagę prędkość jazdy zamiast samej odległości" />
 		<text name="gui_ad_mapMarkerDetour"							text="Maksymalny objazd" />
 		<text name="gui_ad_mapMarkerDetour_tooltip"					text="Maksymalny objazd podczas omijania celów" />
 		<text name="gui_ad_siloEmpty"									text="Jeśli silos jest pusty" />
@@ -387,7 +387,7 @@
 		<text name="gui_CPAD_simple"									text="proste" />
 		<text name="gui_CPAD_full"										text="pełne" />
 		<text name="gui_ad_combineCPADHudMouse"						text="połącz przyciski CP/AD" />
-		<text name="gui_ad_combineCPADHudMouse_tooltip"				text="wyłączone: domyślnie / proste: CP: druga akcja myszą  > mysz wł. + wył., AD: Pokaż interfejs > oba interfejsy wł. + wył. / pełne: tak jak proste, ale pokaż interfejsy w prostych krokach / Wymagane: Wyłączenie w ustawieniach CP pokazywania interfejsu za pomocą prawego kliku" />
+		<text name="gui_ad_combineCPADHudMouse_tooltip"				text="wyłączone: domyślnie / proste: CP: druga akcja myszą > mysz wł. + wył., AD: Pokaż interfejs > oba interfejsy wł. + wył. / pełne: tak jak proste, ale pokaż interfejsy w prostych krokach / Wymagane: Wyłączenie w ustawieniach CP pokazywania interfejsu za pomocą prawego kliku" />
 		<text name="gui_ad_editorTip_1"								text="Prosty klik lewym przyciskiem:" />
 		<text name="gui_ad_editorTip_2"								text="Tylko mysz: Zaznacz pierwszy punkt" />
 		<text name="gui_ad_editorTip_3"								text="LCTRL = Utwórz węzeł" />

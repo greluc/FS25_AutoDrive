@@ -64,7 +64,7 @@
 		<text name="hud_avoidFruit"									text="AD: Evita raccolto" />
 		<text name="hud_startHelper"									text="AD: Avvia IA/CP a destinazione" />
 		<text name="AD_parkVehicle_noPosSet"							text="Nessuna destinazione di parcheggio assegnata." />
-		<text name="AD_parkVehicle_selected"							text="Parcheggio veicolo selezionato: " />
+		<text name="AD_parkVehicle_selected"							text="Parcheggio veicolo selezionato:" />
 		<text name="AD_parkVehicle_deleted"							text="Parcheggio cancellato!" />
 		<text name="AD_Driver_of"										text="L'autista di" />
 		<text name="AD_has_reached"									text="Ha raggiunto" />
@@ -76,7 +76,7 @@
 		<text name="AD_No_Bunker"										text="Impossibile trovare il bunker" />
 		<text name="AD_No_Shovel"										text="Impossibile trovare una pala collegata" />
 		<text name="AD_No_Refuel_Station"								text="Impossibile trovare la stazione di rifornimento" />
-		<text name="AD_No_Repair_Station"								text="Impossibile trovare la stazione di riparazione per: " />
+		<text name="AD_No_Repair_Station"								text="Impossibile trovare la stazione di riparazione per:" />
 		<text name="AD_Wrong_Mode_takeover_from_CP"					text="Modalità AD errata per lavorare insieme al CP" />
 		<text name="AD_Unable_to_start_AIJob"							text="Impossibile avviare l'aiutante IA" />
 		<text name="AD_AIJob_active"									text="L'aiutante IA è ancora attivo!" />
@@ -192,7 +192,7 @@
 		<text name="gui_ad_hazardLightReverse_tooltip"					text="Sì - Utilizzare le luci di emergenza durante la guida in retromarcia" />
 		<text name="gui_ad_activeUnloading"							text="Scarico attivo" />
 		<text name="gui_ad_activeUnloading_tooltip"					text="Scaricare le mietitrici durante la guida." />
-		<text name="gui_ad_restrictToField"							text="Pianificazione del percorso limitata " />
+		<text name="gui_ad_restrictToField"							text="Pianificazione del percorso limitata" />
 		<text name="gui_ad_restrictToField_tooltip"					text="Se lo scaricatore è già parcheggiato sul campo, limiterà il rilevamento di percorsi ai limiti del campo." />
 		<text name="gui_ad_showTooltips"								text="Mostra suggerimenti" />
 		<text name="gui_ad_showTooltips_tooltip"						text="Mostra suggerimenti dei tasti della HUD." />
@@ -213,7 +213,7 @@
 		<text name="gui_ad_enterDestinationFilterText"					text="Inserisci testo filtro:" />
 		<text name="gui_ad_shovelHeight"								text="Altezza pala" />
 		<text name="gui_ad_shovelHeight_tooltip"						text="Se l'altezza della pala rilevata automaticamente non è corretta. Utilizzare questo valore per regolare l'altezza dal suolo" />
-		<text name="gui_ad_showMarkersOnMap"							text="Visualizza marcatori " />
+		<text name="gui_ad_showMarkersOnMap"							text="Visualizza marcatori" />
 		<text name="gui_ad_showMarkersOnMap_tooltip"					text="Visualizza marcatori/destinazioni sulla mappa in gioco" />
 		<text name="gui_ad_mainMenuMap"								text="Main menu map" />
 		<text name="gui_ad_ingameMap"									text="Ingame map" />

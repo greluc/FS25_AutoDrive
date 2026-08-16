@@ -64,7 +64,7 @@
 		<text name="hud_avoidFruit"									text="AD: Fruchtumfahrung" />
 		<text name="hud_startHelper"									text="AD: Starte AI/CP Fahrer am Zielpunkt" />
 		<text name="AD_parkVehicle_noPosSet"							text="Kein Parkplatz zugewiesen." />
-		<text name="AD_parkVehicle_selected"							text="Als Parkplatz zugewiesen: " />
+		<text name="AD_parkVehicle_selected"							text="Als Parkplatz zugewiesen:" />
 		<text name="AD_parkVehicle_deleted"							text="Parkplatz gelöscht!" />
 		<text name="AD_Driver_of"										text="Der Fahrer von" />
 		<text name="AD_has_reached"									text="ist angekommen bei" />
@@ -283,7 +283,7 @@
 		<text name="gui_ad_FoldImplements"								text="Anbaugeräte einklappen" />
 		<text name="gui_ad_FoldImplements_tooltip"						text="AutoDrive wird vorm Losfahren auf das Einklappen von Anbaugeräten warten." />
 		<text name="gui_ad_RecordWhileNotInVehicle"					text="Aufnahme ohne Fahrer" />
-		<text name="gui_ad_RecordWhileNotInVehicle_tooltip"			text="AutoDrive wird die Aufnahme nicht beenden, wenn der Fahrer das Fahrzeug verlässt.  Diese Einstellung wird absichtlich nicht gespeichert!" />
+		<text name="gui_ad_RecordWhileNotInVehicle_tooltip"			text="AutoDrive wird die Aufnahme nicht beenden, wenn der Fahrer das Fahrzeug verlässt. Diese Einstellung wird absichtlich nicht gespeichert!" />
 		<text name="gui_ad_RecordDriveDirectionOffset"					text="Aufzeichnung Versatz Fahrtrichtung" />
 		<text name="gui_ad_RecordDriveDirectionOffset_tooltip"			text="verschiebt die Aufzeichnung vom Fahrzeug nach links (-0.1 .. -6m) oder rechts (0.1 .. 6m). Rückwärts fahren deaktiviert die Aufnahme!" />
 		<text name="gui_ad_RecordOppositeDriveDirectionOffset"			text="Aufzeichnung Versatz Gegenrichtung" />
@@ -387,7 +387,7 @@
 		<text name="gui_CPAD_simple"									text="einfach" />
 		<text name="gui_CPAD_full"										text="voll" />
 		<text name="gui_ad_combineCPADHudMouse"						text="Kombiniere CP/AD Buttons" />
-		<text name="gui_ad_combineCPADHudMouse_tooltip"				text="aus: default / einfach: CP: sek. Maus-Aktion > Maus an + aus, AD: HUD ein/ausblenden > beide HUDs an + aus / voll: wie 'einfach', aber HUDs können einzeln durchgeschaltet werden / Erforderlich: Deaktiviere Rechtsklick HUD im CP-Menü " />
+		<text name="gui_ad_combineCPADHudMouse_tooltip"				text="aus: default / einfach: CP: sek. Maus-Aktion > Maus an + aus, AD: HUD ein/ausblenden > beide HUDs an + aus / voll: wie 'einfach', aber HUDs können einzeln durchgeschaltet werden / Erforderlich: Deaktiviere Rechtsklick HUD im CP-Menü" />
 		<text name="gui_ad_editorTip_1"								text="Einfacher Mausklick links:" />
 		<text name="gui_ad_editorTip_2"								text="Nur Maus: 1. Punkt auswählen" />
 		<text name="gui_ad_editorTip_3"								text="LSTRG = Punkt erstellen" />

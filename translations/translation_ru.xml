@@ -64,12 +64,12 @@
 		<text name="hud_avoidFruit"									text="AD: Избегать посевов" />
 		<text name="hud_startHelper"									text="AD: Запустить AI/CP в пункте назначения" />
 		<text name="AD_parkVehicle_noPosSet"							text="Место для парковки не назначено. Чтобы назначить выбранную локацию, как место парковки, нажмите правой кнопкой мыши на этой же кнопке." />
-		<text name="AD_parkVehicle_selected"							text="Выбранное место для парковки: " />
+		<text name="AD_parkVehicle_selected"							text="Выбранное место для парковки:" />
 		<text name="AD_parkVehicle_deleted"							text="место для парковки удалено!" />
 		<text name="AD_Driver_of"										text="Водитель на" />
 		<text name="AD_has_reached"									text="прибыл к" />
 		<text name="AD_got_stuck"										text="застрял" />
-		<text name="AD_cannot_reach"									text="не может доехать до локации " />
+		<text name="AD_cannot_reach"									text="не может доехать до локации" />
 		<text name="AD_cannot_find_path"								text="не может рассчитать маршрут к" />
 		<text name="AD_new_marker"										text="Новая локация:" />
 		<text name="AD_No_Trailer"										text="не может найти прицеп" />
@@ -134,7 +134,7 @@
 		<text name="gui_ad_unloadFillLevel_tooltip"					text="После разгрузки комбайна и заполнения до этого уровня, перейти к доставке собранного на склад." />
 		<text name="gui_ad_findDriver"									text="Поиск разгружающего водителя" />
 		<text name="gui_ad_findDriver_tooltip"							text="Поиск ближайших водителей (игнорируя пункт назначения)." />
-		<text name="gui_ad_gui_scale"									text="Масштаб HUD AutoDrive " />
+		<text name="gui_ad_gui_scale"									text="Масштаб HUD AutoDrive" />
 		<text name="gui_ad_gui_scale_tooltip"							text="Оставьте значение по умолчанию и будут использования настройки масштаба в игре." />
 		<text name="gui_ad_notifications"								text="Уведомления" />
 		<text name="gui_ad_notifications_text_1"						text="отключить" />
@@ -336,7 +336,7 @@
 		<text name="ad_color_selectedNode"								text="11 выделенная путевая точка" />
 		<text name="ad_color_currentConnection"						text="12 линия планируемого пути" />
 		<text name="ad_color_closestLine"								text="13 линия от техники до ближайшей путевой точки" />
-		<text name="ad_color_editorHeightLine"							text="14 линия от поверхности путевой точки к точке над техникой " />
+		<text name="ad_color_editorHeightLine"							text="14 линия от поверхности путевой точки к точке над техникой" />
 		<text name="ad_color_previewSingleConnection"					text="15 предпросмотр кривой OK, однонаправленное соединение" />
 		<text name="ad_color_previewDualConnection"					text="16 предпросмотр кривой OK, двунаправленное соединение" />
 		<text name="ad_color_previewSubPrioSingleConnection"			text="17 предпросмотр кривой OK, вторичное однонаправленное соединение" />

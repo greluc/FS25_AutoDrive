@@ -64,7 +64,7 @@
 		<text name="hud_avoidFruit"									text="AD: Éviter les cultures" />
 		<text name="hud_startHelper"									text="AD: Démarrer AI/CP à la destination" />
 		<text name="AD_parkVehicle_noPosSet"							text="Pas de parking attribué. Veuillez sélectionner la (Destination actuelle) et corriger avec le clic droit de souris sur le 'P' HUD." />
-		<text name="AD_parkVehicle_selected"							text="Parking assigné: " />
+		<text name="AD_parkVehicle_selected"							text="Parking assigné:" />
 		<text name="AD_parkVehicle_deleted"							text="Le parking en destination a été supprimé !" />
 		<text name="AD_Driver_of"										text="Le chauffeur de" />
 		<text name="AD_has_reached"									text="est arrivé à" />

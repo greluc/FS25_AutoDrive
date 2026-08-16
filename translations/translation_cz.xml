@@ -33,7 +33,7 @@
 		<text name="input_ADDebugChangeNeighbor"						text="AD: Změnit sousední bod" />
 		<text name="input_ADDebugPreviousNeighbor"						text="AD: Vybrat předchozí Sousední bod" />
 		<text name="input_ADDebugCreateConnection"						text="AD: Vytvořit spojení" />
-		<text name="input_ADDebugToggleConnectionInverted"				text="AD: Přepnout spojení mezi obrácené " />
+		<text name="input_ADDebugToggleConnectionInverted"				text="AD: Přepnout spojení mezi obrácené" />
 		<text name="input_ADDebugCreateMapMarker"						text="AD: Vytvořit nový cíl" />
 		<text name="input_ADRenameMapMarker"							text="AD: Přejmenovat cíl" />
 		<text name="input_ADDebugDeleteWayPoint"						text="AD: Smazat cíl" />
@@ -51,7 +51,7 @@
 		<text name="input_ADDecLoopCounter"							text="AD: Snížit počet jízd" />
 		<text name="input_ADbunkerUnloadType"							text="AD: Vyložit do vleku nebo BGA" />
 		<text name="input_ADParkVehicle"								text="AD: Zaparkovat vozidlo" />
-		<text name="input_ADSetParkDestination"						text="AD: přiřadit 1. cíl pro parkování " />
+		<text name="input_ADSetParkDestination"						text="AD: přiřadit 1. cíl pro parkování" />
 		<text name="input_ADRefuelVehicle"								text="AD: Dotankovat vozidlo" />
 		<text name="input_ADRepairVehicle"								text="AD: Opravit vozidlo" />
 		<text name="input_ADSwapTargets"								text="AD: Zaměnit cíle" />
@@ -64,7 +64,7 @@
 		<text name="hud_avoidFruit"									text="AD: Nevjíždět do porostu" />
 		<text name="hud_startHelper"									text="AD: Start AI/CP v místě určení" />
 		<text name="AD_parkVehicle_noPosSet"							text="Vozidlo nemá parkoviště. Vyberte cíl a stiskněte pravé tlačítko myši." />
-		<text name="AD_parkVehicle_selected"							text="Zvolená parkovací zóna: " />
+		<text name="AD_parkVehicle_selected"							text="Zvolená parkovací zóna:" />
 		<text name="AD_parkVehicle_deleted"							text="cíl parkování smazán!" />
 		<text name="AD_Driver_of"										text="Řidič" />
 		<text name="AD_has_reached"									text="Stojí" />
@@ -166,7 +166,7 @@
 		<text name="gui_ad_ground"										text="Na úrovni terénu" />
 		<text name="gui_ad_aboveDriver"								text="Nad vozidlem" />
 		<text name="gui_ad_enableTrafficDetection"						text="Detekovat kolize" />
-		<text name="gui_ad_enableTrafficDetection_tooltip"				text="Pokročilá detekce překážek. Zahrnuje např. AI-provoz, značky, ploty,  atd. Off, detect FS 22 or FS 19 collision" />
+		<text name="gui_ad_enableTrafficDetection_tooltip"				text="Pokročilá detekce překážek. Zahrnuje např. AI-provoz, značky, ploty, atd. Off, detect FS 22 or FS 19 collision" />
 		<text name="gui_ad_shovelWidth"								text="Šířka lžíce" />
 		<text name="gui_ad_shovelWidth_tooltip"						text="Pokud není šířka lžíce správně detekována, bude použita tato hodnota" />
 		<text name="gui_ad_preCallLevel"								text="Zavolat odvozce při naplnění" />
@@ -241,7 +241,7 @@
 		<text name="gui_ad_scaleMarkerText"							text="Měřítko názvu cíle" />
 		<text name="gui_ad_scaleMarkerText_tooltip"					text="Velikost měřítka názvů cílů" />
 		<text name="gui_ad_syncMultiTargets"							text="Synchronizujte více cílů" />
-		<text name="gui_ad_syncMultiTargets_tooltip"					text="Více řidičů používá stejnou složku s více cíly a budou  sychronizovány s dalšími cíly" />
+		<text name="gui_ad_syncMultiTargets_tooltip"					text="Více řidičů používá stejnou složku s více cíly a budou sychronizovány s dalšími cíly" />
 		<text name="gui_ad_enableParkAtJobFinished"					text="Zaparkovat po dokončení práce" />
 		<text name="gui_ad_enableParkAtJobFinished_tooltip"			text="K dispozici pouze v režimech Vyzvednutí a doručení, Doručit: Je-li úloha dokončena, bude vozidlo přistaveno na uloženou parkovací pozici / u závěsoviny na jeho určené místo. Na dedikovaném server je k dispozici pouze pro parkovací místo vozidla!" />
 		<text name="gui_ad_autoTipSide"								text="Automatická volba strany vykládky" />

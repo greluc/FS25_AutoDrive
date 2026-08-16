@@ -64,7 +64,7 @@
 		<text name="hud_avoidFruit"									text="AD: Undgå afgrøder" />
 		<text name="hud_startHelper"									text="AD: Start AI/CP ved destinationen" />
 		<text name="AD_parkVehicle_noPosSet"							text="Ingen parkerings destination tildelt. Tildel det aktuelt valgte mål med højre museknap." />
-		<text name="AD_parkVehicle_selected"							text="Vælg parkering destination: " />
+		<text name="AD_parkVehicle_selected"							text="Vælg parkering destination:" />
 		<text name="AD_parkVehicle_deleted"							text="Parkering destination slettet!" />
 		<text name="AD_Driver_of"										text="Kører af" />
 		<text name="AD_has_reached"									text="har nået" />

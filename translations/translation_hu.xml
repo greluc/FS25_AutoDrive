@@ -19,13 +19,13 @@
 		<text name="input_ADRecord_SubPrioDual_TwoWay"					text="AD: Record 2 routes simultanous 2 way secondary route" />
 		<text name="input_ADSelectTarget"								text="AD: Cél választás" />
 		<text name="input_ADSelectPreviousTarget"						text="AD: Előző cél választás" />
-		<text name="input_AD_Speed_up"									text="AD: Sebesség növelése " />
+		<text name="input_AD_Speed_up"									text="AD: Sebesség növelése" />
 		<text name="input_AD_Speed_down"								text="AD: Sebesség csökkentése" />
 		<text name="input_AD_routes_manager"							text="AD: Útvonalkezelő megnyitása" />
 		<text name="input_AD_open_notification_history"				text="AD: Előzmények megnyitása" />
 		<text name="input_AD_open_colorSettings"						text="AD: Color Assignments" />
 		<text name="input_AD_continue"									text="AD: Folytatás" />
-		<text name="input_ADSelectTargetUnload"						text="AD: Következő kirakodás " />
+		<text name="input_ADSelectTargetUnload"						text="AD: Következő kirakodás" />
 		<text name="input_ADSelectPreviousTargetUnload"				text="AD: Előző kirakodás" />
 		<text name="input_ADActivateDebug"								text="AD: Szerkesztés" />
 		<text name="input_ADDisplayMapPoints"							text="AD: Útvonalpontok megjelenítése" />
@@ -37,7 +37,7 @@
 		<text name="input_ADDebugCreateMapMarker"						text="AD: Cél létrehozása/szerkesztése" />
 		<text name="input_ADRenameMapMarker"							text="AD: Kijelölt cél szerkesztése" />
 		<text name="input_ADDebugDeleteWayPoint"						text="AD: Útpont törlés" />
-		<text name="input_ADDebugDeleteDestination"					text="AD: A legközelebbi cél törlése " />
+		<text name="input_ADDebugDeleteDestination"					text="AD: A legközelebbi cél törlése" />
 		<text name="input_ADSelectNextFillType"						text="AD: Következő termék" />
 		<text name="input_ADSelectPreviousFillType"					text="AD: Előző termék" />
 		<text name="input_ADOpenGUI"									text="AD: GUI nyitás" />
@@ -64,7 +64,7 @@
 		<text name="hud_avoidFruit"									text="AD: Termény kikerülése" />
 		<text name="hud_startHelper"									text="AD: AI/CP indítása az úticélnál" />
 		<text name="AD_parkVehicle_noPosSet"							text="Járműnek nincs parkolója. Jobb egérgombbal rendeljen hozzá parkolási helyet." />
-		<text name="AD_parkVehicle_selected"							text="Kiválasztott parkolóhely: " />
+		<text name="AD_parkVehicle_selected"							text="Kiválasztott parkolóhely:" />
 		<text name="AD_parkVehicle_deleted"							text="parking destination deleted!" />
 		<text name="AD_Driver_of"										text="Sofőr ki" />
 		<text name="AD_has_reached"									text="Megérkezett" />
@@ -246,7 +246,7 @@
 		<text name="gui_ad_enableParkAtJobFinished_tooltip"			text="Csak az Átvétel és kézbesítés, kézbesítés módokban érhető el: Ha a munka befejeződött, a jármű / tartozék tárolt parkolási pozíciójába kerül. A Dedi-Server-en csak a jármű parkolóhelye áll rendelkezésre!" />
 		<text name="gui_ad_autoTipSide"								text="Automatikus billentési oldal" />
 		<text name="gui_ad_autoTipSide_tooltip"						text="Igen - Az AutoDrive automatikusan kiválasztja a billentési oldalt / Nem - a már kiválasztott billentési oldalt fogja használni" />
-		<text name="gui_ad_autoTrailerCover"							text="Automatikus pótkocsi fedél " />
+		<text name="gui_ad_autoTrailerCover"							text="Automatikus pótkocsi fedél" />
 		<text name="gui_ad_autoTrailerCover_tooltip"					text="Igen - az AutoDrive szükség esetén nyissa meg és zárja be a pótkocsi fedelét / Nem - az AutoDrive nem nyitja vagy zárja le a pótkocsi fedelét" />
 		<text name="gui_ad_useForwardTurningManoeuvre"					text="Forwards turning manoeuvre" />
 		<text name="gui_ad_useForwardTurningManoeuvre_tooltip"			text="Yes - AutoDrive unloaders try to plan a path forwards to adapt to 90° turns of the combine. / No - Unloaders will reverse before turn" />
@@ -362,7 +362,7 @@
 		<text name="AD_task_drive_to_combine_pipe"						text="Vezetés a kombánhoz" />
 		<text name="AD_task_unloading_combine"							text="Kombájn ürítés" />
 		<text name="AD_task_reversing_from_combine"					text="Tolatás a kombájntól" />
-		<text name="AD_task_waiting_for_space"							text="Várakozás a megfelelő méretű helyre a manőverzéshez " />
+		<text name="AD_task_waiting_for_space"							text="Várakozás a megfelelő méretű helyre a manőverzéshez" />
 		<text name="AD_task_wait_for_combine_turn"						text="Kombájnra várás" />
 		<text name="AD_task_drive_to_load_point"						text="Hajtson a rakodási ponthoz" />
 		<text name="AD_task_drive_to_refuel_point"						text="Hajtson az üzemanyagtöltési ponthoz" />

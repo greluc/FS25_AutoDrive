@@ -64,12 +64,12 @@
 		<text name="hud_avoidFruit"									text="AD: Уникати посівів" />
 		<text name="hud_startHelper"									text="AD: Запустити AI/CP в пункті призначення" />
 		<text name="AD_parkVehicle_noPosSet"							text="Місце для паркування не назначено. Щоб назначити вибрану локацію, як місце паркування, нажміть правою кнопкою миші на цій же кнопці." />
-		<text name="AD_parkVehicle_selected"							text="Вибране місце для паркування: " />
+		<text name="AD_parkVehicle_selected"							text="Вибране місце для паркування:" />
 		<text name="AD_parkVehicle_deleted"							text="місце для паркування видалено!" />
 		<text name="AD_Driver_of"										text="Водій на" />
 		<text name="AD_has_reached"									text="прибув до" />
 		<text name="AD_got_stuck"										text="застряг" />
-		<text name="AD_cannot_reach"									text="не може доїхати до локації " />
+		<text name="AD_cannot_reach"									text="не може доїхати до локації" />
 		<text name="AD_cannot_find_path"								text="не може розрахувати маршрут до" />
 		<text name="AD_new_marker"										text="Нова локація:" />
 		<text name="AD_No_Trailer"										text="не може знайти причіп" />
@@ -134,7 +134,7 @@
 		<text name="gui_ad_unloadFillLevel_tooltip"					text="Після розвантаження комбайна та заповнення до цього рівня, перейти до перевезення зібраного на склад." />
 		<text name="gui_ad_findDriver"									text="Пошук розвантажуючого водія" />
 		<text name="gui_ad_findDriver_tooltip"							text="Пошук найближчого водія (ігноруючи пункт призначення)." />
-		<text name="gui_ad_gui_scale"									text="Масштаб HUD AutoDrive " />
+		<text name="gui_ad_gui_scale"									text="Масштаб HUD AutoDrive" />
 		<text name="gui_ad_gui_scale_tooltip"							text="Залиште значення за замовчуванням і буде використовувати налаштування масштабу в грі." />
 		<text name="gui_ad_notifications"								text="Сповіщення" />
 		<text name="gui_ad_notifications_text_1"						text="вимкнути" />
@@ -259,7 +259,7 @@
 		<text name="gui_ad_AL_behind"									text="Розвантаження позаду" />
 		<text name="gui_ad_AL_right"									text="Розвантаження вправо" />
 		<text name="gui_ad_ALUnloadWaitTime"							text="Автозавантаження: очікування після розвантаження" />
-		<text name="gui_ad_ALUnloadWaitTime_tooltip"					text="Час очікування після розвантаження, перш ніж продовжити рух - корисно для розвантаження в центр: 0 = не очікувати, чи  очікувати вказаний час." />
+		<text name="gui_ad_ALUnloadWaitTime_tooltip"					text="Час очікування після розвантаження, перш ніж продовжити рух - корисно для розвантаження в центр: 0 = не очікувати, чи очікувати вказаний час." />
 		<text name="gui_ad_scanConfirmationTextTitle"					text="AutoDrive - Генерація маршрутної мережі" />
 		<text name="gui_ad_scanConfirmationText"						text="Чи повинен AutoDrive генерувати маршрутну мережу на основі даних про трафік та помічниках на карті?" />
 		<text name="gui_ad_noHarvesterAvailable"						text="Немає комбайну з тією ж ціллю" />
@@ -267,7 +267,7 @@
 		<text name="gui_ad_remainingDriveTimeInterval"					text="Час водіння, що залишився" />
 		<text name="gui_ad_remainingDriveTimeInterval_tooltip"			text="Для зовнішній модів: час, що залишився для їзди. Якщо у вас є проблеми з продуктивністю, збільшити або деактивувати." />
 		<text name="gui_ad_adpd_showError"								text="AutoDrive: Мережа несумісна і не може бути імпортована, код помилки" />
-		<text name="gui_ad_adpd_showConfirmation"						text="AutoDrive: Ви хотіли б імпортувати AD  мережу з розміщуваних об'єктів?" />
+		<text name="gui_ad_adpd_showConfirmation"						text="AutoDrive: Ви хотіли б імпортувати AD мережу з розміщуваних об'єктів?" />
 		<text name="gui_ad_pathfinder"									text="Алгоритм шукача маршруту" />
 		<text name="gui_ad_pathfinder_tooltip"							text="Виберіть алгоритм шукача маршруту, який буде використовуватися (якщо не в мережі)" />
 		<text name="gui_ad_pathfinder_astar"							text="A-Star + Dubbins" />
