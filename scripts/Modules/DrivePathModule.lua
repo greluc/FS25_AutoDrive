@@ -560,13 +560,6 @@ function ADDrivePathModule:getApproachingHeightDiff()
     return heightDiff
 end
 
---- The speed a bend of this radius may be taken at, from a sideways acceleration budget:
---- v = sqrt(a_lat * R). Unlike the angle between two way points, radius does not change with how
---- densely the route happens to be recorded, so the same physical bend gives the same answer
---- whether it was driven slowly or quickly when it was laid down.
----
---- The per-vehicle cornerSpeed setting still scales the result, and is the knob for anyone who
---- wants the old, faster feel back.
 --- The old angle curve, kept because it covers the case the radius does not.
 ---
 --- Radius assumes the way points SAMPLE a bend. Where they instead describe it - a hand placed
@@ -584,8 +577,17 @@ function ADDrivePathModule.speedForAngle(angle)
     return 3
 end
 
---- The curve on its own, with no settings lookup, so the scan can call it once per way point
---- without going through the settings layer several hundred times on a densely recorded route.
+--- The speed a bend of this radius may be taken at, from a sideways acceleration budget:
+--- v = sqrt(a_lat * R). Unlike the angle between two way points, radius does not change with how
+--- densely the route happens to be recorded, so the same physical bend gives the same answer
+--- whether it was driven slowly or quickly when it was laid down.
+---
+--- The per-vehicle cornerSpeed setting still scales the result, and is the knob for anyone who
+--- wants the old, faster feel back.
+---
+--- No settings lookup of its own, so the scan can call it once per way point without going through
+--- the settings layer several hundred times on a densely recorded route; getMaxSpeedForRadius and
+--- the scan apply the setting.
 function ADDrivePathModule.speedForRadius(radius)
     if radius == nil or radius >= ADDrivePathModule.MAX_CORNER_RADIUS then
         return math.huge

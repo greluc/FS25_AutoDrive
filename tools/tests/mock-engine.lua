@@ -350,6 +350,7 @@ function MockEngine.reset()
     MockEngine.terrainHeight = 0
     g_currentMission.nodeToObject = {}
     MockEngine.deletedNodes = {}
+    MockEngine.reverseReportsArrived = false
     g_currentMission.vehicleSystem.vehicles = {}
     g_updateLoopIndex = 0
     Logging.reset()

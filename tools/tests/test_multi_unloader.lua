@@ -342,6 +342,39 @@ function TestOffRouteLookAhead:testTheTrafficVehicleIsReleasedWhenTheDriverStops
     lu.assertNil(module.trafficVehicle)
 end
 
+--- trafficVehicle has two writers and hasDetectedObstable runs the on-route check FIRST, so
+--- clearing the field unconditionally wipes what that check had just recorded - one frame after it
+--- recorded it, and it answers from the field on its own non-gate frames.
+function TestOffRouteLookAhead:testItOnlyClearsThePartnerItSetItself()
+    local near, far = convergingPair()
+    self.vehicles = { near, far }
+    local _, module = detectsTrafficFor(far)
+
+    -- the on-route check records somebody of its own, as it does on every network frame
+    local somebodyElse = { id = 99 }
+    module.trafficVehicle = somebodyElse
+    far.ad.drivePathModule.isOnRoadNetwork = function() return true end
+
+    module:detectAdTrafficOffRoute()
+
+    lu.assertIs(module.trafficVehicle, somebodyElse,
+        'the off-route scan must not wipe a partner the on-route scan owns')
+end
+
+--- Giving up on a partner after the timeout has to drop the partner too.
+function TestOffRouteLookAhead:testTheTimeoutReleasesThePartner()
+    local near, far = convergingPair()
+    self.vehicles = { near, far }
+    local _, module = detectsTrafficFor(far)
+    lu.assertNotNil(module.trafficVehicle)
+
+    g_time = g_time + AutoDrive.AD_TRAFFIC_YIELD_TIMEOUT + 1
+    lu.assertFalse(module:detectAdTrafficOffRoute())
+
+    lu.assertNil(module.trafficVehicle,
+        'driving on while still nominally held up by it is the worst of both')
+end
+
 function TestOffRouteLookAhead:testPathsThatDoNotMeetAreIgnored()
     local a = unloaderOnPath(1, 0, 0, { { x = 5, y = 0, z = 0 }, { x = 10, y = 0, z = 0 } }, false)
     local b = unloaderOnPath(2, 0, 500, { { x = 5, y = 0, z = 500 }, { x = 10, y = 0, z = 500 } }, false)

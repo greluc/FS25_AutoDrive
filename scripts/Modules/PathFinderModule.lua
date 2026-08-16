@@ -405,6 +405,20 @@ function PathFinderModule:startPathPlanningToWayPoint(wayPointId, destinationId,
     return
 end
 
+--- Where this search is ultimately headed, which is not always what it is steering the grid towards.
+---
+--- For a search onto the way point network, self.target is the JOINING point - a few metres away,
+--- chosen by selectNetworkEntryPoint - and the real destination sits at the end of the network path
+--- appended after it. The shared-target test compares against another vehicle's final way point, so
+--- it has to be given ours, or a driver leaving for the far side of the map reads as sharing a
+--- destination with anything parked near its entry point.
+function PathFinderModule:getSearchDestination()
+    if self.appendWayPoints ~= nil and #self.appendWayPoints > 0 then
+        return self.appendWayPoints[#self.appendWayPoints]
+    end
+    return self.target
+end
+
 function PathFinderModule:startPathPlanningToPipe(combine, chasing)
     PathFinderModule.debugMsg(self.vehicle, "PathFinderModule:startPathPlanningToPipe chasing %s"
         , tostring(chasing)
@@ -1424,7 +1438,7 @@ function PathFinderModule:checkGridCell(cell)
         local vectorZ = worldPosPrevious.z - worldPos.z
         local dirVec = { x=vectorX, z = vectorZ}
 
-        local cellUsedByVehiclePath = AutoDrive.checkForVehiclePathInBox(corners, self.minTurnRadius, self.vehicle, dirVec, self.target)
+        local cellUsedByVehiclePath = AutoDrive.checkForVehiclePathInBox(corners, self.minTurnRadius, self.vehicle, dirVec, self:getSearchDestination())
         cell.isRestricted = cell.isRestricted or cellUsedByVehiclePath
         self.blockedByOtherVehicle = self.blockedByOtherVehicle or cellUsedByVehiclePath
         if self.vehicle ~= nil and self.vehicle.ad ~= nil and self.vehicle.ad.debug ~= nil and AutoDrive.debugVehicleMsg ~= nil then
@@ -2393,7 +2407,7 @@ function PathFinderModule:smoothResultingPPPath_Refined()
 
                 if not hasCollision then
                     local cellBox = AutoDrive.boundingBoxFromCorners(cornerX, cornerZ, corner2X, corner2Z, corner3X, corner3Z, corner4X, corner4Z)
-                    hasCollision = hasCollision or AutoDrive.checkForVehiclePathInBox(cellBox, self.minTurnRadius, self.vehicle, nil, self.target)
+                    hasCollision = hasCollision or AutoDrive.checkForVehiclePathInBox(cellBox, self.minTurnRadius, self.vehicle, nil, self:getSearchDestination())
 
                     if hasCollision then
                         if self.vehicle ~= nil and self.vehicle.ad ~= nil and self.vehicle.ad.debug ~= nil and AutoDrive.debugVehicleMsg ~= nil then
@@ -2854,7 +2868,7 @@ function PathFinderModule:isDriveableAstar(cell)
         local vectorZ = worldPosPrevious.z - worldPos.z
         local dirVec = { x=vectorX, z = vectorZ}
 
-        local cellUsedByVehiclePath = AutoDrive.checkForVehiclePathInBox(corners, self.minTurnRadius, self.vehicle, dirVec, self.target)
+        local cellUsedByVehiclePath = AutoDrive.checkForVehiclePathInBox(corners, self.minTurnRadius, self.vehicle, dirVec, self:getSearchDestination())
         cell.isRestricted = cell.isRestricted or cellUsedByVehiclePath
         self.blockedByOtherVehicle = self.blockedByOtherVehicle or cellUsedByVehiclePath
         if cellUsedByVehiclePath then
@@ -3304,7 +3318,7 @@ function PathFinderModule:isDriveableDubins(cell)
         local vectorZ = worldPosPrevious.z - cell.worldPos.z
         local dirVec = { x=vectorX, z = vectorZ}
 
-        local cellUsedByVehiclePath = AutoDrive.checkForVehiclePathInBox(corners, self.minTurnRadius, self.vehicle, dirVec, self.target)
+        local cellUsedByVehiclePath = AutoDrive.checkForVehiclePathInBox(corners, self.minTurnRadius, self.vehicle, dirVec, self:getSearchDestination())
         cell.isRestricted = cell.isRestricted or cellUsedByVehiclePath
         self.blockedByOtherVehicle = self.blockedByOtherVehicle or cellUsedByVehiclePath
         if cellUsedByVehiclePath then

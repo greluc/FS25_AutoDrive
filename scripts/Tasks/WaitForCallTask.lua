@@ -29,6 +29,17 @@ end
 --- spot, not to complete a manoeuvre.
 WaitForCallTask.MAKE_WAY_TIMEOUT = 20000
 
+--- How far astern a target has to be, beyond the length of the train, before it is reversed to, and
+--- how far off dead astern it may sit.
+---
+--- The reverse controller measures arrival from the REVERSE NODE - the towed implement's axle, well
+--- behind the root this target was measured from - and treats anything more than eighty degrees off
+--- that node's rear axis as already reached. It then returns without commanding drive or brake, so a
+--- target out to the side would leave the vehicle rolling free for the whole timeout. Forward steers
+--- towards anything; reverse only works for something genuinely behind the whole train.
+WaitForCallTask.REVERSE_ASTERN_MARGIN = 4
+WaitForCallTask.REVERSE_CONE = 0.4
+
 function WaitForCallTask:new(vehicle)
     local o = WaitForCallTask:create()
     o.vehicle = vehicle
@@ -65,13 +76,6 @@ function WaitForCallTask:update(dt)
     end
 end
 
---- Nobody has to complain for a spot to be a bad one. A vehicle that comes to rest on the way point
---- network is standing on somebody's route - on many fields a collection route runs along the inside
---- of the border, all the way round to the exit - and every full trailer heading that way has to get
---- past it. So it checks its own spot and moves clear without being asked.
----
---- Capped, because on a densely recorded field the clearance may not exist anywhere nearby, and a
---- vehicle wandering the field in search of it is worse than one parked slightly awkwardly.
 --- Whether we are standing on the destination the player sent us to. Their choice outranks any
 --- tidying of our own, and a marker is a way point, so without this the clearance check fires on
 --- every driver that has finished its route.
@@ -92,6 +96,13 @@ function WaitForCallTask:isParkedOnItsOwnMarker()
     return MathUtil.vector2Length(wayPoint.x - x, wayPoint.z - z) < AutoDrive.WAITING_NETWORK_CLEARANCE
 end
 
+--- Nobody has to complain for a spot to be a bad one. A vehicle that comes to rest on the way point
+--- network is standing on somebody's route - on many fields a collection route runs along the inside
+--- of the border, all the way round to the exit - and every full trailer heading that way has to get
+--- past it. So it checks its own spot and moves clear without being asked.
+---
+--- Capped, because on a densely recorded field the clearance may not exist anywhere nearby, and a
+--- vehicle wandering the field in search of it is worse than one parked slightly awkwardly.
 function WaitForCallTask:checkParkedOnNetwork()
     if not AutoDrive.getSetting("waitingPosition", self.vehicle) then
         return
@@ -174,11 +185,17 @@ function WaitForCallTask:startMakingWay()
     local ty = getTerrainHeightAtWorldPos(g_currentMission.terrainRootNode, tx, 300, tz)
     self.makeWayTarget = { x = tx, y = ty, z = tz }
 
-    -- Reverse only when the target is genuinely behind us. Computed against the target's real
-    -- height: passing 0 for y on a map whose ground sits at fifty to a hundred and fifty metres
-    -- makes the vehicle's own pitch decide the direction rather than the geometry.
-    local _, _, targetLocalZ = AutoDrive.worldToLocal(self.vehicle, tx, ty, tz)
-    self.makeWayReverse = targetLocalZ < 0
+    -- Reverse only for a target genuinely astern of the whole train, and near enough dead astern
+    -- that the reverse controller will actually drive to it rather than declare it reached. A train
+    -- longer than the step-aside distance therefore never reverses, which is the safe way round:
+    -- forward steers towards anything. Computed against the target's real height, because passing 0
+    -- for y on a map whose ground sits at fifty to a hundred and fifty metres lets the vehicle's own
+    -- pitch decide the direction instead of the geometry.
+    local targetLocalX, _, targetLocalZ = AutoDrive.worldToLocal(self.vehicle, tx, ty, tz)
+    local trainLength = AutoDrive.getTractorTrainLength ~= nil
+        and AutoDrive.getTractorTrainLength(self.vehicle, true, false) or 0
+    self.makeWayReverse = targetLocalZ < -(trainLength + WaitForCallTask.REVERSE_ASTERN_MARGIN)
+        and math.abs(targetLocalX) < math.abs(targetLocalZ) * WaitForCallTask.REVERSE_CONE
 
     self.makeWayStart = { x = sx, y = sy, z = sz }
 
@@ -200,7 +217,13 @@ function WaitForCallTask:updateMakingWay(dt)
     end
 
     if self.makeWayReverse then
-        self.vehicle.ad.specialDrivingModule:reverseToTargetLocation(dt, self.makeWayTarget, 6)
+        -- A true return means the controller considers itself there - which it also does when the
+        -- target is too far off its own rear axis to drive to. Either way there is nothing more it
+        -- will do, and it commands no brake on that path, so the manoeuvre has to end rather than
+        -- leave the vehicle released and rolling for the rest of the timeout.
+        if self.vehicle.ad.specialDrivingModule:reverseToTargetLocation(dt, self.makeWayTarget, 6) then
+            self:stopMakingWay()
+        end
     else
         self.vehicle.ad.specialDrivingModule:driveToPoint(dt, self.makeWayTarget, 8, true, 0.5, 8)
     end

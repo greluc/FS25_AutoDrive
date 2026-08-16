@@ -200,10 +200,18 @@ end
 --- the isOnRoadNetwork check, and that transition is how every path search ends, so leaving a
 --- partner behind there would have the on-network check reporting traffic for the rest of the drive.
 function ADCollisionDetectionModule:releaseOffRouteYield()
+    -- Only what this scan put there. trafficVehicle has two writers, and hasDetectedObstable runs
+    -- detectAdTrafficOnRoute BEFORE this one - so clearing the field unconditionally on the
+    -- isOnRoadNetwork path wipes the partner the on-route check had just recorded, one frame after
+    -- it recorded it, and that check answers from the field on its own non-gate frames. Identity
+    -- separates the owners: offRouteYieldPartner is written in lockstep with our own writes and the
+    -- on-route check never touches it.
+    if self.trafficVehicle ~= nil and self.trafficVehicle == self.offRouteYieldPartner then
+        self.trafficVehicle = nil
+    end
     self.offRouteYieldStart = nil
     self.offRouteYieldPartner = nil
     self.detectedOffRouteTraffic = false
-    self.trafficVehicle = nil
     return false
 end
 
@@ -230,7 +238,9 @@ function ADCollisionDetectionModule:holdOffRouteYield(other, ownDistance, otherD
             AutoDrive.debugMsg(self.vehicle, "CDM: detectAdTrafficOffRoute gave way to %s for %d ms without it clearing - driving on"
             , tostring(other.getName and other:getName()), g_time - self.offRouteYieldStart)
         end
-        return false
+        -- Through the same release as every other non-yielding exit: giving up on this partner has
+        -- to drop the partner too, or we drive on still nominally held up by it.
+        return self:releaseOffRouteYield()
     end
 
     self.detectedOffRouteTraffic = true

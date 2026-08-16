@@ -43,7 +43,12 @@ local function vehicleAt(id, x, z, activeTask)
         releaseVehicle = function() end,
         update = function() end,
         driveToPoint = function(_, _, point) driveCalls[#driveCalls + 1] = { v = id, what = 'forward', point = point } end,
-        reverseToTargetLocation = function(_, _, point) driveCalls[#driveCalls + 1] = { v = id, what = 'reverse', point = point } end,
+        reverseToTargetLocation = function(_, _, point)
+            driveCalls[#driveCalls + 1] = { v = id, what = 'reverse', point = point }
+            -- the real one returns true when it considers itself there, which it also does for a
+            -- target too far off its own rear axis to drive to
+            return MockEngine.reverseReportsArrived == true
+        end,
     }
     return v
 end
@@ -519,6 +524,63 @@ function TestSteppingOffTheRoute:testItStopsReportingOnceTheManoeuvreEnds()
     self.task:update(WaitForCallTask.MAKE_WAY_TIMEOUT + 1)
 
     lu.assertFalse(self.task:isMakingWay())
+end
+
+
+--- Reverse is only for a target genuinely astern of the whole train.
+---
+--- The reverse controller measures arrival from the reverse node - the towed implement's axle, well
+--- behind the root the target was measured from - and calls anything over eighty degrees off that
+--- node's rear axis already reached. It then returns without commanding drive OR brake, and since
+--- starting a manoeuvre releases the vehicle, a target out to the side left it rolling free for the
+--- whole twenty second timeout.
+function TestSteppingOffTheRoute:testALateralTargetIsDrivenToForwards()
+    -- the asker is abeam, so the escape target is too
+    local asker = vehicleAt(2, 20, 20, nil)
+    AutoDrive:requestMakeWay(self.parked, asker)
+
+    self.task:update(16)
+
+    lu.assertEquals(lastDrive().what, 'forward',
+        'a target out to the side has to be steered to, not reversed at')
+end
+
+function TestSteppingOffTheRoute:testATargetDeadAsternIsReversedTo()
+    AutoDrive.getTractorTrainLength = function() return 0 end
+    local asker = vehicleAt(2, 2, 40, nil)   -- straight ahead, so the target is straight behind
+    AutoDrive:requestMakeWay(self.parked, asker)
+
+    self.task:update(16)
+
+    lu.assertEquals(lastDrive().what, 'reverse')
+end
+
+--- A train longer than the step-aside distance can never put a target far enough astern, and that
+--- has to degrade to driving forwards rather than to reversing at something it will refuse.
+function TestSteppingOffTheRoute:testALongTrainNeverReverses()
+    AutoDrive.getTractorTrainLength = function() return 30 end
+    local asker = vehicleAt(2, 2, 40, nil)
+    AutoDrive:requestMakeWay(self.parked, asker)
+
+    self.task:update(16)
+
+    lu.assertEquals(lastDrive().what, 'forward')
+end
+
+--- And the backstop: whatever the geometry, a reverse controller that reports itself arrived has
+--- nothing more to give, so the manoeuvre ends and the vehicle is braked again.
+function TestSteppingOffTheRoute:testAnArrivedReverseEndsTheManoeuvre()
+    AutoDrive.getTractorTrainLength = function() return 0 end
+    AutoDrive:requestMakeWay(self.parked, vehicleAt(2, 2, 40, nil))
+    self.task:update(16)
+    lu.assertEquals(self.task.state, WaitForCallTask.STATE_MAKING_WAY)
+
+    MockEngine.reverseReportsArrived = true
+    self.task:update(16)
+
+    lu.assertEquals(self.task.state, WaitForCallTask.STATE_WAITING,
+        'nothing else would brake the vehicle for the rest of the timeout')
+    lu.assertEquals(lastDrive().what, 'stop')
 end
 
 
