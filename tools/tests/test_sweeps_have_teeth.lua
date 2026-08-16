@@ -1,12 +1,17 @@
 --[[
-Proof that the sweeps in test_geometry_sweeps.lua would have caught the defects they were written
-for.
+Proof that the sweeps can tell a good rule from the bad one it replaced.
 
-A green test says nothing on its own; four rounds of this work were green while the code was wrong.
-So each sweep is re-run here against the BROKEN rule it exists to reject, and this file fails if any
-of them would have passed anyway. That is the difference between a test and a test that works.
+A green test says nothing on its own; several rounds of this work were green while the code was
+wrong. So each sweep is run again here with a HISTORICAL rule swapped into the production module in
+place of the current one, and this file fails if the sweep would have passed anyway.
 
-The broken versions are transcribed from the actual commits, named in each case.
+The distinction that matters, and which the first attempt at this file got wrong: it runs the SAME
+functions from sweep-lib.lua, against the SAME module, with one function replaced. It does not
+re-implement the sweep. A re-implementation proves only that the re-implementation works - which is
+the same mistake, asserting a copy of the thing instead of the thing, that this whole exercise is
+about.
+
+Each broken rule below is transcribed from the commit named above it.
 ]]
 
 lu = require('luaunit')
@@ -18,28 +23,57 @@ require('PathCalculation')
 require('GraphManager')
 require('DrivePathModule')
 require('CollisionDetectionModule')
+require('ExternalInterface')
+require('AbstractTask')
+require('WaitForCallTask')
+require('sweep-lib')
 
 ------------------------------------------------------------------------------------------------------------------------
 TestSweepsHaveTeeth = {}
 
 function TestSweepsHaveTeeth:setUp()
     TestSetup.reset()
+    g_time = 10000
     AutoDrive.testSettings['cornerSpeed'] = 1.0
+    AutoDrive.testSettings['waitingPosition'] = true
+end
+
+--- Swap a function into a table, run something, put the original back whatever happens.
+local function withReplaced(holder, name, replacement, body)
+    local original = holder[name]
+    holder[name] = replacement
+    local ok, a, b, c = pcall(body)
+    holder[name] = original
+    if not ok then
+        error(a, 0)
+    end
+    return a, b, c
 end
 
 ------------------------------------------------------------------------------------------------------------------------
---- 1. The step-aside direction, in both of the versions that got it wrong
+--- The step-aside direction, in both versions that got it wrong
 ------------------------------------------------------------------------------------------------------------------------
 
---- Commit 5824007 and e1e224f respectively: the vehicle's own axis, then away from the nearest way
---- point. Both leave the route only when the vehicle happens to sit exactly abeam a way point.
-local function brokenDirectionOwnAxis(x, z, routeDX, routeDZ)
-    -- a vehicle that drove the route is aligned with it, so its own axis IS the route direction
-    return routeDX, routeDZ
+--- Commit 5824007: the target went along the vehicle's own axis. A driver that has just driven the
+--- route is aligned with it, so that is along the route.
+local function directionAlongOwnAxis(self, x, z, request)
+    local fx, _, fz = AutoDrive.localDirectionToWorld(self.vehicle, 0, 0, 1)
+    local l = MathUtil.vector2Length(fx, fz)
+    if l < 0.001 then
+        return nil, nil
+    end
+    return fx / l, fz / l
 end
 
-local function brokenDirectionAwayFromPoint(x, z, wpX, wpZ)
-    local dx, dz = x - wpX, z - wpZ
+--- Commit e1e224f: away from the nearest way point. Correct only when the vehicle happens to stand
+--- exactly abeam one, which is what every fixture of the day did.
+local function directionAwayFromNearestPoint(self, x, z, request)
+    local wp = ADGraphManager:getNearestWayPointWithin({x = x, z = z}, AutoDrive.WAITING_NETWORK_CLEARANCE)
+    local ax, az = request.awayFromX, request.awayFromZ
+    if wp ~= nil then
+        ax, az = wp.x, wp.z
+    end
+    local dx, dz = x - ax, z - az
     local l = MathUtil.vector2Length(dx, dz)
     if l < 0.001 then
         return 1, 0
@@ -47,226 +81,140 @@ local function brokenDirectionAwayFromPoint(x, z, wpX, wpZ)
     return dx / l, dz / l
 end
 
-local function distanceToLine(x, z, dx, dz)
-    local along = x * dx + z * dz
-    return MathUtil.vector2Length(x - along * dx, z - along * dz)
-end
-
---- The sweep's invariant: after stepping, be further from the route line by at least the clearance.
---- Returns how many swept configurations violate it.
-local function sweepDirection(directionFor)
-    local violations = 0
-    for _, headingDeg in ipairs({ 0, 17, 45, 90, 143 }) do
-        local rad = math.rad(headingDeg)
-        local dx, dz = math.cos(rad), math.sin(rad)
-        local px, pz = -dz, dx
-        for _, spacing in ipairs({ 1, 2, 4, 8, 12 }) do
-            for _, alongFraction in ipairs({ 0, 0.17, 0.35, 0.5, 0.73, 0.9 }) do
-                for _, lateral in ipairs({ -6, -2.5, -0.4, 0.4, 2.5, 6 }) do
-                    local along = 20 * spacing + alongFraction * spacing
-                    local x, z = dx * along + px * lateral, dz * along + pz * lateral
-                    -- the nearest way point on this route
-                    local nearestAlong = math.floor(along / spacing + 0.5) * spacing
-                    local wpX, wpZ = dx * nearestAlong, dz * nearestAlong
-
-                    local ex, ez = directionFor(x, z, wpX, wpZ, dx, dz)
-                    local tx, tz = x + ex * AutoDrive.MAKE_WAY_DISTANCE, z + ez * AutoDrive.MAKE_WAY_DISTANCE
-                    local gained = distanceToLine(tx, tz, dx, dz) - distanceToLine(x, z, dx, dz)
-                    if gained <= AutoDrive.WAITING_NETWORK_CLEARANCE then
-                        violations = violations + 1
-                    end
-                end
-            end
-        end
+--- Commit cadce5f: across the route, but always to the side the vehicle happened to be on, with no
+--- regard for where the asker stands.
+local function directionAcrossIgnoringTheAsker(self, x, z, request)
+    local wp = ADGraphManager:getNearestWayPointWithin({x = x, z = z}, AutoDrive.WAITING_NETWORK_CLEARANCE)
+    if wp == nil then
+        return directionAwayFromNearestPoint(self, x, z, request)
     end
-    return violations
+    local neighbour = nil
+    if wp.out ~= nil and wp.out[1] ~= nil then
+        neighbour = ADGraphManager:getWayPointById(wp.out[1])
+    end
+    if neighbour == nil and wp.incoming ~= nil and wp.incoming[1] ~= nil then
+        neighbour = ADGraphManager:getWayPointById(wp.incoming[1])
+    end
+    if neighbour == nil then
+        return directionAwayFromNearestPoint(self, x, z, request)
+    end
+    local rx, rz = neighbour.x - wp.x, neighbour.z - wp.z
+    local rl = MathUtil.vector2Length(rx, rz)
+    if rl < 0.001 then
+        return directionAwayFromNearestPoint(self, x, z, request)
+    end
+    rx, rz = rx / rl, rz / rl
+    local ox, oz = x - wp.x, z - wp.z
+    local along = ox * rx + oz * rz
+    local acrossX, acrossZ = ox - along * rx, oz - along * rz
+    local acrossLength = MathUtil.vector2Length(acrossX, acrossZ)
+    if acrossLength > 0.5 then
+        return acrossX / acrossLength, acrossZ / acrossLength
+    end
+    return -rz, rx
 end
 
-function TestSweepsHaveTeeth:testTheDirectionSweepRejectsTheOwnAxisVersion()
-    local violations = sweepDirection(function(x, z, wpX, wpZ, dx, dz)
-        return brokenDirectionOwnAxis(x, z, dx, dz)
-    end)
+function TestSweepsHaveTeeth:testTheRouteSweepRejectsTheOwnAxisVersion()
+    local violations = withReplaced(WaitForCallTask, 'getEscapeDirection', directionAlongOwnAxis,
+        function() return Sweeps.escapeLeavesTheRoute() end)
+
     lu.assertTrue(violations > 0,
         'the own-axis version left the route in every swept configuration, which cannot be right')
 end
 
-function TestSweepsHaveTeeth:testTheDirectionSweepRejectsTheAwayFromPointVersion()
-    local violations = sweepDirection(function(x, z, wpX, wpZ, dx, dz)
-        return brokenDirectionAwayFromPoint(x, z, wpX, wpZ)
-    end)
+function TestSweepsHaveTeeth:testTheRouteSweepRejectsTheAwayFromPointVersion()
+    local violations = withReplaced(WaitForCallTask, 'getEscapeDirection', directionAwayFromNearestPoint,
+        function() return Sweeps.escapeLeavesTheRoute() end)
+
     lu.assertTrue(violations > 0,
-        'away-from-the-nearest-point passed the sweep, so the sweep would not have caught it')
+        'away-from-the-nearest-point passed the route sweep, so the sweep would not have caught it')
 end
 
---- And the fixture the old tests used - exactly abeam a way point - lets the broken rule through,
---- which is why four rounds of green tests meant nothing.
-function TestSweepsHaveTeeth:testTheOldPointFixtureAcceptsTheBrokenVersion()
-    local dx, dz = 0, 1                 -- route along +Z, as the old fixture had it
-    local x, z = 2, 20                  -- exactly abeam the way point at (0, 20)
-    local ex, ez = brokenDirectionAwayFromPoint(x, z, 0, 20)
-    local tx, tz = x + ex * AutoDrive.MAKE_WAY_DISTANCE, z + ez * AutoDrive.MAKE_WAY_DISTANCE
-    local gained = distanceToLine(tx, tz, dx, dz) - distanceToLine(x, z, dx, dz)
+--- The version that leaves the route correctly but drives at whoever asked. Only the asker sweep
+--- can see this one, which is why both exist.
+function TestSweepsHaveTeeth:testTheAskerSweepRejectsTheVersionThatIgnoresTheAsker()
+    local routeViolations = withReplaced(WaitForCallTask, 'getEscapeDirection', directionAcrossIgnoringTheAsker,
+        function() return Sweeps.escapeLeavesTheRoute() end)
+    local askerViolations = withReplaced(WaitForCallTask, 'getEscapeDirection', directionAcrossIgnoringTheAsker,
+        function() return Sweeps.escapeOpensAGapForTheAsker() end)
 
-    lu.assertTrue(gained > AutoDrive.WAITING_NETWORK_CLEARANCE,
+    lu.assertEquals(routeViolations, 0,
+        'this version does leave the route - if the route sweep caught it, the two sweeps are not independent')
+    lu.assertTrue(askerViolations > 0,
+        'driving straight at the asker passed the asker sweep, so that sweep proves nothing')
+end
+
+--- And the fixture the old tests used - exactly abeam a way point - lets the broken rule through.
+--- This is the entire explanation for the rounds of green tests over wrong code.
+function TestSweepsHaveTeeth:testTheOldPointFixtureAcceptsTheBrokenVersion()
+    local dx, dz = Sweeps.installRoute(90, 4, 40)          -- route along +Z, as the old fixture had it
+    local x, z = 2, 20                                      -- exactly abeam the way point at (0, 20)
+    local task = Sweeps.parkedTask(x, z)
+
+    local ex, ez = withReplaced(WaitForCallTask, 'getEscapeDirection', directionAwayFromNearestPoint,
+        function() return task:getEscapeDirection(x, z, { time = g_time, awayFromX = 2, awayFromZ = 40 }) end)
+
+    local tx, tz = x + ex * AutoDrive.MAKE_WAY_DISTANCE, z + ez * AutoDrive.MAKE_WAY_DISTANCE
+    lu.assertTrue(Sweeps.distanceToLine(tx, tz, dx, dz) > AutoDrive.WAITING_NETWORK_CLEARANCE,
         'the old single-point fixture is exactly the configuration where the broken rule looks right')
 end
 
 ------------------------------------------------------------------------------------------------------------------------
---- 2. turnAngle, tested before accumulating
+--- turnAngle, tested before accumulating
 ------------------------------------------------------------------------------------------------------------------------
 
---- Commit e1e224f's predecessor: the window test gated the accumulation instead of following it, so
---- the triple straddling the edge was dropped and a window shorter than one segment dropped all.
-local function brokenTurnAngle(wayPoints, index, vehicleX, reach)
-    local turnAngle = 0
+--- The version before commit cadce5f: the window test gated the accumulation instead of following
+--- it, so the triple straddling the edge was dropped, and a window shorter than one segment dropped
+--- every one.
+local function cornerLimitWithTestFirstTurnAngle(self, currentLimit, cornerScale, cornerFloor)
+    local wayPoints = self.wayPoints
+    local index = self:getCurrentWayPointIndex()
+    self.turnAngle = 0
+    if wayPoints == nil or index == nil or index < 2 or (index + 1) > #wayPoints then
+        return math.huge
+    end
+    local x, _, z = getWorldTranslation(self.vehicle.components[1].node)
     local anchor = wayPoints[index]
-    local base = math.abs(anchor.x - vehicleX)
-    local turnAngleReach = reach - base
+    local baseDistance = MathUtil.vector2Length(anchor.x - x, anchor.z - z)
+    local turnAngleReach = (self.distanceToLookAhead or 0) - baseDistance
+    local turnAngleOpen = (index + 2) < #wayPoints
     local i = index
-    local open = (index + 2) < #wayPoints
-    while (i + 1) <= #wayPoints and open do
+
+    while (i + 1) <= #wayPoints and turnAngleOpen do
         local ref, current, ahead = wayPoints[i - 1], wayPoints[i], wayPoints[i + 1]
-        if ref == nil or ahead == nil then break end
-        local signed = AutoDrive.angleBetween(
-            {x = ahead.x - current.x, z = ahead.z - current.z},
-            {x = current.x - ref.x, z = current.z - ref.z})
+        if ref == nil or ahead == nil then
+            break
+        end
+        local _, _, signed = self:getCornerRadius(ref, current, ahead)
         if (i - index + 1) <= ADDrivePathModule.MAXLOOKAHEADPOINTS
             and MathUtil.vector2Length(anchor.x - ahead.x, anchor.z - ahead.z) <= turnAngleReach then
-            turnAngle = turnAngle + math.clamp(signed, -90, 90)
+            if signed ~= nil then
+                self.turnAngle = self.turnAngle + math.clamp(signed, -90, 90)
+            end
         else
-            open = false
+            turnAngleOpen = false
         end
         i = i + 1
     end
-    return turnAngle
-end
-
-local function correctTurnAngle(wayPoints, index, vehicleX, reach)
-    local turnAngle = 0
-    local anchor = wayPoints[index]
-    local base = math.abs(anchor.x - vehicleX)
-    local turnAngleReach = reach - base
-    local i = index
-    local open = (index + 2) < #wayPoints
-    while (i + 1) <= #wayPoints and open do
-        local ref, current, ahead = wayPoints[i - 1], wayPoints[i], wayPoints[i + 1]
-        if ref == nil or ahead == nil then break end
-        local signed = AutoDrive.angleBetween(
-            {x = ahead.x - current.x, z = ahead.z - current.z},
-            {x = current.x - ref.x, z = current.z - ref.z})
-        turnAngle = turnAngle + math.clamp(signed, -90, 90)
-        if (i - index + 1) >= ADDrivePathModule.MAXLOOKAHEADPOINTS
-            or MathUtil.vector2Length(anchor.x - ahead.x, anchor.z - ahead.z) > turnAngleReach then
-            open = false
-        end
-        i = i + 1
-    end
-    return turnAngle
-end
-
-local function vertexRoute(spacing, angleDeg, straightCount)
-    local points = {}
-    for i = 1, straightCount do
-        points[i] = { x = (i - 1) * spacing, y = 0, z = 0 }
-    end
-    local cx, cz = points[#points].x, points[#points].z
-    local rad = math.rad(angleDeg)
-    for i = 1, 12 do
-        points[#points + 1] = { x = cx + math.cos(rad) * spacing * i,
-                                z = cz + math.sin(rad) * spacing * i, y = 0 }
-    end
-    return points
+    return math.huge
 end
 
 function TestSweepsHaveTeeth:testTheTurnAngleSweepRejectsTheTestFirstVersion()
-    local differences, atFourMetres = 0, 0
-    for _, spacing in ipairs({ 1, 2, 4, 6, 12 }) do
-        for _, reach in ipairs({ 5, 11, 16, 20, 40, 67 }) do
-            for _, backOff in ipairs({ 0.1, 0.5, 0.95 }) do
-                local points = vertexRoute(spacing, 70, 6)
-                local vehicleX = points[6].x - spacing * backOff
-                local broken = brokenTurnAngle(points, 6, vehicleX, reach)
-                local correct = correctTurnAngle(points, 6, vehicleX, reach)
-                if math.abs(broken - correct) > 0.0001 then
-                    differences = differences + 1
-                    if spacing == 4 then
-                        atFourMetres = atFourMetres + 1
-                    end
-                end
-            end
-        end
-    end
+    local violations = withReplaced(ADDrivePathModule, 'getCornerSpeedLimit', cornerLimitWithTestFirstTurnAngle,
+        function() return Sweeps.turnAngleMatchesTheOriginal(Sweeps.theOriginalTurnAngleRule) end)
 
-    lu.assertTrue(differences > 0, 'the two rules never differ, so the sweep proves nothing')
-    lu.assertTrue(differences > atFourMetres,
-        'they only differ at four metre spacing, which is what every old fixture used')
+    lu.assertTrue(violations > 0,
+        'testing the window before accumulating passed the sweep, so the sweep proves nothing')
 end
 
 ------------------------------------------------------------------------------------------------------------------------
---- 3. Right of way, decided on the first qualifying pair
+--- Corner speed from the angle alone
 ------------------------------------------------------------------------------------------------------------------------
 
---- Commit 5824007: return on the first pair within range where our distance is the greater. The pair
---- test is symmetric, so both vehicles find such a pair and both stop.
-local function brokenYields(ownPoints, ownDistances, otherPoints, otherDistances)
-    for i, a in ipairs(ownPoints) do
-        for j, b in ipairs(otherPoints) do
-            local dx, dz = a.x - b.x, a.z - b.z
-            if (dx * dx + dz * dz) < (AutoDrive.AD_TRAFFIC_CONFLICT_RANGE * AutoDrive.AD_TRAFFIC_CONFLICT_RANGE) then
-                if ownDistances[i] > otherDistances[j] then
-                    return true
-                end
-            end
-        end
-    end
-    return false
-end
-
-local function pathTowardsOrigin(bearingDeg, distance, spacing)
-    local rad = math.rad(bearingDeg)
-    local dx, dz = math.cos(rad), math.sin(rad)
-    local points, distances = {}, {}
-    local d = distance - spacing
-    while d > -12 do
-        points[#points + 1] = { x = -dx * d, y = 0, z = -dz * d }
-        distances[#distances + 1] = distance - d
-        d = d - spacing
-    end
-    return points, distances
-end
-
-function TestSweepsHaveTeeth:testTheCrossingSweepRejectsTheFirstPairVersion()
-    local bothYielded, onOneLine = 0, 0
-
-    for _, crossingDeg in ipairs({ 30, 60, 90, 120, 150 }) do
-        for _, spacing in ipairs({ 2, 3, 5 }) do
-            local aP, aD = pathTowardsOrigin(0, 15, spacing)
-            local bP, bD = pathTowardsOrigin(crossingDeg, 15, spacing)
-            if brokenYields(aP, aD, bP, bD) and brokenYields(bP, bD, aP, aD) then
-                bothYielded = bothYielded + 1
-            end
-        end
-    end
-
-    -- the old fixture: both on the same line, one path a subset of the other
-    local aP, aD = pathTowardsOrigin(0, 15, 3)
-    local bP, bD = pathTowardsOrigin(0, 27, 3)
-    if brokenYields(aP, aD, bP, bD) and brokenYields(bP, bD, aP, aD) then
-        onOneLine = onOneLine + 1
-    end
-
-    lu.assertTrue(bothYielded > 0,
-        'no swept crossing made both vehicles yield, so the sweep would not have caught it')
-    lu.assertEquals(onOneLine, 0,
-        'the old same-line fixture cannot produce the conflict at all, which is why it passed')
-end
-
-------------------------------------------------------------------------------------------------------------------------
---- 4. Corner speed from the angle alone
-------------------------------------------------------------------------------------------------------------------------
-
-local function brokenSpeedForAngle(angle)
-    if angle < 5 then
+--- Before commit 06ba93e: corner speed straight from the angle between two way points, which is
+--- curvature TIMES spacing and therefore reads a densely recorded bend as gentle.
+local function angleOnlyCornerSpeed(radius, angle)
+    if angle == nil or angle < 5 then
         return math.huge
     elseif angle < 50 then
         return 12 + 48 * (1 - math.clamp((angle - 5), 0, 25) / (30 - 5))
@@ -275,51 +223,93 @@ local function brokenSpeedForAngle(angle)
 end
 
 function TestSweepsHaveTeeth:testTheLateralBudgetSweepRejectsTheAngleOnlyRule()
-    local worst, worstCase = 0, nil
-    for _, radius in ipairs({ 8, 12, 20, 35, 60 }) do
-        for _, spacing in ipairs({ 0.5, 1, 2, 4 }) do
-            local anglePerTriple = math.deg(spacing / radius)
-            local allowed = brokenSpeedForAngle(anglePerTriple)
-            if allowed < math.huge then
-                local lateral = (allowed / 3.6) ^ 2 / radius
-                if lateral > worst then
-                    worst = lateral
-                    worstCase = string.format('radius %g m at %g m spacing: %.1f km/h = %.1f m/s2',
-                        radius, spacing, allowed, lateral)
-                end
-            end
-        end
-    end
+    local violations = withReplaced(ADDrivePathModule, 'cornerSpeedFor', angleOnlyCornerSpeed,
+        function() return Sweeps.lateralBudgetIsRespected() end)
 
-    lu.assertTrue(worst > ADDrivePathModule.CORNER_LATERAL_ACCELERATION * 2,
-        string.format('the angle-only rule stayed within twice the budget, so the sweep proves nothing (%s)',
-            tostring(worstCase)))
+    lu.assertTrue(violations > 0,
+        'the angle-only rule stayed inside the lateral budget on every swept bend, which it does not')
+end
+
+--- And which sweep does NOT catch it, recorded so nobody assumes one covers the other.
+---
+--- The angle rule's density dependence runs the other way: finer recording gives smaller angles and
+--- therefore MORE speed, so a coarser recording is never the faster one and coarserRecordingIsNeverFaster
+--- sees nothing. It is the lateral budget that catches this, because the danger is the fine end being
+--- allowed a speed the bend cannot take. Two sweeps, two different defects; the density one exists
+--- for the opposite mistake, a rule that grows cautious only when the points happen to be close.
+function TestSweepsHaveTeeth:testTheDensitySweepAloneWouldNotHaveCaughtTheAngleRule()
+    local densityViolations = withReplaced(ADDrivePathModule, 'cornerSpeedFor', angleOnlyCornerSpeed,
+        function() return Sweeps.coarserRecordingIsNeverFaster() end)
+    local budgetViolations = withReplaced(ADDrivePathModule, 'cornerSpeedFor', angleOnlyCornerSpeed,
+        function() return Sweeps.lateralBudgetIsRespected() end)
+
+    lu.assertEquals(densityViolations, 0,
+        'the angle rule is slower when coarse, so this sweep cannot be the one that catches it')
+    lu.assertTrue(budgetViolations > 0,
+        'and the budget sweep has to be, or nothing covers the defect at all')
 end
 
 ------------------------------------------------------------------------------------------------------------------------
---- 5. Reverse chosen for anything behind
+--- Right of way decided on the first qualifying pair
 ------------------------------------------------------------------------------------------------------------------------
 
-function TestSweepsHaveTeeth:testTheReverseSweepRejectsTheAnythingBehindVersion()
-    local refused = 0
-    for _, trainLength in ipairs({ 0, 4, 7, 9 }) do
-        for bearingDeg = 0, 355, 5 do
-            local rad = math.rad(bearingDeg)
-            local localX = math.sin(rad) * AutoDrive.MAKE_WAY_DISTANCE
-            local localZ = math.cos(rad) * AutoDrive.MAKE_WAY_DISTANCE
-            -- the broken rule: reverse for anything at all behind us
-            if localZ < 0 then
-                local fromNodeX, fromNodeZ = localX, localZ + trainLength
-                local angle = math.deg(math.atan2(math.abs(fromNodeX), -fromNodeZ))
-                if angle > 80 then
-                    refused = refused + 1
+--- Commit 5824007: return on the first pair within range where our distance is the greater. The pair
+--- test is symmetric, so both vehicles find such a pair and both stop.
+local function firstQualifyingPairYield(self)
+    if not self.vehicle.ad.stateModule:isActive() then
+        return false
+    end
+    if self.vehicle.ad.drivePathModule:isOnRoadNetwork() then
+        return false
+    end
+    local ownPoints, ownDistances = self:getUpcomingPathPoints(self.vehicle)
+    if ownPoints == nil or #ownPoints < 2 then
+        return false
+    end
+    for _, other in pairs(AutoDrive.getAllVehicles()) do
+        if other ~= self.vehicle and other.ad ~= nil and other.ad.drivePathModule ~= nil then
+            local otherPoints, otherDistances = self:getUpcomingPathPoints(other)
+            if otherPoints ~= nil and #otherPoints >= 2 then
+                for i, a in ipairs(ownPoints) do
+                    for j, b in ipairs(otherPoints) do
+                        local dx, dz = a.x - b.x, a.z - b.z
+                        if (dx * dx + dz * dz) < (AutoDrive.AD_TRAFFIC_CONFLICT_RANGE * AutoDrive.AD_TRAFFIC_CONFLICT_RANGE) then
+                            if ownDistances[i] > otherDistances[j] then
+                                return true
+                            end
+                        end
+                    end
                 end
             end
         end
     end
+    return false
+end
 
-    lu.assertTrue(refused > 0,
-        'no bearing produced a target the reverse controller refuses, so the sweep proves nothing')
+function TestSweepsHaveTeeth:testTheCrossingSweepRejectsTheFirstPairVersion()
+    local violations = withReplaced(ADCollisionDetectionModule, 'detectAdTrafficOffRoute', firstQualifyingPairYield,
+        function() return Sweeps.exactlyOneYields() end)
+
+    lu.assertTrue(violations > 0,
+        'deciding on the first qualifying pair produced one yielder at every crossing, which it does not')
+end
+
+------------------------------------------------------------------------------------------------------------------------
+--- Reverse chosen for anything behind
+------------------------------------------------------------------------------------------------------------------------
+
+--- Commit e1e224f: reverse for any target at all behind the vehicle root, which hands the reverse
+--- controller targets it refuses on frame one.
+local function reverseForAnythingBehind(targetLocalX, targetLocalZ, trainLength)
+    return targetLocalZ < 0
+end
+
+function TestSweepsHaveTeeth:testTheReverseSweepRejectsTheAnythingBehindVersion()
+    local violations = withReplaced(WaitForCallTask, 'shouldReverseTo', reverseForAnythingBehind,
+        function() return Sweeps.reverseTargetsAreDrivableTo() end)
+
+    lu.assertTrue(violations > 0,
+        'reversing to anything behind produced no refused target, so the sweep proves nothing')
 end
 
 os.exit(lu.LuaUnit.run())

@@ -55,7 +55,10 @@ AutoDrive.AD_TRAFFIC_YIELD_TIMEOUT = 10000
 
 -- A vehicle waiting on the field can be asked to move out of somebody's way. How long such a
 -- request stays live, how far the asked vehicle moves, and how far away we look for someone to ask.
-AutoDrive.MAKE_WAY_VALID_TIME = 15000
+-- Longer than WaitForCallTask.MAKE_WAY_TIMEOUT, deliberately. A request that arrives while a
+-- manoeuvre is already running is not read until that manoeuvre ends, so one that expires first is
+-- destroyed unread - and the vehicle that sent it has already spent its one ask per stuck episode.
+AutoDrive.MAKE_WAY_VALID_TIME = 30000
 AutoDrive.MAKE_WAY_DISTANCE = 18
 AutoDrive.MAKE_WAY_ASK_RANGE = 35
 

@@ -84,6 +84,21 @@ if unpack == nil then unpack = table.unpack end
 ------------------------------------------------------------------------------------------------------------------------
 g_updateLoopIndex = 0
 g_time = 0
+
+--- Advance both clocks together.
+---
+--- The engine gives code TWO notions of time - the dt handed to update, and the g_time that
+--- timestamps are taken from - and a test that advances only dt cannot see anything measured in the
+--- other. That is not hypothetical: a request expiring in g_time while a manoeuvre timed out in dt
+--- went unnoticed through several rounds of review because every test froze g_time at its setUp
+--- value and drove the timeout by passing a large dt.
+--- Deliberately does NOT touch g_updateLoopIndex. That is a third thing - which frame of a throttle
+--- window we are on - and tests set it to put a scan on its vehicle's frame. Advancing it here would
+--- silently move every throttled scan off phase.
+function MockEngine.advance(dt)
+    g_time = g_time + dt
+    return dt
+end
 g_currentModName = 'FS25_AutoDrive'
 g_currentModDirectory = './'
 g_server = {}

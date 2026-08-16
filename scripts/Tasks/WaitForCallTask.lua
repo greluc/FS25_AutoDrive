@@ -40,6 +40,17 @@ WaitForCallTask.MAKE_WAY_TIMEOUT = 20000
 WaitForCallTask.REVERSE_ASTERN_MARGIN = 4
 WaitForCallTask.REVERSE_CONE = 0.4
 
+--- Whether a target at these vehicle-local coordinates is one to reverse to.
+---
+--- Astern of the WHOLE train and near enough dead astern to be driven to. A train longer than the
+--- step-aside distance therefore never reverses, which is the safe way round: forward steers towards
+--- anything. Its own function so a test can sweep it directly rather than restating the condition -
+--- a test that restates a rule cannot notice the rule changing.
+function WaitForCallTask.shouldReverseTo(targetLocalX, targetLocalZ, trainLength)
+    return targetLocalZ < -((trainLength or 0) + WaitForCallTask.REVERSE_ASTERN_MARGIN)
+        and math.abs(targetLocalX) < math.abs(targetLocalZ) * WaitForCallTask.REVERSE_CONE
+end
+
 function WaitForCallTask:new(vehicle)
     local o = WaitForCallTask:create()
     o.vehicle = vehicle
@@ -175,6 +186,25 @@ end
 ---
 --- Only when there is no route nearby does the asker's own position become the best available
 --- direction, and there the point IS the thing to get away from.
+--- Which of the two ways across the route to take.
+---
+--- Leaving the route is only half the job; the other half is opening a gap for whoever asked. The
+--- perpendicular has two useful signs, and taking the one our own lateral offset happens to give
+--- means that when the asker is on that same side we drive straight AT it - eighteen metres, past
+--- and beyond it - and the front sensor then stalls the manoeuvre for its whole timeout while the
+--- asker has already spent its one ask. Which side that lands on is otherwise pure luck of where the
+--- two vehicles were standing.
+function WaitForCallTask:sideAwayFrom(acrossX, acrossZ, x, z, request)
+    if request == nil or request.awayFromX == nil or request.awayFromZ == nil then
+        return acrossX, acrossZ
+    end
+    local toAskerX, toAskerZ = request.awayFromX - x, request.awayFromZ - z
+    if (acrossX * toAskerX + acrossZ * toAskerZ) > 0 then
+        return -acrossX, -acrossZ
+    end
+    return acrossX, acrossZ
+end
+
 function WaitForCallTask:getEscapeDirection(x, z, request)
     -- A vehicle can be asked to move before any network exists - a fresh save, or one recorded
     -- entirely elsewhere - and there is then no line to take a bearing across.
@@ -203,10 +233,12 @@ function WaitForCallTask:getEscapeDirection(x, z, request)
                 local acrossZ = offsetZ - along * routeZ
                 local acrossLength = MathUtil.vector2Length(acrossX, acrossZ)
                 if acrossLength > 0.5 then
-                    return acrossX / acrossLength, acrossZ / acrossLength
+                    acrossX, acrossZ = acrossX / acrossLength, acrossZ / acrossLength
+                else
+                    -- standing on the line itself, so neither side is further from it than the other
+                    acrossX, acrossZ = -routeZ, routeX
                 end
-                -- standing on the line itself, so neither side is further from it than the other
-                return -routeZ, routeX
+                return self:sideAwayFrom(acrossX, acrossZ, x, z, request)
             end
         end
     end
@@ -244,17 +276,13 @@ function WaitForCallTask:startMakingWay()
     local ty = getTerrainHeightAtWorldPos(g_currentMission.terrainRootNode, tx, 300, tz)
     self.makeWayTarget = { x = tx, y = ty, z = tz }
 
-    -- Reverse only for a target genuinely astern of the whole train, and near enough dead astern
-    -- that the reverse controller will actually drive to it rather than declare it reached. A train
-    -- longer than the step-aside distance therefore never reverses, which is the safe way round:
-    -- forward steers towards anything. Computed against the target's real height, because passing 0
-    -- for y on a map whose ground sits at fifty to a hundred and fifty metres lets the vehicle's own
-    -- pitch decide the direction instead of the geometry.
+    -- Computed against the target's real height, because passing 0 for y on a map whose ground sits
+    -- at fifty to a hundred and fifty metres lets the vehicle's own pitch decide the direction
+    -- instead of the geometry.
     local targetLocalX, _, targetLocalZ = AutoDrive.worldToLocal(self.vehicle, tx, ty, tz)
     local trainLength = AutoDrive.getTractorTrainLength ~= nil
         and AutoDrive.getTractorTrainLength(self.vehicle, true, false) or 0
-    self.makeWayReverse = targetLocalZ < -(trainLength + WaitForCallTask.REVERSE_ASTERN_MARGIN)
-        and math.abs(targetLocalX) < math.abs(targetLocalZ) * WaitForCallTask.REVERSE_CONE
+    self.makeWayReverse = WaitForCallTask.shouldReverseTo(targetLocalX, targetLocalZ, trainLength)
 
     self.makeWayStart = { x = sx, y = sy, z = sz }
     -- Which request this manoeuvre is serving. A second one can arrive while it runs - requestMakeWay
@@ -296,7 +324,12 @@ end
 function WaitForCallTask:stopMakingWay()
     -- Only the request this manoeuvre was for. Anything newer arrived while we were moving, has
     -- never been read, and the next waiting frame starts a fresh manoeuvre towards it.
-    if AutoDrive.getMakeWayRequest(self.vehicle) == self.servedRequest then
+    --
+    -- Read straight off the vehicle rather than through getMakeWayRequest: that getter expires what
+    -- it reads, so asking it here would delete a pending request as a side effect of checking
+    -- whether it is ours.
+    local pending = self.vehicle.ad ~= nil and self.vehicle.ad.makeWayRequest or nil
+    if pending == self.servedRequest then
         AutoDrive.clearMakeWayRequest(self.vehicle)
     end
     self.servedRequest = nil

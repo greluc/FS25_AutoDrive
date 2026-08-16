@@ -691,4 +691,80 @@ function TestSteppingOffTheRoute:testTheServedRequestIsStillCleared()
 end
 
 
+--- Driving the task with BOTH clocks moving, which nothing did before.
+---
+--- The engine gives code two notions of time: the dt handed to update, and the g_time timestamps are
+--- taken from. Every test here drove the timeout by passing a large dt while g_time stayed at its
+--- setUp value, so anything measured in g_time was invisible - and a request expiring in g_time
+--- while the manoeuvre timed out in dt went unnoticed through several rounds of review.
+local function run(task, milliseconds, step)
+    step = step or 100
+    local elapsed = 0
+    while elapsed < milliseconds do
+        task:update(MockEngine.advance(step))
+        elapsed = elapsed + step
+    end
+end
+
+--- The request that arrives mid-manoeuvre has to still be there when the manoeuvre ends, however
+--- long that takes. It is only read on a waiting frame, so it has to outlive the whole timeout.
+function TestSteppingOffTheRoute:testAMidManoeuvreRequestOutlivesTheWholeTimeout()
+    self.task:update(MockEngine.advance(16))
+    lu.assertEquals(self.task.state, WaitForCallTask.STATE_MAKING_WAY, 'test setup: it has to be moving')
+
+    -- an ask landing early in an obstructed manoeuvre is the worst case for the expiry
+    run(self.task, 1000)
+    lu.assertTrue(AutoDrive:requestMakeWay(self.parked, vehicleAt(2, 2, 40, nil)))
+    local theAsk = self.parked.ad.makeWayRequest
+
+    run(self.task, WaitForCallTask.MAKE_WAY_TIMEOUT + 500)
+
+    -- the manoeuvre in flight ended and the waiting frame after it picked the ask up, which is the
+    -- whole point: it is acted on rather than deleted unread
+    lu.assertIs(self.task.servedRequest, theAsk,
+        'the ask was accepted, never read during the first manoeuvre, and has to be served after it')
+end
+
+--- The request the manoeuvre actually served still has to go, or it repeats forever.
+function TestSteppingOffTheRoute:testTheServedRequestGoesEvenWithTheClockRunning()
+    self.task:update(MockEngine.advance(16))
+    local served = self.parked.ad.makeWayRequest
+    lu.assertNotNil(served)
+
+    -- long enough for both clearance attempts to run out, so nothing new starts afterwards
+    run(self.task, (WaitForCallTask.MAKE_WAY_TIMEOUT + 500) * AutoDrive.WAITING_CLEARANCE_MAX_TRIES)
+
+    lu.assertEquals(self.task.state, WaitForCallTask.STATE_WAITING)
+    lu.assertNotEquals(self.parked.ad.makeWayRequest, served,
+        'the request it served has to go, or the same manoeuvre repeats forever')
+end
+
+--- A request has to outlive a manoeuvre by construction, not by luck of the timings.
+function TestSteppingOffTheRoute:testTheRequestOutlivesTheManoeuvreByConstruction()
+    lu.assertTrue(AutoDrive.MAKE_WAY_VALID_TIME > WaitForCallTask.MAKE_WAY_TIMEOUT,
+        string.format('a request lives %d ms and a manoeuvre runs %d ms, so one can expire unread',
+            AutoDrive.MAKE_WAY_VALID_TIME, WaitForCallTask.MAKE_WAY_TIMEOUT))
+end
+
+--- Stepping aside towards the vehicle that asked frees nothing and stalls on our own front sensor.
+--- Which side of the route the two happen to be on must not decide it.
+function TestSteppingOffTheRoute:testItStepsAwayFromTheAskerWhicheverSideItIsOn()
+    for _, askerLateral in ipairs({ -8, -3, 3, 8 }) do
+        moveTo(self.parked, 2, 20)
+        self.task:setUp()
+        local asker = vehicleAt(2, askerLateral, 20, nil)
+        AutoDrive:requestMakeWay(self.parked, asker)
+
+        self.task:update(16)
+
+        local target = self.task.makeWayTarget
+        lu.assertNotNil(target, string.format('no manoeuvre with the asker at %g', askerLateral))
+        local before = MathUtil.vector2Length(askerLateral - 2, 0)
+        local after = MathUtil.vector2Length(askerLateral - target.x, 20 - target.z)
+        lu.assertTrue(after > before, string.format(
+            'asker at %g: closed from %.1f m to %.1f m', askerLateral, before, after))
+    end
+end
+
+
 os.exit(lu.LuaUnit.run())
