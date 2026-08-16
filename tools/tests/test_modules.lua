@@ -803,4 +803,95 @@ function TestDriveToPointBlocked:testResetDropsTheReverseTarget()
     lu.assertNil(m.lastGuidedReverseFrame)
 end
 
+
+------------------------------------------------------------------------------------------------------------------------
+--- Getting nowhere while standing still
+---
+--- checkIfStuck measures progress towards the next way point, and its timer only runs while the
+--- vehicle is NOT being stopped - the else branch resets it. So the instant anything holds the
+--- vehicle, the stuck clock goes to zero and stays there, and a vehicle held by an obstacle can
+--- never be found stuck however long it stands.
+---
+--- Measured in game: four vehicles nose to tail at a field exit, every one reporting an obstacle and
+--- braking every frame, four and a half minutes of standstill, and not one stuck message in the log.
+--- Nothing else was going to break it either - the off-route yield does not run on the road network,
+--- and a make-way request only goes to a PARKED vehicle, which none of them was.
+------------------------------------------------------------------------------------------------------------------------
+TestHeldTooLong = {}
+
+function TestHeldTooLong:setUp()
+    TestSetup.reset()
+end
+
+--- The module with only what checkIfStuck touches, plus a record of the stuck calls.
+local function heldModule(held, activeTask)
+    local stuck = { count = 0 }
+    local vehicle = TestSetup.vehicle({ id = 1, isServer = true })
+    vehicle.components = { { node = 'held' } }
+    MockEngine.nodePositions['held'] = { x = 0, y = 0, z = 0 }
+    vehicle.ad.specialDrivingModule = { isStoppingVehicle = function() return held end }
+    vehicle.ad.taskModule = { getActiveTask = function() return activeTask end }
+
+    local module = instanceOf(ADDrivePathModule, {
+        vehicle = vehicle,
+        minDistanceTimer = AutoDriveTON:new(),
+        heldTimer = AutoDriveTON:new(),
+        minDistanceToNextWp = math.huge,
+        wayPoints = TestSetup.lineNetwork(6),
+        currentWayPoint = 1,
+        handleBeingStuck = function() stuck.count = stuck.count + 1 end,
+    })
+    return module, stuck
+end
+
+local function run(module, milliseconds)
+    local step = 100
+    for _ = 1, milliseconds / step do
+        module:checkIfStuck(step)
+    end
+end
+
+--- The reported case: held, and never let go.
+function TestHeldTooLong:testAVehicleHeldForeverIsEventuallyStuck()
+    local module, stuck = heldModule(true, {})
+
+    run(module, ADDrivePathModule.MAX_HELD_TIME + 2000)
+
+    lu.assertTrue(stuck.count > 0,
+        'four and a half minutes of standstill has to be noticed by something')
+end
+
+--- But an ordinary traffic wait must not raise anything.
+function TestHeldTooLong:testAShortWaitIsNotStuck()
+    local module, stuck = heldModule(true, {})
+
+    run(module, ADDrivePathModule.MAX_HELD_TIME - 5000)
+
+    lu.assertEquals(stuck.count, 0, 'waiting for traffic is normal and must stay silent')
+end
+
+--- And the clock starts again once the vehicle is released, so a series of ordinary waits never
+--- adds up to a fault.
+function TestHeldTooLong:testBeingReleasedResetsTheClock()
+    local module, stuck = heldModule(true, {})
+    run(module, ADDrivePathModule.MAX_HELD_TIME - 5000)
+
+    module.vehicle.ad.specialDrivingModule.isStoppingVehicle = function() return false end
+    run(module, 1000)
+    module.vehicle.ad.specialDrivingModule.isStoppingVehicle = function() return true end
+    run(module, ADDrivePathModule.MAX_HELD_TIME - 5000)
+
+    lu.assertEquals(stuck.count, 0, 'two short waits are not one long one')
+end
+
+--- A driver waiting to be called is not stuck, and may stand for as long as the harvest takes.
+--- Those tasks are exactly the ones that advertise canMakeWay.
+function TestHeldTooLong:testAParkedWaiterIsNeverStuck()
+    local module, stuck = heldModule(true, { canMakeWay = true })
+
+    run(module, ADDrivePathModule.MAX_HELD_TIME * 3)
+
+    lu.assertEquals(stuck.count, 0, 'waiting for a call is the job, not a fault')
+end
+
 os.exit(lu.LuaUnit.run())
