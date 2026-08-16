@@ -535,8 +535,15 @@ AutoDrive.settings.exitField = {
 AutoDrive.settings.waitingPosition = {
     values = {false, true},
     texts = {"gui_ad_no", "gui_ad_yes"},
-    default = 2,
-    current = 2,
+    -- Off until it has been watched in game.
+    --
+    -- This acts unprompted, on every parked unloader at once, so being wrong is being wrong
+    -- everywhere. Four review rounds found a real defect in it three times running - it drove along
+    -- the route instead of off it, twice, in ways the tests were shaped not to see - and none of the
+    -- current behaviour has yet been observed outside the test suite. The half that only fires when
+    -- somebody is actually blocked and about to reverse out anyway needs no setting and stays on.
+    default = 1,
+    current = 1,
     text = "gui_ad_waitingPosition",
     tooltip = "gui_ad_waitingPosition_tooltip",
     translate = true,
