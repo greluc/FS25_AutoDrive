@@ -15,9 +15,14 @@ function ADCollisionDetectionModule:new(vehicle)
     o.detectedCollision = false
     o.lastReverseCheck = false
     o.reverseTrafficVehicle = nil
-    -- Everyone we have already waited the full cap on, and the scan that last saw each of them still
-    -- in conflict. Weak keys, so a vehicle that leaves the game is not held alive by this.
+    -- Three things kept per partner rather than in one slot, all weak keyed so a vehicle that leaves
+    -- the game is not held alive by them:
+    --   who we have already waited the full cap on,
+    --   when the wait on each partner began,
+    --   and the scan that last saw each of them still in conflict, which ages the other two out.
     o.offRouteYieldGaveUpOn = setmetatable({}, {__mode = "k"})
+    o.offRouteYieldStartedAt = setmetatable({}, {__mode = "k"})
+    o.offRouteYieldSeenIn = setmetatable({}, {__mode = "k"})
     o.offRouteYieldScan = 0
     return o
 end
@@ -140,17 +145,17 @@ function ADCollisionDetectionModule:detectAdTrafficOffRoute()
     -- vehicle is met as a stranger again and charged another full timeout, then the second, and the
     -- two of them alternate for as long as they keep shuffling about. Each entry carries the scan
     -- that last saw it still in conflict, so partners are forgiven individually as they clear.
-    local skippedGivenUpPartner = false
     -- Who we will give way to, decided here but acted on at the bottom. Returning from inside the
     -- loop the moment a partner was found skipped the mark-and-sweep below, and that sweep is the
     -- only place an entry is ever forgiven: while we were busy giving way to one vehicle - which can
     -- be every gate frame for as long as it takes - a partner we had given up on earlier could
     -- leave, come back, and still be stepped over on the first scan that finally reached it.
     --
-    -- The first candidate wins, exactly as the early return chose. Which one it is matters: the cap
-    -- in holdOffRouteYield is per partner and restarts when the partner changes.
+    -- The first candidate wins, exactly as the early return chose.
     local yieldTo, yieldOwnBest, yieldOtherBest = nil, nil, nil
     local gaveUpOn = self.offRouteYieldGaveUpOn
+    local startedAt = self.offRouteYieldStartedAt
+    local seenIn = self.offRouteYieldSeenIn
     self.offRouteYieldScan = (self.offRouteYieldScan or 0) + 1
     local thisScan = self.offRouteYieldScan
 
@@ -164,12 +169,11 @@ function ADCollisionDetectionModule:detectAdTrafficOffRoute()
         if other ~= self.vehicle and other.ad ~= nil and other.ad.stateModule ~= nil
             and other.ad.stateModule:isActive() and other.ad.drivePathModule ~= nil
             and other.components ~= nil and other.components[1] ~= nil
-            -- Giving way means letting the other one through first, which is only worth anything if
-            -- it is going anywhere. A vehicle that is standing still will not clear the point we
-            -- both want, so waiting for it turns one stopped vehicle into two. It gets asked to
-            -- move instead - see AutoDrive:requestMakeWay - and our own sensors still stop us short
-            -- of it in the meantime.
-            and (other.lastSpeedReal == nil or other.lastSpeedReal > ADCollisionDetectionModule.MOVING_SPEED)
+            -- Whether it is MOVING is deliberately not tested here any more. It decides whether we
+            -- give way to this vehicle, not whether it is in conflict with us, and those are
+            -- different questions: a partner that pauses for a second is still the thing we are
+            -- stuck behind. Testing it here dropped such a partner out of the scan entirely, so the
+            -- mark below never happened and its clock was swept and started again from zero.
             and self:isWithinTrafficReach(other, ownX, ownZ, reachBound)
             -- last, because it walks the implement list and allocates while the tests above do not
             and not AutoDrive:checkIsConnected(self.vehicle, other) then
@@ -198,37 +202,46 @@ function ADCollisionDetectionModule:detectAdTrafficOffRoute()
                     end
                 end
 
-                if ownBest ~= nil and otherBest ~= nil and gaveUpOn[other] ~= nil then
-                    -- already waited the full cap on this one and drove on; it does not get to stop
-                    -- us again until the conflict has genuinely cleared
-                    gaveUpOn[other] = thisScan
-                    skippedGivenUpPartner = true
-                elseif ownBest ~= nil and otherBest ~= nil then
-                    local weYield = ownBest > otherBest
-                    if ownBest == otherBest then
-                        weYield = (self.vehicle.id or 0) > (other.id or 0)
-                    end
-                    if weYield and yieldTo == nil then
-                        yieldTo, yieldOwnBest, yieldOtherBest = other, ownBest, otherBest
+                if ownBest ~= nil and otherBest ~= nil then
+                    -- Still in conflict with us on this scan, whatever it is doing. This mark is
+                    -- what keeps this partner's clock and its give-up alive; anything the mark does
+                    -- not reach is aged out at the bottom.
+                    seenIn[other] = thisScan
+
+                    -- Giving way means letting the other one through first, which is only worth
+                    -- anything if it is going anywhere. A vehicle standing still will not clear the
+                    -- point we both want, so waiting for it turns one stopped vehicle into two. It
+                    -- gets asked to move instead - see AutoDrive:requestMakeWay - and our own
+                    -- sensors still stop us short of it in the meantime.
+                    local moving = other.lastSpeedReal == nil
+                        or other.lastSpeedReal > ADCollisionDetectionModule.MOVING_SPEED
+
+                    -- and one we already waited the full cap on does not get to stop us again until
+                    -- the conflict has genuinely cleared
+                    if moving and gaveUpOn[other] == nil then
+                        local weYield = ownBest > otherBest
+                        if ownBest == otherBest then
+                            weYield = (self.vehicle.id or 0) > (other.id or 0)
+                        end
+                        if weYield and yieldTo == nil then
+                            yieldTo, yieldOwnBest, yieldOtherBest = other, ownBest, otherBest
+                        end
                     end
                 end
             end
         end
     end
 
-    if not skippedGivenUpPartner then
-        -- nothing left that conflicts with us, so whoever we gave up on earlier is forgiven and may
-        -- stop us again next time. Kept out of releaseOffRouteYield, which the give-up itself calls.
-        for vehicle in pairs(gaveUpOn) do
+    -- One sweep for all three tables, driven by the marks above rather than by who we happened to
+    -- give way to. A partner nobody marked this time round has gone or moved out of conflict, so its
+    -- give-up is forgiven and its clock starts fresh the next time it turns up. The clock has to be
+    -- forgiven with the give-up and not before it: forgiving one without the other either hands out
+    -- endless patience or expires it on a vehicle being met for the first time.
+    for vehicle, scan in pairs(seenIn) do
+        if scan ~= thisScan then
+            seenIn[vehicle] = nil
             gaveUpOn[vehicle] = nil
-        end
-    else
-        -- at least one is still in the way, so the rest of them are forgiven individually: an entry
-        -- nobody marked this time round belongs to a vehicle that has gone or moved out of conflict.
-        for vehicle, seenInScan in pairs(gaveUpOn) do
-            if seenInScan ~= thisScan then
-                gaveUpOn[vehicle] = nil
-            end
+            startedAt[vehicle] = nil
         end
     end
 
@@ -264,7 +277,6 @@ function ADCollisionDetectionModule:releaseOffRouteYield()
     if self.trafficVehicle ~= nil and self.trafficVehicle == self.offRouteYieldPartner then
         self.trafficVehicle = nil
     end
-    self.offRouteYieldStart = nil
     self.offRouteYieldPartner = nil
     self.detectedOffRouteTraffic = false
     return false
@@ -295,6 +307,12 @@ function ADCollisionDetectionModule:forgetOffRouteGiveUps()
     for vehicle in pairs(self.offRouteYieldGaveUpOn) do
         self.offRouteYieldGaveUpOn[vehicle] = nil
     end
+    for vehicle in pairs(self.offRouteYieldStartedAt) do
+        self.offRouteYieldStartedAt[vehicle] = nil
+    end
+    for vehicle in pairs(self.offRouteYieldSeenIn) do
+        self.offRouteYieldSeenIn[vehicle] = nil
+    end
     return self:releaseOffRouteYield()
 end
 
@@ -311,15 +329,25 @@ end
 --- spent on one vehicle be charged to the next one we meet, so a driver crossing a busy yard could
 --- arrive at a fresh conflict with its patience already used up and drive straight through it.
 function ADCollisionDetectionModule:holdOffRouteYield(other, ownDistance, otherDistance)
-    if self.offRouteYieldStart == nil or self.offRouteYieldPartner ~= other then
-        self.offRouteYieldStart = g_time
-        self.offRouteYieldPartner = other
+    -- One clock per partner. A single clock restarted whenever the partner changed, and which
+    -- partner is chosen turns on whether each one happens to be moving this instant - so two
+    -- unloaders taking their turn at the pipe, one creeping while the other stands, handed the
+    -- patience back and forth and it never got past zero. Measured on the fixture: sixty seconds of
+    -- holding in a sixty second window against a ten second cap, and ten minutes of it over ten
+    -- minutes, with the give-up never once recorded. The cap that exists so a vehicle stuck behind
+    -- something else does not wait forever was simply unreachable, and with it the whole per-partner
+    -- give-up memory, which is only ever written where the cap expires.
+    local startedAt = self.offRouteYieldStartedAt[other]
+    if startedAt == nil then
+        startedAt = g_time
+        self.offRouteYieldStartedAt[other] = startedAt
     end
+    self.offRouteYieldPartner = other
 
-    if (g_time - self.offRouteYieldStart) > AutoDrive.AD_TRAFFIC_YIELD_TIMEOUT then
+    if (g_time - startedAt) > AutoDrive.AD_TRAFFIC_YIELD_TIMEOUT then
         if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_SENSORINFO) then
             AutoDrive.debugMsg(self.vehicle, "CDM: detectAdTrafficOffRoute gave way to %s for %d ms without it clearing - driving on"
-            , tostring(other.getName and other:getName()), g_time - self.offRouteYieldStart)
+            , tostring(other.getName and other:getName()), g_time - startedAt)
         end
         -- Through the same release as every other non-yielding exit: giving up on this partner has
         -- to drop the partner too, or we drive on still nominally held up by it. The give-up is

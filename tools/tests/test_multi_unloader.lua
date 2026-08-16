@@ -452,6 +452,66 @@ function TestOffRouteLookAhead:testTwoBlockersCostAtMostOneCapEach()
         'test setup: it has to actually give way first, and it only held %d ms', held))
 end
 
+--- The give-up memory was made per vehicle, and the CLOCK was left in a single slot. Which partner
+--- we give way to turns on who happens to be moving this instant, so two unloaders taking their turn
+--- at the pipe - one creeping while the other stands - handed the patience back and forth and it
+--- never got past zero. Measured on this fixture before the fix: sixty seconds of holding in a sixty
+--- second window against a ten second cap, ten minutes over ten minutes, and the give-up never once
+--- recorded - which also meant the per-vehicle memory could never do anything either.
+function TestOffRouteLookAhead:testAlternatingBlockersStillRunOutTheCap()
+    local us, first, second = twoBlockersAheadOfUs()
+    self.vehicles = { us, first, second }
+
+    local yields, module = detectsTrafficFor(us)
+    lu.assertTrue(yields, 'test setup: we are further from the meeting point than either of them')
+
+    -- exactly one of them is moving at any moment, for a full minute
+    local held = 0
+    for step = 1, 60 do
+        g_time = g_time + 1000
+        local firstMoves = (step % 2) == 1
+        first.lastSpeedReal = firstMoves and 0.002 or 0
+        second.lastSpeedReal = firstMoves and 0 or 0.002
+        if module:detectAdTrafficOffRoute() then
+            held = held + 1000
+        end
+    end
+
+    lu.assertTrue(held <= AutoDrive.AD_TRAFFIC_YIELD_TIMEOUT * 2 + 2000, string.format(
+        'held up for %d ms by two vehicles taking turns to move, against a %d ms cap each - the '
+        .. 'clock is restarting every time the partner changes',
+        held, AutoDrive.AD_TRAFFIC_YIELD_TIMEOUT))
+end
+
+--- Whether a partner is MOVING decides whether we give way to it, not whether it is in conflict with
+--- us, and the scan has to go on marking it either way. Testing movement before the mark dropped a
+--- stopped partner out of the scan altogether, so nothing aged its clock out when it finally left -
+--- and it came back with its patience already spent, to be driven past without a moment's wait.
+function TestOffRouteLookAhead:testAStoppedPartnerThatLeavesDoesNotKeepAStaleClock()
+    local near, far = convergingPair()
+    self.vehicles = { near, far }
+    local yields, module = detectsTrafficFor(far)
+    lu.assertTrue(yields, 'test setup: the further one gives way')
+
+    -- it stops where it is, still in the way, so we stop giving way to it
+    near.lastSpeedReal = 0
+    for _ = 1, 5 do
+        g_time = g_time + 1000
+        module:detectAdTrafficOffRoute()
+    end
+
+    -- then it leaves altogether, for longer than the whole cap
+    self.vehicles = { far }
+    g_time = g_time + AutoDrive.AD_TRAFFIC_YIELD_TIMEOUT + 1
+    module:detectAdTrafficOffRoute()
+
+    -- and comes back moving: a stranger again, entitled to the full wait
+    near.lastSpeedReal = 0.002
+    self.vehicles = { near, far }
+    lu.assertTrue(module:detectAdTrafficOffRoute(),
+        'a partner that left has to come back to a full cap, not to one that ran out in its absence')
+end
+
 --- And each of them is forgiven on its own, rather than all of them waiting for the last one to go.
 function TestOffRouteLookAhead:testEachBlockerIsForgivenSeparately()
     local us, first, second = twoBlockersAheadOfUs()
