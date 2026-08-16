@@ -915,4 +915,220 @@ function TestReachabilityCache:testTheEarlyOutsStillSkipTheQuery()
 end
 
 
+
+------------------------------------------------------------------------------------------------------------------------
+--- monitorTasks: releasing the harvester, and the stuck escalation
+---
+--- Nothing in the suite called monitorTasks at all - an `error()` as its first statement left the
+--- whole gate green. Two rules live in there and both were unobserved.
+---
+--- The 25 m rule is the ONLY thing that ends an unloader's engagement once its trailer is full: it
+--- clears self.combine and unregisters, which is what frees the harvester for a replacement and what
+--- promotes a queued second unloader. Widening it from 25 to 2500 left every test passing. The
+--- damage it guards against is not "the harvest stops" - the link is released one round trip late,
+--- when setToWaitForCall clears the combine anyway - but a second unloader is never promoted, and if
+--- the harvester goes idle while this one is still 400 m away with a full trailer, the manager fires
+--- it: AutoDrive switched off on a public road, mid-load.
+---
+--- And the stuck escalation below it: ask parked vehicles to move first, once per episode, and only
+--- reverse out if nobody could help.
+------------------------------------------------------------------------------------------------------------------------
+TestMonitorTasks = {}
+
+local function monitored(state, distance)
+    local vehicle = TestSetup.vehicle({ id = 71, components = { { node = 'mtU' } } })
+    local combine = TestSetup.vehicle({ id = 72, components = { { node = 'mtC' } } })
+    MockEngine.nodePositions['mtU'] = { x = 0, y = 0, z = 0 }
+    MockEngine.nodePositions['mtC'] = { x = 0, y = 0, z = distance }
+    vehicle.lastSpeedReal = 0
+
+    local mode = setmetatable({}, { __index = CombineUnloaderMode })
+    mode.vehicle = vehicle
+    mode.combine = combine
+    mode.state = state
+    mode.failedPathFinder = 0
+    mode.askedNearbyVehiclesForWay = false
+    mode.followingUnloader = TestSetup.vehicle({ id = 73 })
+
+    local log = { unregistered = 0, asked = 0, aborted = 0, added = 0, released = 0 }
+    vehicle.ad.taskModule = {
+        getActiveTask = function() return nil end,
+        abortAllTasks = function() log.aborted = log.aborted + 1 end,
+        addTask = function() log.added = log.added + 1 end,
+    }
+    vehicle.ad.specialDrivingModule = {
+        shouldStopMotor = function() return false end,
+        stoppedTimer = { done = function() return false end },
+        isBlocked = false,
+        releaseVehicle = function() log.released = log.released + 1 end,
+    }
+    ADHarvestManager.unregisterAsUnloader = function() log.unregistered = log.unregistered + 1 end
+    AutoDrive.askNearbyVehiclesToMakeWay = function() return 0 end
+    -- the real one lives in CollisionDetectionUtils, which this suite does not load
+    AutoDrive.getDistanceBetween = function(a, b)
+        local pa = MockEngine.nodePositions[a.components[1].node]
+        local pb = MockEngine.nodePositions[b.components[1].node]
+        return MathUtil.vector2Length(pb.x - pa.x, pb.z - pa.z)
+    end
+    return mode, log
+end
+
+function TestMonitorTasks:setUp()
+    TestSetup.reset()
+    self.savedUnregister = ADHarvestManager.unregisterAsUnloader
+    self.savedAsk = AutoDrive.askNearbyVehiclesToMakeWay
+    self.savedDistance = AutoDrive.getDistanceBetween
+end
+
+function TestMonitorTasks:tearDown()
+    ADHarvestManager.unregisterAsUnloader = self.savedUnregister
+    AutoDrive.askNearbyVehiclesToMakeWay = self.savedAsk
+    AutoDrive.getDistanceBetween = self.savedDistance
+end
+
+function TestMonitorTasks:testItKeepsTheHarvesterWhileStillBesideIt()
+    local mode, log = monitored(CombineUnloaderMode.STATE_DRIVE_TO_UNLOAD, 24)
+
+    mode:monitorTasks(16)
+
+    lu.assertNotNil(mode.combine, 'twenty four metres away is still working with it')
+    lu.assertEquals(log.unregistered, 0)
+end
+
+function TestMonitorTasks:testDrivingOffReleasesTheHarvester()
+    local mode, log = monitored(CombineUnloaderMode.STATE_DRIVE_TO_UNLOAD, 26)
+
+    mode:monitorTasks(16)
+
+    lu.assertNil(mode.combine, 'past the threshold the harvester is free for somebody else')
+    lu.assertNil(mode.followingUnloader, 'and the queued second unloader is no longer ours to hold')
+    lu.assertEquals(log.unregistered, 1,
+        'unregistering is what takes us out of activeUnloaders and promotes the one waiting')
+end
+
+--- The other half of the rule: it must not fire while we are still working the harvester.
+function TestMonitorTasks:testItDoesNotReleaseWhileUnloadingFromTheCombine()
+    local mode, log = monitored(CombineUnloaderMode.STATE_ACTIVE_UNLOAD_COMBINE, 400)
+    mode.leaveBreadCrumbs = function() end
+
+    mode:monitorTasks(16)
+
+    lu.assertNotNil(mode.combine)
+    lu.assertEquals(log.unregistered, 0)
+end
+
+--- Stuck, and one of our own parked vehicles is in the way: ask it to move rather than reversing.
+function TestMonitorTasks:testItAsksParkedVehiclesBeforeReversingOut()
+    local mode, log = monitored(CombineUnloaderMode.STATE_DRIVE_TO_UNLOAD, 10)
+    mode.failedPathFinder = 5
+    AutoDrive.askNearbyVehiclesToMakeWay = function() return 1 end
+
+    mode:monitorTasks(16)
+
+    lu.assertTrue(mode.askedNearbyVehiclesForWay, 'the ask happens once per stuck episode')
+    lu.assertEquals(log.aborted, 0, 'and it must not throw the running task away to do it')
+    lu.assertEquals(mode.failedPathFinder, 0, 'the stuck detection restarts to give them time')
+end
+
+--- And when nobody can help, it does reverse out.
+function TestMonitorTasks:testItReversesOutWhenNobodyCanMakeWay()
+    local mode, log = monitored(CombineUnloaderMode.STATE_DRIVE_TO_UNLOAD, 10)
+    mode.failedPathFinder = 5
+    AutoDrive.askNearbyVehiclesToMakeWay = function() return 0 end
+
+    mode:monitorTasks(16)
+
+    lu.assertEquals(log.aborted, 1)
+    -- rawequal, not assertEquals: the states are empty tables and luaunit compares tables
+    -- structurally, so every one of them is "equal" to every other and the assertion would hold
+    -- whatever the state actually is.
+    lu.assertTrue(rawequal(mode.state, CombineUnloaderMode.STATE_REVERSE_FROM_BAD_LOCATION))
+end
+
+--- A driver mid step-aside is not stuck - the manoeuvre meets resistance by design and has its own
+--- timeout. Tearing it out reverses the vehicle out of the spot it was only trying to leave.
+function TestMonitorTasks:testAVehicleMakingWayIsNotTreatedAsStuck()
+    local mode, log = monitored(CombineUnloaderMode.STATE_DRIVE_TO_UNLOAD, 10)
+    mode.failedPathFinder = 5
+    mode.vehicle.ad.taskModule.getActiveTask = function()
+        return { isMakingWay = function() return true end }
+    end
+
+    mode:monitorTasks(16)
+
+    lu.assertEquals(log.aborted, 0)
+    lu.assertFalse(rawequal(mode.state, CombineUnloaderMode.STATE_REVERSE_FROM_BAD_LOCATION))
+end
+
+
+------------------------------------------------------------------------------------------------------------------------
+--- Only a driver that is waiting to be called can be assigned
+---
+--- assignToHarvester does nothing unless the mode is in STATE_WAIT_TO_BE_CALLED, and that guard is
+--- what the harvest manager's skip list depends on: a driver that has already moved on stays in
+--- idleUnloaders, declines here, and the manager has to try the next one. The one scheduler test
+--- covering "declining" replaces assignToHarvester with a stub, so the guard itself was never run -
+--- deleting it would have left the gate green while booking committed drivers to a second harvester.
+------------------------------------------------------------------------------------------------------------------------
+TestAssignToHarvester = {}
+
+local function assignable(state)
+    local vehicle = TestSetup.vehicle({ id = 81, components = { { node = 'atU' } } })
+    MockEngine.nodePositions['atU'] = { x = 0, y = 0, z = 0 }
+    local mode = setmetatable({}, { __index = CombineUnloaderMode })
+    mode.vehicle = vehicle
+    mode.state = state
+    mode.combine = nil
+
+    local log = { aborted = 0 }
+    vehicle.ad.taskModule = {
+        abortCurrentTask = function() log.aborted = log.aborted + 1 end,
+        addTask = function() end,
+        getActiveTask = function() return nil end,
+    }
+    return mode, log
+end
+
+function TestAssignToHarvester:setUp()
+    TestSetup.reset()
+    self.harvester = TestSetup.vehicle({ id = 82, components = { { node = 'atC' } } })
+    MockEngine.nodePositions['atC'] = { x = 0, y = 0, z = 20 }
+    self.harvester.getRootVehicle = function(self) return self end
+    self.harvester.ad.isHarvester = true
+    self.harvester.ad.noMovementTimer = { elapsedTime = 10000 }
+    AutoDrive.validateCachedPipeData = function() end
+    AutoDrive.isPipeOut = function() return false end
+end
+
+--- A driver already following another unloader across the field is not available, and saying so is
+--- what makes the manager walk on to the next candidate.
+function TestAssignToHarvester:testADriverThatHasMovedOnDeclines()
+    local mode, log = assignable(CombineUnloaderMode.STATE_FOLLOW_CURRENT_UNLOADER)
+
+    mode:assignToHarvester(self.harvester)
+
+    lu.assertNil(mode.combine,
+        'booking a committed driver loses it into the active list with two harvesters expecting it')
+    lu.assertEquals(log.aborted, 0, 'and its running task must not be torn up either')
+end
+
+function TestAssignToHarvester:testADriverAlreadyUnloadingDeclines()
+    local mode = assignable(CombineUnloaderMode.STATE_ACTIVE_UNLOAD_COMBINE)
+
+    mode:assignToHarvester(self.harvester)
+
+    lu.assertNil(mode.combine)
+end
+
+--- And one that is waiting takes the job, which is the half the manager reads to book it.
+function TestAssignToHarvester:testAWaitingDriverTakesTheHarvester()
+    local mode, log = assignable(CombineUnloaderMode.STATE_WAIT_TO_BE_CALLED)
+
+    mode:assignToHarvester(self.harvester)
+
+    lu.assertTrue(rawequal(mode.combine, self.harvester),
+        'the manager books an unloader by checking exactly this afterwards')
+    lu.assertEquals(log.aborted, 1, 'the waiting task has to give way to the new job')
+end
+
 os.exit(lu.LuaUnit.run())

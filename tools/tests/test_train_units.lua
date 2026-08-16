@@ -105,4 +105,56 @@ function TestTrainUnits:testATractorAndOneTrailerStillIs()
     lu.assertTrue(ADTrailerModule.canBeHandledInReverse(module))
 end
 
+
+------------------------------------------------------------------------------------------------------------------------
+--- When a load counts as finished
+---
+--- AutoDrive.isUnloadFillLevelReached is the single predicate behind filledToUnload for every mode -
+--- getAllFillLevels, getObjectFillLevels, getALObjectFillLevels and getIsFillUnitFull all end in it -
+--- and nothing executed it. The one suite that required TrailerUtil replaced its callers with stubs
+--- on the next line, so the require was decorative: inverting the comparison left the whole gate
+--- green while making every hauler leave the silo a quarter full and never recognise a full one.
+------------------------------------------------------------------------------------------------------------------------
+TestUnloadFillLevel = {}
+
+function TestUnloadFillLevel:setUp()
+    TestSetup.reset()
+    AutoDrive.testSettings['unloadFillLevel'] = 0.85
+    self.object = { getRootVehicle = function(self) return self end }
+end
+
+--- fillFreeCapacity is what the rule reads, so these are stated the way the callers pass them.
+local function reached(object, level, capacity)
+    return AutoDrive.isUnloadFillLevelReached(object, level, capacity - level, capacity)
+end
+
+function TestUnloadFillLevel:testAQuarterFullIsNotEnough()
+    lu.assertFalse(reached(self.object, 5000, 20000))
+end
+
+function TestUnloadFillLevel:testJustUnderTheSettingIsNotEnough()
+    lu.assertFalse(reached(self.object, 16800, 20000), '84 % against a setting of 85 %')
+end
+
+function TestUnloadFillLevel:testTheSettingIsReached()
+    lu.assertTrue(reached(self.object, 17000, 20000), '85 % against a setting of 85 %')
+end
+
+function TestUnloadFillLevel:testAFullTrailerIsReached()
+    lu.assertTrue(reached(self.object, 20000, 20000))
+end
+
+--- Empty is never "full", however the capacity is stated.
+function TestUnloadFillLevel:testAnEmptyTrailerIsNeverReached()
+    lu.assertFalse(reached(self.object, 0, 20000))
+    lu.assertFalse(reached(self.object, 0, 0))
+end
+
+--- The setting moves the line, which is the whole point of it being a setting.
+function TestUnloadFillLevel:testTheSettingMovesTheLine()
+    AutoDrive.testSettings['unloadFillLevel'] = 0.25
+    lu.assertTrue(reached(self.object, 5000, 20000),
+        'a quarter full is enough once the driver is told a quarter is enough')
+end
+
 os.exit(lu.LuaUnit.run())

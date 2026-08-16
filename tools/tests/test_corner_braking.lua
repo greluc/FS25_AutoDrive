@@ -619,4 +619,55 @@ function TestSharpVertices:testAGentleKinkIsNotACorner()
 end
 
 
+
+------------------------------------------------------------------------------------------------------------------------
+--- What the corner rules compute has to survive the rest of the frame
+---
+--- Everything this file measures is handed on to followWaypoints, which then applies half a dozen
+--- further limits. Nothing checked that the corner answer actually reaches the vehicle - and it did
+--- not: a two-sided clamp on the final approach could RAISE the limit again, which is how the last
+--- corner of every route lost its brake.
+---
+--- Asserted at source level, because driving followWaypoints needs the trailer module, the trigger
+--- manager, the bunker silo geometry and the steering controller. What it pins is the shape of the
+--- combination rather than any one number: once the corner limit is in, every later assignment to
+--- self.speedLimit in that block may only lower it.
+------------------------------------------------------------------------------------------------------------------------
+TestCornerLimitSurvives = {}
+
+function TestCornerLimitSurvives:setUp() TestSetup.reset() end
+
+local function followWaypointsSource()
+    local f = io.open('../../scripts/Modules/DrivePathModule.lua', 'r')
+    local src = f:read('*a')
+    f:close()
+    local body = src:match('function ADDrivePathModule:followWaypoints(.-)\nfunction ')
+    lu.assertNotNil(body, 'could not isolate followWaypoints')
+    return body
+end
+
+function TestCornerLimitSurvives:testTheCornerLimitIsAppliedAtAll()
+    local body = followWaypointsSource()
+    lu.assertNotNil(body:match('getCornerSpeedLimit'),
+        'followWaypoints has to ask for the corner limit')
+    lu.assertNotNil(body:match('self%.speedLimit = math%.min%(self%.speedLimit, cornerLimit%)'),
+        'and fold it in as a lower bound on what may be driven')
+end
+
+--- Every assignment after that point may only narrow the limit. math.clamp is the one that bit:
+--- its lower bound could hand back speed the corner rule had just taken away.
+function TestCornerLimitSurvives:testNothingAfterItCanRaiseTheLimit()
+    local body = followWaypointsSource()
+    local after = body:match('self%.speedLimit = math%.min%(self%.speedLimit, cornerLimit%)(.*)')
+    lu.assertNotNil(after)
+
+    for assignment in after:gmatch('self%.speedLimit = ([^\n]+)') do
+        local narrows = assignment:match('^math%.min') ~= nil
+            or assignment:match('^ADDrivePathModule%.approachSpeedLimit') ~= nil
+        lu.assertTrue(narrows, string.format(
+            'after the corner brake, "self.speedLimit = %s" can hand back speed the corner rule '
+            .. 'had already taken off', assignment))
+    end
+end
+
 os.exit(lu.LuaUnit.run())
