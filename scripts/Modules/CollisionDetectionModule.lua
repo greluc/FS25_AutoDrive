@@ -184,6 +184,11 @@ function ADCollisionDetectionModule:detectAdTrafficOffRoute()
 
     self.offRouteYieldStart = nil
     self.offRouteYieldPartner = nil
+    -- trafficVehicle is shared with detectAdTrafficOnRoute, which on its non-gate frames answers
+    -- from nothing but whether this is nil. Leaving ours behind means that check reports traffic
+    -- for the rest of the drive - and a route moving from a field onto the network is the normal
+    -- end of every path search, so it would happen on most journeys.
+    self.trafficVehicle = nil
     return false
 end
 

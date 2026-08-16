@@ -398,18 +398,29 @@ function ADHarvestManager.isHarvesterActive(harvester)
 end
 
 function ADHarvestManager:assignUnloaderToHarvester(harvester)
-    local closestUnloader = self:getClosestIdleUnloader(harvester)
-    if closestUnloader ~= nil then
+    -- Walks past unloaders that decline rather than stopping at the first one.
+    --
+    -- assignToHarvester declines when the unloader's mode has already moved on - following another
+    -- unloader across the field, say, which leaves it in idleUnloaders with a state that refuses.
+    -- Booking it as active regardless was the old behaviour and lost the vehicle into the active
+    -- list with no harvester; simply not booking it stalls, because the same one is picked again on
+    -- the next tick and the harvester waits with candidates standing beside it. So: try the next.
+    local declined = nil
+    while true do
+        local closestUnloader = self:getClosestIdleUnloader(harvester, declined)
+        if closestUnloader == nil then
+            return
+        end
         ADHarvestManager.debugMsg(closestUnloader, "ADHarvestManager:assignUnloaderToHarvester ")
         local mode = closestUnloader.ad.modes[AutoDrive.MODE_UNLOAD]
         mode:assignToHarvester(harvester)
-        -- assignToHarvester can decline. Moving the unloader to the active list anyway leaves it
-        -- there with no harvester of its own, where the idle scan can no longer find it and it
-        -- waits for a call that goes to somebody else.
         if mode.combine == harvester then
             table.insert(self.activeUnloaders, closestUnloader)
             ADTable.removeValue(self.idleUnloaders, closestUnloader)
+            return
         end
+        declined = declined or {}
+        declined[#declined + 1] = closestUnloader
     end
 end
 
@@ -431,18 +442,25 @@ function ADHarvestManager:getAssignedUnloader(harvester)
     return nil
 end
 
-function ADHarvestManager:getClosestIdleUnloader(harvester)
+--- The closest idle unloader sharing this harvester's target, skipping any listed in `except`.
+---
+--- The skip list exists because assignToHarvester can decline - an unloader sitting in idleUnloaders
+--- whose mode has already moved on will refuse - and without it the same one is chosen every tick
+--- and the harvester waits forever with candidates standing beside it.
+function ADHarvestManager:getClosestIdleUnloader(harvester, except)
     local closestUnloader = nil
     local closestDistance = math.huge
     for _, unloader in pairs(self.idleUnloaders) do
-        -- sort by distance to combine first
-        local distance = AutoDrive.getDistanceBetween(unloader, harvester)
-        --local distanceMatch = distance <= ADHarvestManager.MAX_SEARCH_RANGE and AutoDrive.getSetting("findDriver")
-        local targetsMatch = unloader.ad.stateModule:getFirstMarker() == harvester.ad.stateModule:getFirstMarker()
-        if targetsMatch then --if distanceMatch or targetsMatch then
-            if closestUnloader == nil or distance < closestDistance then
-                closestUnloader = unloader
-                closestDistance = distance
+        if except == nil or not ADTable.contains(except, unloader) then
+            -- sort by distance to combine first
+            local distance = AutoDrive.getDistanceBetween(unloader, harvester)
+            --local distanceMatch = distance <= ADHarvestManager.MAX_SEARCH_RANGE and AutoDrive.getSetting("findDriver")
+            local targetsMatch = unloader.ad.stateModule:getFirstMarker() == harvester.ad.stateModule:getFirstMarker()
+            if targetsMatch then --if distanceMatch or targetsMatch then
+                if closestUnloader == nil or distance < closestDistance then
+                    closestUnloader = unloader
+                    closestDistance = distance
+                end
             end
         end
     end

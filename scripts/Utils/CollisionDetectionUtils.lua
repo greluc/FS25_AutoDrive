@@ -41,7 +41,13 @@ function AutoDrive.checkForVehiclesInBox(boundingBox, excludedVehicles)
     return false
 end
 
-function AutoDrive.checkForVehiclePathInBox(boundingBox, minTurnRadius, searchingVehicle, currentVec)
+--- searchTarget is where the SEARCHING vehicle is trying to get to. It has to be passed in, because
+--- it cannot be read off that vehicle: drivePathModule holds the route it is currently driving, and
+--- during a path search there is no such route - reachedTarget sets wayPoints to nil the moment the
+--- previous one ends, which is exactly when the next search starts. Reading it there always found
+--- nil, so the shared-target exemption below never once applied and the deadlock it exists to
+--- prevent was back.
+function AutoDrive.checkForVehiclePathInBox(boundingBox, minTurnRadius, searchingVehicle, currentVec, searchTarget)
     for _, otherVehicle in pairs(AutoDrive.getAllVehicles()) do
         if otherVehicle ~= nil and otherVehicle ~= searchingVehicle and otherVehicle.components ~= nil and otherVehicle.size.width ~= nil and otherVehicle.size.length ~= nil and otherVehicle.rootNode ~= nil then
             if minTurnRadius ~= nil and otherVehicle.ad ~= nil and otherVehicle.ad.drivePathModule ~= nil and otherVehicle.ad.stateModule:isActive() then
@@ -63,11 +69,18 @@ function AutoDrive.checkForVehiclePathInBox(boundingBox, minTurnRadius, searchin
                     -- ordering two unloaders onto the same harvester is left to the queue in
                     -- CombineUnloaderMode, which is the mechanism meant for it.
                     local tailExemption = 0
-                    local ownWPs, _ = searchingVehicle.ad ~= nil and searchingVehicle.ad.drivePathModule ~= nil
-                        and searchingVehicle.ad.drivePathModule:getWayPoints() or nil
-                    if ownWPs ~= nil and #ownWPs > 0 and #otherWPs > 0 then
-                        local ownTarget, otherTarget = ownWPs[#ownWPs], otherWPs[#otherWPs]
-                        if ownTarget ~= nil and otherTarget ~= nil then
+                    local ownTarget = searchTarget
+                    if ownTarget == nil then
+                        -- no search in progress: fall back to where the route in hand ends
+                        local ownWPs = searchingVehicle.ad ~= nil and searchingVehicle.ad.drivePathModule ~= nil
+                            and searchingVehicle.ad.drivePathModule:getWayPoints() or nil
+                        if ownWPs ~= nil and #ownWPs > 0 then
+                            ownTarget = ownWPs[#ownWPs]
+                        end
+                    end
+                    if ownTarget ~= nil and #otherWPs > 0 then
+                        local otherTarget = otherWPs[#otherWPs]
+                        if otherTarget ~= nil then
                             local dx, dz = ownTarget.x - otherTarget.x, ownTarget.z - otherTarget.z
                             if (dx * dx + dz * dz) < (AutoDrive.SHARED_TARGET_RANGE * AutoDrive.SHARED_TARGET_RANGE) then
                                 tailExemption = 5

@@ -91,8 +91,16 @@ function CombineUnloaderMode:monitorTasks(dt)
     if self.combine ~= nil and self.state == self.STATE_ACTIVE_UNLOAD_COMBINE then
         self:leaveBreadCrumbs()
     end
+    -- A driver that is stepping aside is not stuck, it is doing something it may well fail at: the
+    -- point of the manoeuvre is to nudge out of a tight spot, so meeting resistance is the normal
+    -- case and not a reason to abandon the task. Its own timeout ends it. Without this the recovery
+    -- fires mid-shuffle, throws away the waiting task and reverses the vehicle out of the place it
+    -- was only trying to leave.
+    local activeTask = self.vehicle.ad.taskModule:getActiveTask()
+    local isMakingWay = activeTask ~= nil and activeTask.isMakingWay ~= nil and activeTask:isMakingWay()
+
     --We are stuck
-    if self.failedPathFinder >= 5 or ((self.vehicle.ad.specialDrivingModule:shouldStopMotor() or self.vehicle.ad.specialDrivingModule.stoppedTimer:done()) and self.vehicle.ad.specialDrivingModule.isBlocked) then
+    if not isMakingWay and (self.failedPathFinder >= 5 or ((self.vehicle.ad.specialDrivingModule:shouldStopMotor() or self.vehicle.ad.specialDrivingModule.stoppedTimer:done()) and self.vehicle.ad.specialDrivingModule.isBlocked)) then
         -- Before backing out: if what we are stuck behind is one of our own vehicles parked with
         -- nothing to do, asking it to move is both cheaper and likelier to help than reversing and
         -- approaching again from somewhere else - the parked one would still be there.

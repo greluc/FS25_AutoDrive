@@ -19,6 +19,12 @@ WaitForCallTask.STATE_MAKING_WAY = 2
 --- Read by AutoDrive:requestMakeWay to tell a parked vehicle from a driving one.
 WaitForCallTask.canMakeWay = true
 
+--- Read by CombineUnloaderMode's stuck detection, which has to hold off while this runs: a nudge out
+--- of a tight spot meets resistance by design, and the manoeuvre has its own timeout.
+function WaitForCallTask:isMakingWay()
+    return self.state == WaitForCallTask.STATE_MAKING_WAY
+end
+
 --- Stop stepping aside after this long even if the target was not reached; the point is to free the
 --- spot, not to complete a manoeuvre.
 WaitForCallTask.MAKE_WAY_TIMEOUT = 20000
@@ -47,12 +53,16 @@ function WaitForCallTask:update(dt)
     end
 
     if self.state == WaitForCallTask.STATE_MAKING_WAY then
+        -- Drives the vehicle itself. Deliberately no specialDrivingModule:update afterwards: the
+        -- driving call already advances the module's stopped timer with this frame's dt, and doing
+        -- it twice made that timer run at double rate - so a manoeuvre that met any resistance was
+        -- declared stuck in five seconds instead of ten, and the mode tore the driver out of this
+        -- task to reverse it out of a spot it was only trying to leave.
         self:updateMakingWay(dt)
     else
         self.vehicle.ad.specialDrivingModule:stopVehicle()
+        self.vehicle.ad.specialDrivingModule:update(dt)
     end
-
-    self.vehicle.ad.specialDrivingModule:update(dt)
 end
 
 --- Nobody has to complain for a spot to be a bad one. A vehicle that comes to rest on the way point
@@ -62,6 +72,26 @@ end
 ---
 --- Capped, because on a densely recorded field the clearance may not exist anywhere nearby, and a
 --- vehicle wandering the field in search of it is worse than one parked slightly awkwardly.
+--- Whether we are standing on the destination the player sent us to. Their choice outranks any
+--- tidying of our own, and a marker is a way point, so without this the clearance check fires on
+--- every driver that has finished its route.
+function WaitForCallTask:isParkedOnItsOwnMarker()
+    local stateModule = self.vehicle.ad ~= nil and self.vehicle.ad.stateModule or nil
+    if stateModule == nil or stateModule.getFirstMarker == nil then
+        return false
+    end
+    local marker = stateModule:getFirstMarker()
+    if marker == nil or marker.id == nil then
+        return false
+    end
+    local wayPoint = ADGraphManager:getWayPointById(marker.id)
+    if wayPoint == nil then
+        return false
+    end
+    local x, _, z = getWorldTranslation(self.vehicle.components[1].node)
+    return MathUtil.vector2Length(wayPoint.x - x, wayPoint.z - z) < AutoDrive.WAITING_NETWORK_CLEARANCE
+end
+
 function WaitForCallTask:checkParkedOnNetwork()
     if not AutoDrive.getSetting("waitingPosition", self.vehicle) then
         return
@@ -71,6 +101,13 @@ function WaitForCallTask:checkParkedOnNetwork()
     end
     if AutoDrive.getMakeWayRequest(self.vehicle) ~= nil then
         return -- already on the way somewhere
+    end
+    -- A destination marker IS a way point on the network - that is what a marker is - so a driver
+    -- that has just parked on the spot the player chose for it sits within metres of one, and this
+    -- check would fire on every single one of them, unconditionally, and shuffle the vehicle off the
+    -- place it was sent to. The network only has to be kept clear where the player did NOT put us.
+    if self:isParkedOnItsOwnMarker() then
+        return
     end
     -- Same throttle and per-vehicle phase offset as every other spatial scan. A parked vehicle is
     -- not going anywhere between frames, so asking once in twenty answers the same question.
@@ -100,10 +137,16 @@ function WaitForCallTask:checkParkedOnNetwork()
     end
 end
 
---- Pick a direction and a target. Away from whatever we were told to clear: if it is ahead of us we
---- back off, if it is behind or beside us we pull forward. Straight along our own axis rather than
---- towards a computed free spot - this runs without a path search, and a short move along the axis
---- the vehicle is already lined up with is the one manoeuvre that needs none.
+--- Pick a target to step aside to.
+---
+--- The target is placed in WORLD space, on the line running from whatever we are clearing out
+--- through us and onward. That direction is the one thing that reliably leads away, and it is not
+--- the vehicle's own axis: a driver standing on a collection route is ALIGNED with that route,
+--- having just driven it, so a target on its own axis is a target further along the very route it is
+--- blocking. It would clear the spot and land on the next one, eighteen metres down.
+---
+--- driveToPoint steers towards the target, so a target off to the side is reached on a curve. Which
+--- is the whole manoeuvre: leave the line, do not travel along it.
 function WaitForCallTask:startMakingWay()
     local request = AutoDrive.getMakeWayRequest(self.vehicle)
     if request == nil or request.awayFromX == nil or request.awayFromZ == nil then
@@ -111,17 +154,32 @@ function WaitForCallTask:startMakingWay()
         return
     end
 
-    local _, _, awayFromZ = AutoDrive.worldToLocal(self.vehicle, request.awayFromX, 0, request.awayFromZ)
-    self.makeWayReverse = awayFromZ > 0
-
-    local offset = AutoDrive.MAKE_WAY_DISTANCE
-    if self.makeWayReverse then
-        offset = -offset
+    local sx, sy, sz = getWorldTranslation(self.vehicle.components[1].node)
+    local dx, dz = sx - request.awayFromX, sz - request.awayFromZ
+    local length = MathUtil.vector2Length(dx, dz)
+    if length < 1 then
+        -- Standing on the very thing we are clearing, so the line through it has no direction in it.
+        -- Our own right is at least across whatever we are lined up with, which is what is wanted.
+        local rx, _, rz = AutoDrive.localDirectionToWorld(self.vehicle, 1, 0, 0)
+        dx, dz = rx, rz
+        length = MathUtil.vector2Length(dx, dz)
     end
-    local tx, ty, tz = AutoDrive.localToWorld(self.vehicle, 0, 0, offset)
+    if length < 0.001 then
+        AutoDrive.clearMakeWayRequest(self.vehicle)
+        return
+    end
+
+    local tx = sx + (dx / length) * AutoDrive.MAKE_WAY_DISTANCE
+    local tz = sz + (dz / length) * AutoDrive.MAKE_WAY_DISTANCE
+    local ty = getTerrainHeightAtWorldPos(g_currentMission.terrainRootNode, tx, 300, tz)
     self.makeWayTarget = { x = tx, y = ty, z = tz }
 
-    local sx, sy, sz = getWorldTranslation(self.vehicle.components[1].node)
+    -- Reverse only when the target is genuinely behind us. Computed against the target's real
+    -- height: passing 0 for y on a map whose ground sits at fifty to a hundred and fifty metres
+    -- makes the vehicle's own pitch decide the direction rather than the geometry.
+    local _, _, targetLocalZ = AutoDrive.worldToLocal(self.vehicle, tx, ty, tz)
+    self.makeWayReverse = targetLocalZ < 0
+
     self.makeWayStart = { x = sx, y = sy, z = sz }
 
     self.makeWayTimer:timer(false)

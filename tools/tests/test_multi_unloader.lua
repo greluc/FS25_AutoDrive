@@ -292,6 +292,27 @@ function TestOffRouteLookAhead:testAFarAwayVehicleIsCulledButANearOneIsNot()
         'a vehicle further off than two look-aheads plus the conflict range cannot share a point with us')
 end
 
+--- trafficVehicle is shared with detectAdTrafficOnRoute, which on its own non-gate frames answers
+--- from nothing but whether that field is nil. A yield that never releases it therefore makes the
+--- OTHER check report traffic for the rest of the drive - and a route moving from a field onto the
+--- network is how every path search ends, so it would happen on most journeys.
+function TestOffRouteLookAhead:testTheTrafficVehicleIsReleasedWhenTheConflictClears()
+    local near, far = convergingPair()
+    self.vehicles = { near, far }
+
+    local yields, module = detectsTrafficFor(far)
+    lu.assertTrue(yields)
+    lu.assertNotNil(module.trafficVehicle, 'test setup: yielding has to record the partner')
+
+    self.vehicles = { far }
+    lu.assertFalse(detectsTrafficFor(far))
+    local _, cleared = detectsTrafficFor(far)
+    module:detectAdTrafficOffRoute()
+
+    lu.assertNil(module.trafficVehicle,
+        'a stale partner here makes the on-network check report traffic that is not there')
+end
+
 function TestOffRouteLookAhead:testPathsThatDoNotMeetAreIgnored()
     local a = unloaderOnPath(1, 0, 0, { { x = 5, y = 0, z = 0 }, { x = 10, y = 0, z = 0 } }, false)
     local b = unloaderOnPath(2, 0, 500, { { x = 5, y = 0, z = 500 }, { x = 10, y = 0, z = 500 } }, false)
@@ -426,6 +447,25 @@ function TestRouteReservation:testAVehicleWithoutARouteProtects()
     AutoDrive.getAllVehicles = function() return { mine, other } end
 
     lu.assertTrue(AutoDrive.checkForVehiclePathInBox(boxAtEndOf(other.ad.drivePathModule:getWayPoints()), 5, mine))
+end
+
+--- The exemption has to work while a path search is running, which is the only time it is asked.
+--- It used to read the searching vehicle's own route to find its target - and during a search there
+--- is no such route, because reachedTarget clears it the moment the previous one ends. It found nil
+--- every time, so the exemption never applied and the deadlock it prevents was back.
+function TestRouteReservation:testTheSearchTargetIsTakenFromTheSearchNotTheFinishedRoute()
+    local other = routedVehicle(2, pathFinderRoute(12, 100, 0))
+    local mine = routedVehicle(1, nil)
+    -- exactly the state a vehicle is in while its next path is being searched for
+    mine.ad.drivePathModule = { getWayPoints = function() return nil, nil end }
+    AutoDrive.getAllVehicles = function() return { mine, other } end
+
+    local box = boxAtEndOf(other.ad.drivePathModule:getWayPoints())
+
+    lu.assertTrue(AutoDrive.checkForVehiclePathInBox(box, 5, mine, nil, { x = 400, z = 400 }),
+        'searching towards somewhere else must still protect the other destination')
+    lu.assertFalse(AutoDrive.checkForVehiclePathInBox(box, 5, mine, nil, { x = 100, z = 0 }),
+        'searching towards the same place must open it, or neither vehicle can ever arrive')
 end
 
 function TestRouteReservation:testAnInactiveVehicleReservesNothing()

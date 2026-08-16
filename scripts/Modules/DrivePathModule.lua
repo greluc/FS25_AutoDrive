@@ -567,6 +567,23 @@ end
 ---
 --- The per-vehicle cornerSpeed setting still scales the result, and is the knob for anyone who
 --- wants the old, faster feel back.
+--- The old angle curve, kept because it covers the case the radius does not.
+---
+--- Radius assumes the way points SAMPLE a bend. Where they instead describe it - a hand placed
+--- vertex, a reverse switch point, a junction between two long straights - there is no arc, and
+--- ((d1 + d2) / 2) / angle reports the segment length rather than any real turning circle. A right
+--- angle between two twelve metre segments comes out as a 7.6 m radius and 17 km/h where the vehicle
+--- has to very nearly stop. The angle rule has the opposite blind spot: it reads a densely sampled
+--- bend as gentle. Neither is right on its own, so the scan takes the lower of the two.
+function ADDrivePathModule.speedForAngle(angle)
+    if angle == nil or angle < 5 then
+        return math.huge
+    elseif angle < 50 then
+        return 12 + 48 * (1 - math.clamp((angle - 5), 0, 25) / (30 - 5))
+    end
+    return 3
+end
+
 --- The curve on its own, with no settings lookup, so the scan can call it once per way point
 --- without going through the settings layer several hundred times on a densely recorded route.
 function ADDrivePathModule.speedForRadius(radius)
@@ -577,8 +594,14 @@ function ADDrivePathModule.speedForRadius(radius)
     return math.sqrt(ADDrivePathModule.CORNER_LATERAL_ACCELERATION * effective) * 3.6
 end
 
-function ADDrivePathModule:getMaxSpeedForRadius(radius)
-    return ADDrivePathModule.speedForRadius(radius) * AutoDrive.getSetting("cornerSpeed", self.vehicle)
+--- What a corner described by this radius AND this turn may be taken at: the lower of the two rules.
+function ADDrivePathModule.cornerSpeedFor(radius, angle)
+    return math.min(ADDrivePathModule.speedForRadius(radius), ADDrivePathModule.speedForAngle(angle))
+end
+
+function ADDrivePathModule:getMaxSpeedForRadius(radius, angle)
+    return ADDrivePathModule.cornerSpeedFor(radius, angle)
+        * AutoDrive.getSetting("cornerSpeed", self.vehicle)
 end
 
 --- The radius of the bend through three consecutive way points. On a circular arc the turn between
@@ -675,18 +698,23 @@ function ADDrivePathModule:getCornerSpeedLimit(currentLimit, cornerScale, corner
         local radius, angle, signed = self:getCornerRadius(ref, current, ahead)
 
         if turnAngleOpen then
-            if (i - index + 1) <= ADDrivePathModule.MAXLOOKAHEADPOINTS
-                and MathUtil.vector2Length(anchor.x - ahead.x, anchor.z - ahead.z) <= turnAngleReach then
-                if signed ~= nil then
-                    self.turnAngle = self.turnAngle + math.clamp(signed, -90, 90)
-                end
-            else
+            -- Accumulate, THEN decide whether to keep going - the order the original used. Testing
+            -- first drops the triple that straddles the edge of the window, and when the window is
+            -- shorter than one segment it drops every triple and leaves the total at zero. That is
+            -- reachable: way points twelve metres apart, the vehicle a full segment back from the
+            -- one it is heading for, and crawling - at which point the indicator switched itself
+            -- off in the last dozen metres of the approach to a junction.
+            if signed ~= nil then
+                self.turnAngle = self.turnAngle + math.clamp(signed, -90, 90)
+            end
+            if (i - index + 1) >= ADDrivePathModule.MAXLOOKAHEADPOINTS
+                or MathUtil.vector2Length(anchor.x - ahead.x, anchor.z - ahead.z) > turnAngleReach then
                 turnAngleOpen = false
             end
         end
 
         if radius ~= nil and travelled <= scanDistance then
-            local cornerSpeed = ADDrivePathModule.speedForRadius(radius)
+            local cornerSpeed = ADDrivePathModule.cornerSpeedFor(radius, angle)
                 * cornerSpeedSetting * (cornerScale or 1)
             if cornerFloor ~= nil then
                 cornerSpeed = math.max(cornerSpeed, cornerFloor)

@@ -365,4 +365,161 @@ function TestParkedOnNetwork:testAnAskedForMoveStillHappensWhenTheSettingIsOff()
     lu.assertEquals(self.task.state, WaitForCallTask.STATE_MAKING_WAY)
 end
 
+------------------------------------------------------------------------------------------------------------------------
+--- Stepping aside has to leave the route, not travel along it
+---
+--- The first version put the target on the vehicle's own axis. A driver standing on a collection
+--- route is aligned with that route - it got there by driving it - so eighteen metres along its own
+--- axis is eighteen metres further down the very route it is blocking. It cleared one spot and
+--- landed on the next, and the clearance check fired again, and again, until its attempts ran out.
+------------------------------------------------------------------------------------------------------------------------
+TestSteppingOffTheRoute = {}
+
+--- A route running along +Z, which is the direction the mock vehicles face - so a vehicle on it is
+--- aligned with it, exactly as one that has just driven it would be.
+local function installRouteAlongZ()
+    ADGraphManager:load()
+    local wps = {}
+    for i = 1, 40 do
+        wps[i] = TestSetup.waypoint(i, 0, (i - 1) * 4, i < 40 and { i + 1 } or {}, i > 1 and { i - 1 } or {})
+    end
+    ADGraphManager:setWayPoints(wps)
+end
+
+local function distanceToRoute(x, z)
+    local wp = ADGraphManager:getNearestWayPointWithin({x = x, z = z}, 500)
+    if wp == nil then
+        return math.huge
+    end
+    return MathUtil.vector2Length(wp.x - x, wp.z - z)
+end
+
+function TestSteppingOffTheRoute:setUp()
+    TestSetup.reset()
+    driveCalls = {}
+    g_time = 10000
+    g_updateLoopIndex = AutoDrive.PERF_FRAMES - 1
+    ADHarvestManager = { registerAsUnloader = function() end }
+    installRouteAlongZ()
+    AutoDrive.testSettings['waitingPosition'] = true
+    -- two metres to the side of the route, aligned with it
+    self.task = WaitForCallTask:new(vehicleAt(1, 2, 20, nil))
+    self.parked = self.task.vehicle
+    self.parked.ad.taskModule.activeTask = self.task
+    self.parked.ad.stateModule.getFirstMarker = function() return { id = 400 } end
+    self.task:setUp()
+end
+
+--- The regression, stated as the property that was violated: after the move the vehicle must be
+--- further from the route than it started, not the same distance further along it.
+function TestSteppingOffTheRoute:testTheTargetLeavesTheRoute()
+    self.task:update(16)
+
+    lu.assertEquals(self.task.state, WaitForCallTask.STATE_MAKING_WAY, 'test setup: it has to move at all')
+    local target = self.task.makeWayTarget
+    lu.assertNotNil(target)
+
+    lu.assertTrue(distanceToRoute(target.x, target.z) > AutoDrive.WAITING_NETWORK_CLEARANCE,
+        string.format('the target sits %.1f m from the route, which is still on it',
+            distanceToRoute(target.x, target.z)))
+end
+
+--- And the direction is across the route, not along it: the route runs in Z here, so a target that
+--- only moved in Z would be the old behaviour.
+function TestSteppingOffTheRoute:testTheMoveIsAcrossTheRouteNotAlongIt()
+    self.task:update(16)
+    local target = self.task.makeWayTarget
+
+    lu.assertTrue(math.abs(target.x - 2) > math.abs(target.z - 20),
+        string.format('moved %.1f across and %.1f along; along is the route',
+            math.abs(target.x - 2), math.abs(target.z - 20)))
+end
+
+--- Standing exactly on a way point leaves no direction to work from, so it steps across its own
+--- axis instead - which for a vehicle aligned with the route is still off it.
+function TestSteppingOffTheRoute:testStandingExactlyOnTheRouteStillLeavesIt()
+    moveTo(self.parked, 0, 20)
+    self.task:setUp()
+
+    self.task:update(16)
+
+    local target = self.task.makeWayTarget
+    lu.assertNotNil(target, 'it has to pick some direction rather than give up')
+    lu.assertTrue(distanceToRoute(target.x, target.z) > AutoDrive.WAITING_NETWORK_CLEARANCE)
+end
+
+--- The place the player sent it to is not somewhere to tidy away from. A marker IS a way point, so
+--- without this the check fires on every driver that finishes its route.
+function TestSteppingOffTheRoute:testItStaysOnTheMarkerThePlayerChose()
+    self.parked.ad.stateModule.getFirstMarker = function() return { id = 6 } end   -- (0, 20)
+    self.task:setUp()
+
+    self.task:update(16)
+
+    lu.assertEquals(self.task.state, WaitForCallTask.STATE_WAITING,
+        'a driver parked on its own destination must be left where it was sent')
+    lu.assertEquals(lastDrive().what, 'stop')
+end
+
+--- But a driver parked on the network somewhere that is NOT its marker still moves.
+function TestSteppingOffTheRoute:testAwayFromItsMarkerItStillMoves()
+    self.parked.ad.stateModule.getFirstMarker = function() return { id = 40 } end  -- far along the route
+    self.task:setUp()
+
+    self.task:update(16)
+
+    lu.assertEquals(self.task.state, WaitForCallTask.STATE_MAKING_WAY)
+end
+
+--- Being asked outranks our own tidying, and the same direction rule applies to it.
+function TestSteppingOffTheRoute:testAnAskedForMoveGoesAwayFromTheAsker()
+    local asker = vehicleAt(2, 2, 40, nil)
+    AutoDrive:requestMakeWay(self.parked, asker)
+
+    self.task:update(16)
+
+    local target = self.task.makeWayTarget
+    lu.assertNotNil(target)
+    local before = MathUtil.vector2Length(2 - 2, 20 - 40)
+    local after = MathUtil.vector2Length(target.x - 2, target.z - 40)
+    lu.assertTrue(after > before,
+        string.format('ended up %.1f m from the asker, started %.1f m away', after, before))
+end
+
+
+--- The driving module advances its own stopped timer with this frame's dt. Advancing it a second
+--- time made a manoeuvre that met any resistance read as stuck in half the time.
+function TestSteppingOffTheRoute:testTheDrivingModuleIsAdvancedOnce()
+    local updates = 0
+    self.parked.ad.specialDrivingModule.update = function() updates = updates + 1 end
+
+    self.task:update(16)
+    lu.assertEquals(self.task.state, WaitForCallTask.STATE_MAKING_WAY, 'test setup: it has to be moving')
+    lu.assertEquals(updates, 0, 'the driving call owns the frame while a manoeuvre is running')
+
+    self.task:stopMakingWay()
+    -- otherwise the next frame simply starts another attempt, since we are still on the route
+    AutoDrive.testSettings['waitingPosition'] = false
+    self.task:update(16)
+    lu.assertEquals(updates, 1, 'and standing still still needs its one update')
+end
+
+--- The mode reads this to hold its stuck detection off. Meeting resistance is what a nudge out of a
+--- tight spot does; the manoeuvre has its own timeout to end it.
+function TestSteppingOffTheRoute:testItReportsWhenItIsManoeuvring()
+    lu.assertFalse(self.task:isMakingWay())
+
+    self.task:update(16)
+
+    lu.assertTrue(self.task:isMakingWay())
+end
+
+function TestSteppingOffTheRoute:testItStopsReportingOnceTheManoeuvreEnds()
+    self.task:update(16)
+    self.task:update(WaitForCallTask.MAKE_WAY_TIMEOUT + 1)
+
+    lu.assertFalse(self.task:isMakingWay())
+end
+
+
 os.exit(lu.LuaUnit.run())

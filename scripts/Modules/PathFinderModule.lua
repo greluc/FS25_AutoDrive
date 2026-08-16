@@ -1424,7 +1424,7 @@ function PathFinderModule:checkGridCell(cell)
         local vectorZ = worldPosPrevious.z - worldPos.z
         local dirVec = { x=vectorX, z = vectorZ}
 
-        local cellUsedByVehiclePath = AutoDrive.checkForVehiclePathInBox(corners, self.minTurnRadius, self.vehicle, dirVec)
+        local cellUsedByVehiclePath = AutoDrive.checkForVehiclePathInBox(corners, self.minTurnRadius, self.vehicle, dirVec, self.target)
         cell.isRestricted = cell.isRestricted or cellUsedByVehiclePath
         self.blockedByOtherVehicle = self.blockedByOtherVehicle or cellUsedByVehiclePath
         if self.vehicle ~= nil and self.vehicle.ad ~= nil and self.vehicle.ad.debug ~= nil and AutoDrive.debugVehicleMsg ~= nil then
@@ -2393,7 +2393,7 @@ function PathFinderModule:smoothResultingPPPath_Refined()
 
                 if not hasCollision then
                     local cellBox = AutoDrive.boundingBoxFromCorners(cornerX, cornerZ, corner2X, corner2Z, corner3X, corner3Z, corner4X, corner4Z)
-                    hasCollision = hasCollision or AutoDrive.checkForVehiclePathInBox(cellBox, self.minTurnRadius, self.vehicle)
+                    hasCollision = hasCollision or AutoDrive.checkForVehiclePathInBox(cellBox, self.minTurnRadius, self.vehicle, nil, self.target)
 
                     if hasCollision then
                         if self.vehicle ~= nil and self.vehicle.ad ~= nil and self.vehicle.ad.debug ~= nil and AutoDrive.debugVehicleMsg ~= nil then
@@ -2854,7 +2854,7 @@ function PathFinderModule:isDriveableAstar(cell)
         local vectorZ = worldPosPrevious.z - worldPos.z
         local dirVec = { x=vectorX, z = vectorZ}
 
-        local cellUsedByVehiclePath = AutoDrive.checkForVehiclePathInBox(corners, self.minTurnRadius, self.vehicle, dirVec)
+        local cellUsedByVehiclePath = AutoDrive.checkForVehiclePathInBox(corners, self.minTurnRadius, self.vehicle, dirVec, self.target)
         cell.isRestricted = cell.isRestricted or cellUsedByVehiclePath
         self.blockedByOtherVehicle = self.blockedByOtherVehicle or cellUsedByVehiclePath
         if cellUsedByVehiclePath then
@@ -3304,7 +3304,7 @@ function PathFinderModule:isDriveableDubins(cell)
         local vectorZ = worldPosPrevious.z - cell.worldPos.z
         local dirVec = { x=vectorX, z = vectorZ}
 
-        local cellUsedByVehiclePath = AutoDrive.checkForVehiclePathInBox(corners, self.minTurnRadius, self.vehicle, dirVec)
+        local cellUsedByVehiclePath = AutoDrive.checkForVehiclePathInBox(corners, self.minTurnRadius, self.vehicle, dirVec, self.target)
         cell.isRestricted = cell.isRestricted or cellUsedByVehiclePath
         self.blockedByOtherVehicle = self.blockedByOtherVehicle or cellUsedByVehiclePath
         if cellUsedByVehiclePath then

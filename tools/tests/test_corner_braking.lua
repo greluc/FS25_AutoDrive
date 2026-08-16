@@ -128,8 +128,9 @@ end
 function TestCornerSpeedLimit:testItArrivesAtTheCornerSpeed()
     local m = moduleOn(straightThenCorner(4, 40), 12)
     local limit = m:getCornerSpeedLimit(50)
-    -- a single 40 degree vertex between two 4 m segments is a bend of this radius
-    local cornerSpeed = m:getMaxSpeedForRadius(SPACING / math.rad(40))
+    -- a single 40 degree vertex between two 4 m segments; the governing speed is the lower of the
+    -- radius rule and the angle rule, which for a vertex this sharp is the angle one
+    local cornerSpeed = m:getMaxSpeedForRadius(SPACING / math.rad(40), 40)
 
     lu.assertTrue(limit >= cornerSpeed, 'the ramp must not undercut the corner speed itself')
     lu.assertTrue(limit < cornerSpeed * 2.5,
@@ -425,6 +426,35 @@ function TestTurnAngle:testItMatchesAtEverySpeed()
 end
 
 --- The sign has to survive, or the indicators pick the wrong side.
+--- The boundary triple. The original accumulated first and only then decided whether to keep
+--- going, so the triple straddling the edge of the window still counted - and when the window was
+--- shorter than one segment, that one triple was still all of it. Testing first instead dropped it,
+--- and on way points twelve metres apart with the vehicle a full segment back and crawling, dropped
+--- every triple and left the total at zero: the indicator switched itself off in the last dozen
+--- metres of the approach to a junction.
+function TestTurnAngle:testTheBoundaryTripleStillCounts()
+    local points = {}
+    for i = 1, 6 do points[i] = { x = (i - 1) * 12, y = 0, z = 0 } end
+    -- a 70 degree vertex at the way point the vehicle is heading for
+    local rad = math.rad(70)
+    for i = 1, 5 do
+        points[#points + 1] = { x = points[6].x + math.cos(rad) * 12 * i,
+                                z = points[6].z + math.sin(rad) * 12 * i, y = 0 }
+    end
+
+    local m = moduleOn(points, 5)
+    m.vehicle.getTotalMass = function() return 30 end
+    m.currentWayPoint = 6
+    MockEngine.nodePositions['veh'] = { x = points[5].x + 0.3, y = 0, z = 0 }
+    m.distanceToLookAhead = m:getCurrentLookAheadDistance()
+
+    m:getCornerSpeedLimit(50)
+
+    lu.assertTrue(math.abs(m.turnAngle) > 1,
+        string.format('the window is %.1f m and the vehicle is %.1f m back, so nothing was counted: %.2f',
+            m.distanceToLookAhead, 11.7, m.turnAngle))
+end
+
 function TestTurnAngle:testTheSignFollowsTheBend()
     local left = moduleOn(straightThenCorner(20, 40), 40)
     left.distanceToLookAhead = 100
@@ -451,6 +481,97 @@ function TestTurnAngle:testAShortRouteGivesZero()
     m:getCornerSpeedLimit(50)
 
     lu.assertEquals(m.turnAngle, 0)
+end
+
+
+------------------------------------------------------------------------------------------------------------------------
+--- Sharp vertices between long segments
+---
+--- Radius assumes the way points SAMPLE a bend. Where they instead describe it - a hand placed
+--- vertex, a reverse switch point, a junction between two long straights - there is no arc, and
+--- chord over angle reports the segment length rather than a turning circle. A right angle between
+--- two twelve metre segments comes out as a 7.6 m radius and 17 km/h, where the vehicle has very
+--- nearly to stop. The angle rule has the opposite blind spot. The scan takes the lower of the two.
+------------------------------------------------------------------------------------------------------------------------
+TestSharpVertices = {}
+
+function TestSharpVertices:setUp()
+    TestSetup.reset()
+    AutoDrive.testSettings['cornerSpeed'] = 1.0
+end
+
+--- Way points twelve metres apart, which is what the recorder itself lays down on a straight.
+local function longSegmentCorner(distanceToCorner, angleDeg, spacing)
+    spacing = spacing or 12
+    local points = {}
+    for i = 1, math.max(2, math.floor(distanceToCorner / spacing) + 1) do
+        points[i] = { x = (i - 1) * spacing, y = 0, z = 0 }
+    end
+    local cx, cz = points[#points].x, points[#points].z
+    local rad = math.rad(angleDeg)
+    for i = 1, 10 do
+        points[#points + 1] = { x = cx + math.cos(rad) * spacing * i,
+                                z = cz + math.sin(rad) * spacing * i, y = 0 }
+    end
+    return points
+end
+
+function TestSharpVertices:testARightAngleBetweenLongSegmentsIsNearlyAStop()
+    local speed = ADDrivePathModule.cornerSpeedFor(12 / math.rad(90), 90)
+
+    lu.assertTrue(speed <= 3.01,
+        string.format('a right angle vertex allowed %.1f km/h; the radius alone reads it as %.1f',
+            speed, ADDrivePathModule.speedForRadius(12 / math.rad(90))))
+end
+
+--- A reverse switch point doubles back on itself and is the sharpest thing a route contains.
+function TestSharpVertices:testAReverseSwitchPointIsNearlyAStop()
+    lu.assertTrue(ADDrivePathModule.cornerSpeedFor(12 / math.rad(175), 175) <= 3.01)
+end
+
+--- And it has to hold through the ramp, not just at the vertex itself. The absolute number at a
+--- given distance is whatever the comfortable deceleration produces - what matters is that it is
+--- below what the radius rule alone would have allowed, which is the regression this closes.
+function TestSharpVertices:testTheApproachToASharpVertexIsSlowerThanTheRadiusAlone()
+    local limit = moduleOn(longSegmentCorner(12, 90), 20):getCornerSpeedLimit(50)
+
+    local radiusOnly = ADDrivePathModule.speedForRadius(12 / math.rad(90))
+    local rampedFromRadius = math.sqrt((radiusOnly / 3.6) ^ 2 + 2 * 1.5 * 12) * 3.6
+
+    lu.assertTrue(limit < rampedFromRadius * 0.8,
+        string.format('twelve metres out: %.1f km/h, radius rule alone would give %.1f',
+            limit, rampedFromRadius))
+end
+
+--- The ramp aims at the speed a right angle actually wants. Twelve metre segments cannot place the
+--- vertex nearer than twelve metres, so this checks the ramp is the one that arrives at 3 km/h
+--- rather than at the seventeen the radius alone would have aimed for.
+function TestSharpVertices:testTheRampAimsAtTheVertexSpeed()
+    local limit = moduleOn(longSegmentCorner(12, 90), 20):getCornerSpeedLimit(50)
+
+    local aimedAt = ADDrivePathModule.cornerSpeedFor(12 / math.rad(90), 90)
+    local expected = math.sqrt((aimedAt / 3.6) ^ 2
+        + 2 * ADDrivePathModule.COMFORTABLE_DECELERATION * 12) * 3.6
+
+    lu.assertAlmostEquals(limit, expected, 0.5,
+        string.format('the ramp gave %.1f, arriving at %.1f km/h implies %.1f', limit, aimedAt, expected))
+end
+
+--- The other blind spot has to stay covered: a densely sampled bend is still governed by its radius,
+--- where the angle rule reads it as almost straight.
+function TestSharpVertices:testASampledBendIsStillGovernedByItsRadius()
+    local anglePerTriple = math.deg(2 / 12)   -- radius 12 m sampled every 2 m
+    local byAngle = ADDrivePathModule.speedForAngle(anglePerTriple)
+    local combined = ADDrivePathModule.cornerSpeedFor(12, anglePerTriple)
+
+    lu.assertTrue(combined < byAngle / 2,
+        string.format('the angle rule allows %.1f here, the combination has to be far below it (%.1f)',
+            byAngle, combined))
+end
+
+--- And a genuinely gentle kink still constrains nothing.
+function TestSharpVertices:testAGentleKinkIsNotACorner()
+    lu.assertTrue(ADDrivePathModule.cornerSpeedFor(12 / math.rad(4), 4) > 60)
 end
 
 

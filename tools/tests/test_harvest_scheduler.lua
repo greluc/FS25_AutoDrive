@@ -452,4 +452,112 @@ function TestSchedulerAverageFPS:testUpdateAverageFPSDoesNotWalkTheBuffer()
         'dividing by the buffer size is wrong while it is still filling; use the filled count')
 end
 
+------------------------------------------------------------------------------------------------------------------------
+--- Assigning an unloader that declines
+---
+--- assignToHarvester can refuse: an unloader sitting in idleUnloaders whose mode has already moved
+--- on - following another unloader across the field, say - will not take the job. Booking it as
+--- active regardless loses it into the active list with no harvester of its own. Simply not booking
+--- it stalls, because the very same one is the closest candidate again on the next tick and the
+--- harvester waits with willing vehicles standing beside it. It has to move on to the next.
+------------------------------------------------------------------------------------------------------------------------
+TestAssignmentDeclines = {}
+
+--- An unloader that accepts or refuses on command, and records that it was asked.
+local function candidate(id, marker, accepts, distanceNode)
+    local v = TestSetup.vehicle({
+        id = id,
+        components = { { node = distanceNode } },
+        getName = function() return 'Unloader' .. tostring(id) end,
+    })
+    v.ad.stateModule = stateModuleStub(marker)
+    v.asked = 0
+    v.ad.modes = {}
+    v.ad.modes[AutoDrive.MODE_UNLOAD] = {
+        combine = nil,
+        assignToHarvester = function(self, harvester)
+            v.asked = v.asked + 1
+            if accepts then
+                self.combine = harvester
+            end
+        end,
+    }
+    return v
+end
+
+function TestAssignmentDeclines:setUp()
+    TestSetup.reset()
+    ADHarvestManager:load()
+    -- lives in CollisionDetectionUtils, which this suite does not load
+    AutoDrive.getDistanceBetween = function(a, b)
+        local ax, _, az = getWorldTranslation(a.components[1].node)
+        local bx, _, bz = getWorldTranslation(b.components[1].node)
+        return MathUtil.vector2Length(ax - bx, az - bz)
+    end
+    self.harvester = harvesterStub(1, 7)
+    MockEngine.nodePositions['node1'] = { x = 0, y = 0, z = 0 }
+    -- the refuser is nearer, so it is chosen first
+    MockEngine.nodePositions['near'] = { x = 5, y = 0, z = 0 }
+    MockEngine.nodePositions['far'] = { x = 40, y = 0, z = 0 }
+    self.refuser = candidate(2, 7, false, 'near')
+    self.willing = candidate(3, 7, true, 'far')
+    ADHarvestManager.idleUnloaders = { self.refuser, self.willing }
+    TestState.entities['node1'] = true
+end
+
+--- The regression: the harvester used to get nobody at all.
+function TestAssignmentDeclines:testItMovesOnToTheNextCandidate()
+    ADHarvestManager:assignUnloaderToHarvester(self.harvester)
+
+    lu.assertEquals(self.refuser.asked, 1, 'the nearer one is asked first')
+    lu.assertEquals(self.willing.asked, 1, 'and the next one is asked when it declines')
+    lu.assertEquals(self.willing.ad.modes[AutoDrive.MODE_UNLOAD].combine, self.harvester)
+end
+
+function TestAssignmentDeclines:testTheOneThatAcceptedIsTheOneBooked()
+    ADHarvestManager:assignUnloaderToHarvester(self.harvester)
+
+    lu.assertTrue(ADTable.contains(ADHarvestManager.activeUnloaders, self.willing))
+    lu.assertFalse(ADTable.contains(ADHarvestManager.activeUnloaders, self.refuser),
+        'a vehicle that refused must not be booked as working')
+    lu.assertFalse(ADTable.contains(ADHarvestManager.idleUnloaders, self.willing))
+    lu.assertTrue(ADTable.contains(ADHarvestManager.idleUnloaders, self.refuser),
+        'and it stays idle, so it can be called once its own state allows')
+end
+
+--- Everybody refusing has to end, not spin.
+function TestAssignmentDeclines:testAllDecliningTerminates()
+    self.willing.ad.modes[AutoDrive.MODE_UNLOAD].assignToHarvester = function(self2)
+        self.willing.asked = self.willing.asked + 1
+    end
+
+    ADHarvestManager:assignUnloaderToHarvester(self.harvester)
+
+    lu.assertEquals(self.refuser.asked, 1)
+    lu.assertEquals(self.willing.asked, 1)
+    lu.assertEquals(#ADHarvestManager.activeUnloaders, 0)
+end
+
+function TestAssignmentDeclines:testNoCandidatesIsHarmless()
+    ADHarvestManager.idleUnloaders = {}
+
+    ADHarvestManager:assignUnloaderToHarvester(self.harvester)
+
+    lu.assertEquals(#ADHarvestManager.activeUnloaders, 0)
+end
+
+--- The ordinary case still takes the closest one and asks nobody else.
+function TestAssignmentDeclines:testAWillingClosestOneIsTakenStraightAway()
+    self.refuser.ad.modes[AutoDrive.MODE_UNLOAD].assignToHarvester = function(self2, harvester)
+        self.refuser.asked = self.refuser.asked + 1
+        self2.combine = harvester
+    end
+
+    ADHarvestManager:assignUnloaderToHarvester(self.harvester)
+
+    lu.assertEquals(self.refuser.asked, 1)
+    lu.assertEquals(self.willing.asked, 0, 'no need to trouble anybody else')
+end
+
+
 os.exit(lu.LuaUnit.run())
