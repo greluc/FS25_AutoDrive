@@ -3,47 +3,50 @@ name: Check
 # Compiles every Lua file and runs the unit test suites.
 #
 # The compile step is the important half: it uses the same Luau dialect the game runs, so a syntax
-# error that Lua 5.4 would accept (or reject differently) cannot slip through. When the Luau
-# compiler is not available the check falls back to luac -p and says so rather than passing quietly.
+# error that Lua 5.4 would accept (or reject differently) cannot slip through. When no working Luau
+# compiler is available the check falls back to luac -p and says so rather than passing quietly.
 
 on:
   push:
     branches: [main]
   pull_request:
 
+env:
+  # luau-lang/luau release to compile against. Bump deliberately: an unpinned "latest" makes a green
+  # build depend on what was published this morning.
+  LUAU_VERSION: "0.734"
+
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      # v5 is the first major of each of these that runs on node24; node20 is deprecated
-      # on the runners. Both v5 lines are still released alongside the newer majors, and
-      # neither of the later ones changes anything this workflow uses.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install Lua
-        run: sudo apt-get update && sudo apt-get install -y lua5.4 luajit
+        run: sudo apt-get update && sudo apt-get install -y lua5.4
 
-      - name: Cache fs-utils build
-        id: cache-fsutils
-        uses: actions/cache@v5
+      - name: Cache the Luau compiler
+        id: cache-luau
+        uses: actions/cache@v6
         with:
-          path: fs-utils/target/release/fs-luau-compile
-          key: fs-utils-luau-compile-v1
+          path: tools/bin/luau-compile
+          key: luau-compile-${{ env.LUAU_VERSION }}-ubuntu
 
-      - name: Build the Luau compiler
-        if: steps.cache-fsutils.outputs.cache-hit != 'true'
-        continue-on-error: true
+      # The official compiler, not a wrapper around one. The previous arrangement built
+      # fs-luau-compile from source, and that binary shells out to a luau-compile the runner does not
+      # have - so the step reported all 128 files as broken while every source was fine.
+      - name: Install the Luau compiler
+        if: steps.cache-luau.outputs.cache-hit != 'true'
         run: |
-          git clone --depth 1 https://github.com/Paint-a-Farm/fs-utils.git fs-utils || true
-          if [ -d fs-utils ]; then
-            cd fs-utils && cargo build --release -p fs-luau-compile || true
-          fi
-
-      - name: Make the compiler discoverable
-        continue-on-error: true
-        run: |
+          set -euo pipefail
           mkdir -p tools/bin
-          cp fs-utils/target/release/fs-luau-compile tools/bin/fs-luau-compile.exe 2>/dev/null || true
+          curl -fsSL -o luau.zip \
+            "https://github.com/luau-lang/luau/releases/download/${LUAU_VERSION}/luau-ubuntu.zip"
+          unzip -j -o luau.zip luau-compile -d tools/bin
+          chmod +x tools/bin/luau-compile
+
+      - name: Show which compiler will be used
+        run: tools/bin/luau-compile --version || tools/bin/luau-compile --help | head -3
 
       - name: Run checks
         run: python3 tools/check.py -v

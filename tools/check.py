@@ -89,30 +89,85 @@ def lua_files():
     return out
 
 
+def find_luau_compile():
+    """The official Luau compiler from luau-lang/luau, if it is on the PATH or in tools/bin."""
+    for name in ("luau-compile", "luau-compile.exe"):
+        p = shutil.which(name)
+        if p:
+            return pathlib.Path(p)
+    for c in (REPO / "tools" / "bin" / "luau-compile", REPO / "tools" / "bin" / "luau-compile.exe"):
+        if c.exists():
+            return c
+    return None
+
+
+def compile_backends():
+    """Every way of checking Lua syntax that this machine offers, strongest first.
+
+    Each entry is (label, argv builder). The builder gets the file and a scratch output path and
+    returns the command line.
+    """
+    out = []
+
+    fs_luau = find_luau_compiler()
+    if fs_luau:
+        skip = compiler_skip_encoding_flag(fs_luau)
+        out.append((f"Luau ({fs_luau.name})",
+                    lambda f, o, e=fs_luau, s=skip: [str(e)] + s + [str(f), str(o)]))
+
+    luau = find_luau_compile()
+    if luau:
+        # --null compiles in full and emits nothing. --binary would work too, but it writes the
+        # bytecode to STDOUT, which this reads as text and chokes on.
+        out.append((f"Luau ({luau.name}, luau-lang)",
+                    lambda f, o, e=luau: [str(e), "--null", str(f)]))
+
+    luac = shutil.which("luac") or shutil.which("luac5.4")
+    if luac:
+        out.append(("luac -p (Ersatz, nicht der Spiel-Dialekt)",
+                    lambda f, o, e=luac: [e, "-p", str(f)]))
+
+    return out
+
+
+def backend_works(build_argv):
+    """Compile something trivially valid before trusting a backend with the real sources.
+
+    A binary that exists but cannot run is worse than one that is missing: it reports every file as
+    broken and the failure looks like a hundred and twenty-eight syntax errors. That is exactly what
+    happened in CI, twice - once with an argument the build did not accept, then with a wrapper whose
+    own backing compiler was not installed - while every source file was fine.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        probe = pathlib.Path(tmp) / "probe.lua"
+        probe.write_text("local a = 1\nreturn a\n", encoding="utf-8")
+        try:
+            res = subprocess.run(build_argv(probe, pathlib.Path(tmp) / "probe.out"),
+                                 capture_output=True, text=True, timeout=120)
+        except Exception:
+            return False
+        return res.returncode == 0
+
+
 def check_compile(verbose):
     files = lua_files()
-    compiler = find_luau_compiler()
     failures = []
 
-    if compiler:
-        label = f"Luau ({compiler.name})"
-        skip_encoding = compiler_skip_encoding_flag(compiler)
-        with tempfile.TemporaryDirectory() as tmp:
-            for i, f in enumerate(files):
-                res = subprocess.run(
-                    [str(compiler)] + skip_encoding + [str(f), str(pathlib.Path(tmp) / f"{i}.out")],
-                    capture_output=True, text=True,
-                )
-                if res.returncode != 0:
-                    failures.append((f, (res.stderr or res.stdout).strip().splitlines()[:3]))
-    else:
-        luac = shutil.which("luac") or shutil.which("luac5.4")
-        if not luac:
-            print(f"{YELLOW}COMPILE  uebersprungen - weder fs-luau-compile noch luac gefunden{RESET}")
-            return None
-        label = "luac -p (Ersatz, nicht der Spiel-Dialekt)"
-        for f in files:
-            res = subprocess.run([luac, "-p", str(f)], capture_output=True, text=True)
+    label, build_argv = None, None
+    for candidate_label, candidate_argv in compile_backends():
+        if backend_works(candidate_argv):
+            label, build_argv = candidate_label, candidate_argv
+            break
+        print(f"{YELLOW}COMPILE  {candidate_label} ist vorhanden, laeuft aber nicht - naechster{RESET}")
+
+    if build_argv is None:
+        print(f"{YELLOW}COMPILE  uebersprungen - kein funktionierender Compiler gefunden{RESET}")
+        return None
+
+    with tempfile.TemporaryDirectory() as tmp:
+        for i, f in enumerate(files):
+            res = subprocess.run(build_argv(f, pathlib.Path(tmp) / f"{i}.out"),
+                                 capture_output=True, text=True)
             if res.returncode != 0:
                 failures.append((f, (res.stderr or res.stdout).strip().splitlines()[:3]))
 

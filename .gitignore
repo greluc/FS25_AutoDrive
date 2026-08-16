@@ -3,3 +3,11 @@
 /venv
 *.zip
 *.gsp* # Giants Software Project
+
+# Python bytecode. These were tracked, and they change on every run of tools/check.py, so the
+# working tree came up dirty after every test pass.
+__pycache__/
+*.pyc
+
+# The Luau compiler CI downloads for the syntax gate; a platform binary, not source.
+/tools/bin/
