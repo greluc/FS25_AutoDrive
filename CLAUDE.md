@@ -86,6 +86,27 @@ actually declares). GDN's own downloads are the Editor and exporter plugins plus
 useful for i3d/XML work, but they contain **no bytecode decompiler**, so `fs-luau-decompile` is the
 tool for reading scripts.
 
+### What reading it has already settled
+
+- **`math.sign` and `math.clamp` are C-level extensions**, not Lua. The engine's own scripts call
+  `math.sign` ~170 times and define it nowhere. There is no `MathUtil.sign` - reaching for one raises.
+- **`overlapBox`'s extents are local X in slot 7 (ex) and local Z in slot 9 (ez).** The engine's own
+  calls (`PlacementUtil`, `TransportMission`) put half *width* in ex and half *length* in ez, with a
+  true Y heading. AutoDrive's pathfinder rotates by `atan2(-dz, dx)` instead, which is that heading
+  minus 90 degrees - so under that angle the long extent belongs in **ex**. Check which angle a call
+  site uses before reading its slots.
+- **`AIVehicleUtil.getDriveDirection` already normalises**, so the `math.acos(lz)` inside
+  `driveInDirection` is safe for anything that came out of it.
+- **`driveInDirection` reads `self.motor` and `self.cruiseControl.state` off the vehicle**, which no
+  specialization puts there. AutoDrive assigning them before each call is a required shim, not
+  clobbering.
+- **`terrainDetailId` is the whole packed detail map** - ground type, stones, weeds and foliage all
+  init on it. So `FSDensityMapUtil.getIsFieldAtWorldPos` (one density read, no masking) is *cheaper
+  but not equivalent* to `getFieldDataAtWorldPosition`, which masks out the ground-type channels.
+  AutoDrive uses the masked one deliberately; swapping it is a behaviour change, not an optimisation.
+- **There is no spatial vehicle index.** `VehicleSystem` keeps a plain list, so scanning all vehicles
+  is the only option and a cheap distance cull in front of the expensive work is the right shape.
+
 ## Lua and Luau traps that have actually bitten here
 
 - **`%w` excludes underscores.** `CREATE_%w+` matched `CREATE_OFF` and stopped at the first
