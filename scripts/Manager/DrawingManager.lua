@@ -380,9 +380,15 @@ end
 
 function ADDrawingManager:drawObjects_alternative2(obj, dFunc, iFunc)
     -- ADDrawingManager.debugMsg(nil, "ADDrawingManager:drawObjects_alternative2 start...")
-    local stats = {}
-    stats["Tasks"] = {Total = obj.currentTask}
-    stats["itemIDs"] = {Total = #obj.itemIDs}
+    -- Reused rather than rebuilt: this runs for every drawing object every frame, whether or not
+    -- anything is reading the numbers.
+    local stats = obj.drawStats
+    if stats == nil then
+        stats = {Tasks = {}, itemIDs = {}}
+        obj.drawStats = stats
+    end
+    stats.Tasks.Total = obj.currentTask
+    stats.itemIDs.Total = #obj.itemIDs
 
     if (obj.currentTask == 0 and obj.lastTaskCount > 0) then -- disabled obj -> set all invisible
         -- ADDrawingManager.debugMsg(nil, "ADDrawingManager:drawObjects_alternative2 disabled objects %s", tostring(obj.fileName))
@@ -408,8 +414,10 @@ function ADDrawingManager:drawObjects_alternative2(obj, dFunc, iFunc)
             -- cleaning up not needed objects
             -- ADDrawingManager.debugMsg(nil, "ADDrawingManager:drawObjects_alternative2 iconSetToUse changed %s", tostring(obj.fileName))
             for _, id in pairs(obj.itemIDs) do
-                -- make invisible unused items
+                -- delete, not just hide: dropping the table below is the last reference to these
+                -- nodes, so hiding them leaves them in the scene with nobody able to reach them
                 setVisibility(id, false)
+                delete(id)
             end
             obj.itemIDs = {}
             for _, task in pairs(obj.tasks) do

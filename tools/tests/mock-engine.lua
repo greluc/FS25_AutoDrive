@@ -202,6 +202,18 @@ function localDirectionToWorld(_, x, y, z) return x, y, z end
 function worldDirectionToLocal(_, x, y, z) return x, y, z end
 function getTerrainNormalAtWorldPos() return 0, 1, 0 end
 
+--- Whether a scene node is still in the world. A deleted vehicle leaves its Lua table behind - any
+--- reference to it keeps that alive - but not its node, which is what separates "we still hold a
+--- vehicle" from "the vehicle still exists". Tests mark a node dead through MockEngine.deletedNodes.
+MockEngine.deletedNodes = {}
+
+function entityExists(node)
+    if node == nil or MockEngine.deletedNodes[node] then
+        return false
+    end
+    return true
+end
+
 function getTerrainHeightAtWorldPos() return MockEngine.terrainHeight end
 function createTransformGroup(name) return 'node:' .. tostring(name) end
 function link() end
@@ -337,6 +349,7 @@ function MockEngine.reset()
     MockEngine.nodePositions = {}
     MockEngine.terrainHeight = 0
     g_currentMission.nodeToObject = {}
+    MockEngine.deletedNodes = {}
     g_currentMission.vehicleSystem.vehicles = {}
     g_updateLoopIndex = 0
     Logging.reset()

@@ -742,4 +742,95 @@ function TestPipeChasePosition:testFarAwayChasePositionIsNotJudged()
     lu.assertEquals(overlapBoxCalls, 0, 'nothing to gain from a 400 m straight line')
 end
 
+------------------------------------------------------------------------------------------------------------------------
+--- A harvester that no longer exists
+---
+--- Sell or delete a harvester mid-chase and the tasks notice: four of them guard against it and end
+--- themselves. They end by propagating, though, so the mode then builds the NEXT task out of the
+--- same dead vehicle - and two of those branches reach through to the engine, which no longer has a
+--- node for it. Because the active task is cleared only after getNextTask returns, the failure
+--- repeated every frame rather than once: one frozen unloader and a log filling up.
+------------------------------------------------------------------------------------------------------------------------
+TestDeadCombine = {}
+
+function TestDeadCombine:setUp()
+    TestSetup.reset()
+    installStubs()
+    self.vehicle = makeVehicle(true)
+    AutoDrive.copySettingsToVehicle(self.vehicle)
+    -- makeMode rather than :new, which needs engine globals this suite does not provide
+    self.mode = makeMode(self.vehicle)
+    self.mode.combine = makeVehicle(false)
+    self.mode.combineRootVehicle = self.mode.combine
+    g_currentMission.nodeToObject[self.mode.combine.components[1].node] = self.mode.combine
+    self.unregistered = false
+    ADHarvestManager.unregisterAsUnloader = function() self.unregistered = true end
+end
+
+local function deleteHarvester(mode)
+    local node = mode.combine.components[1].node
+    MockEngine.deletedNodes[node] = true
+    g_currentMission.nodeToObject[node] = nil
+end
+
+function TestDeadCombine:testALiveHarvesterIsAlive()
+    lu.assertTrue(self.mode:isCombineAlive(), 'test setup: it has to start out alive')
+end
+
+function TestDeadCombine:testADeletedHarvesterIsNot()
+    deleteHarvester(self.mode)
+
+    lu.assertFalse(self.mode:isCombineAlive(),
+        'the vehicle table survives deletion because we hold a reference; its scene node does not')
+end
+
+function TestDeadCombine:testAHarvesterWithoutComponentsIsNot()
+    self.mode.combine.components = nil
+    lu.assertFalse(self.mode:isCombineAlive())
+end
+
+--- The regression: every branch of getNextTask funnels through here, so one check covers them all.
+function TestDeadCombine:testGetNextTaskStandsDownInsteadOfBuildingFromTheCorpse()
+    deleteHarvester(self.mode)
+    self.mode.state = self.mode.STATE_ACTIVE_UNLOAD_COMBINE
+
+    local nextTask = self.mode:getNextTask()
+
+    lu.assertNil(nextTask, 'standing down enqueues its own task, so nil is what the callers expect')
+    lu.assertNil(self.mode.combine, 'holding the dead vehicle would keep it alive and try again')
+    lu.assertNil(self.mode.combineRootVehicle)
+    lu.assertTrue(self.unregistered, 'the manager must not keep counting us as one of its unloaders')
+end
+
+function TestDeadCombine:testItGoesBackToWaitingForACall()
+    deleteHarvester(self.mode)
+    self.mode.state = self.mode.STATE_ACTIVE_UNLOAD_COMBINE
+
+    self.mode:getNextTask()
+
+    lu.assertEquals(self.mode.state, self.mode.STATE_WAIT_TO_BE_CALLED)
+    lu.assertNotNil(self.mode.activeTask, 'standing down has to leave a task running, not nothing')
+end
+
+--- And a live harvester still goes through the normal branches.
+function TestDeadCombine:testALiveHarvesterIsNotStoodDownFrom()
+    self.mode.state = self.mode.STATE_ACTIVE_UNLOAD_COMBINE
+
+    self.mode:getNextTask()
+
+    lu.assertNotNil(self.mode.combine, 'a harvester that still exists must not be dropped')
+    lu.assertFalse(self.unregistered)
+end
+
+--- With no harvester at all there is nothing to validate and nothing to stand down from.
+function TestDeadCombine:testNoHarvesterIsNotAnError()
+    self.mode.combine = nil
+    self.mode.state = self.mode.STATE_INIT
+
+    self.mode:getNextTask()
+
+    lu.assertFalse(self.unregistered)
+end
+
+
 os.exit(lu.LuaUnit.run())

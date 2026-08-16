@@ -847,13 +847,14 @@ function ADGraphManager:getDriveTimeBetweenNodes(start, target, past, maxDriving
     if past ~= nil then
         local wp_ref = self.wayPoints[past]
         if wp_ref ~= nil then
-            angle =
-                math.abs(
-                AutoDrive.angleBetween(
-                    {x = wp_ahead.x - wp_current.x, z = wp_ahead.z - wp_current.z},
-                    {x = wp_current.x - wp_ref.x, z = wp_current.z - wp_ref.z}
-                )
-            )
+            -- from scalars rather than through two throwaway tables: this is the inner loop of the
+            -- shortest path search, so it runs once per edge relaxation
+            local aheadX, aheadZ = wp_ahead.x - wp_current.x, wp_ahead.z - wp_current.z
+            local backX, backZ = wp_current.x - wp_ref.x, wp_current.z - wp_ref.z
+            angle = math.abs(math.deg(math.atan2(aheadZ, aheadX) - math.atan2(backZ, backX)))
+            if angle > 180 then
+                angle = 360 - angle
+            end
         end
     end
 

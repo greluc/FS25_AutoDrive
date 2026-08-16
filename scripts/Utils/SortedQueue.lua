@@ -53,9 +53,13 @@ end
 
 -- Avoid heap allocs for performance
 
+-- File local rather than rebuilt per call: it closes over nothing, and enqueue is called once per
+-- edge relaxation in the shortest path search.
+local function fcomp(a, b)
+    return a.distance < b.distance
+end
+
 function SortedQueue:enqueue(value)
-    -- Initialise compare function
-    local fcomp = function( a,b ) return a.distance < b.distance end
     --  Initialise numbers
     local iStart,iEnd,iMid,iState = 1,#self.items,1,0
     -- Get insert position

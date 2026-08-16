@@ -59,6 +59,9 @@ function ReverseFromBadLocationTask:update(dt)
         self.vehicle.ad.specialDrivingModule:driveToPoint(dt, self.forwardsTarget, 8, false, 0.5, 8)
     else
         self:finished()
+        -- the distance check below still runs otherwise, and finishing twice in one frame dequeues
+        -- the task that was just set up and throws it away
+        return
     end
 
     local vehicleX, _, vehicleZ = getWorldTranslation(self.vehicle.components[1].node)

@@ -139,8 +139,15 @@ function ADMessagesManager:removeCurrentNotification()
     self.currentNotificationTimer = 0
 end
 
+-- Bounded, because nothing else prunes it: a long session accumulates entries indefinitely, and an
+-- entry naming a vehicle keeps that vehicle from being collected after it is sold.
+ADMessagesManager.MAX_HISTORY = 100
+
 function ADMessagesManager:addToHistory(item)
     table.insert(self.history, 1, item)
+    while #self.history > ADMessagesManager.MAX_HISTORY do
+        table.remove(self.history)
+    end
     if AutoDrive.gui and AutoDrive.gui.ADNotificationsHistoryGui  and AutoDrive.gui.ADNotificationsHistoryGui.isOpen then
         AutoDrive.gui.ADNotificationsHistoryGui:refreshItems()
     end

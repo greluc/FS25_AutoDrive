@@ -72,9 +72,21 @@ function WaitForCallTask:checkParkedOnNetwork()
     if AutoDrive.getMakeWayRequest(self.vehicle) ~= nil then
         return -- already on the way somewhere
     end
+    -- Same throttle and per-vehicle phase offset as every other spatial scan. A parked vehicle is
+    -- not going anywhere between frames, so asking once in twenty answers the same question.
+    if ((g_updateLoopIndex + self.vehicle.id) % AutoDrive.PERF_FRAMES) ~= 0 then
+        return
+    end
 
     local x, _, z = getWorldTranslation(self.vehicle.components[1].node)
-    local wayPoint = ADGraphManager:getNearestWayPointWithin({x = x, z = z}, AutoDrive.WAITING_NETWORK_CLEARANCE)
+    -- reused, so the query does not allocate a point per call
+    local query = self.networkQueryPoint
+    if query == nil then
+        query = {x = 0, z = 0}
+        self.networkQueryPoint = query
+    end
+    query.x, query.z = x, z
+    local wayPoint = ADGraphManager:getNearestWayPointWithin(query, AutoDrive.WAITING_NETWORK_CLEARANCE)
     if wayPoint == nil then
         return
     end

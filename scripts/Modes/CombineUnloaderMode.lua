@@ -250,9 +250,40 @@ function CombineUnloaderMode:continue()
     end
 end
 
+--- Whether the harvester we are working for still exists in the world.
+---
+--- Same test ADHarvestManager already uses on its own list. A vehicle table survives its deletion -
+--- the reference we hold keeps it alive - but its scene node does not, so anything that reaches
+--- through to the engine fails.
+function CombineUnloaderMode:isCombineAlive()
+    local combine = self.combine
+    if combine == nil or combine.components == nil or combine.components[1] == nil then
+        return false
+    end
+    local node = combine.components[1].node
+    return g_currentMission.nodeToObject[node] ~= nil and entityExists(node)
+end
+
 function CombineUnloaderMode:getNextTask()
     CombineUnloaderMode.debugMsg(self.vehicle, "CombineUnloaderMode:getNextTask start self.state %s", tostring(self:getStateName()))
     local nextTask
+
+    -- A harvester sold or deleted mid-chase is noticed by the tasks, which end themselves - but
+    -- they end by propagating, and the branches below then build the NEXT task out of the same dead
+    -- vehicle. Two of them reach through to the engine, and because the active task is cleared only
+    -- after this returns, the failure repeats every frame rather than once. Checking here covers
+    -- every branch at their single entry point.
+    if self.combine ~= nil and not self:isCombineAlive() then
+        CombineUnloaderMode.debugMsg(self.vehicle, "CombineUnloaderMode:getNextTask - harvester is gone, standing down")
+        ADHarvestManager:unregisterAsUnloader(self.vehicle)
+        self.followingUnloader = nil
+        self.combine = nil
+        self.combineRootVehicle = nil
+        -- enqueues its own task and records it in self.activeTask, which is what a nil return means
+        -- to the callers of this function
+        self:setToWaitForCall()
+        return nil
+    end
 
     local x, y, z = getWorldTranslation(self.vehicle.components[1].node)
     local point = nil

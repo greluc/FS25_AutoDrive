@@ -381,9 +381,15 @@ function ADHarvestManager:assignUnloaderToHarvester(harvester)
     local closestUnloader = self:getClosestIdleUnloader(harvester)
     if closestUnloader ~= nil then
         ADHarvestManager.debugMsg(closestUnloader, "ADHarvestManager:assignUnloaderToHarvester ")
-        closestUnloader.ad.modes[AutoDrive.MODE_UNLOAD]:assignToHarvester(harvester)
-        table.insert(self.activeUnloaders, closestUnloader)
-        ADTable.removeValue(self.idleUnloaders, closestUnloader)
+        local mode = closestUnloader.ad.modes[AutoDrive.MODE_UNLOAD]
+        mode:assignToHarvester(harvester)
+        -- assignToHarvester can decline. Moving the unloader to the active list anyway leaves it
+        -- there with no harvester of its own, where the idle scan can no longer find it and it
+        -- waits for a call that goes to somebody else.
+        if mode.combine == harvester then
+            table.insert(self.activeUnloaders, closestUnloader)
+            ADTable.removeValue(self.idleUnloaders, closestUnloader)
+        end
     end
 end
 

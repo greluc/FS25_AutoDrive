@@ -270,6 +270,10 @@ function TestParkedOnNetwork:setUp()
     TestSetup.reset()
     driveCalls = {}
     g_time = 10000
+    -- The network check is throttled to one frame in PERF_FRAMES, phase shifted by vehicle id.
+    -- Without putting the loop index on that vehicle frame the scan simply never runs and every
+    -- assertion below passes or fails for the wrong reason.
+    g_updateLoopIndex = AutoDrive.PERF_FRAMES - 1
     ADHarvestManager = { registerAsUnloader = function() end }
     installRoute()
     AutoDrive.testSettings['waitingPosition'] = true

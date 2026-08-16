@@ -377,6 +377,11 @@ function AutoDriveVehicleDataEventSetToolParkDestination:readStream(streamId, co
 end
 
 function AutoDriveVehicleDataEventSetToolParkDestination:run(connection)
+    -- the vehicle is resolved from a network id, which a client may not be able to resolve: it can
+    -- have been deleted, or not yet be known here
+    if self.vehicle == nil or self.vehicle.advd == nil then
+        return
+    end
 	if g_server ~= nil and connection:getIsServer() == false then
 		-- If the event is coming from a client, server have only to broadcast
         AutoDriveVehicleDataEventSetToolParkDestination.sendEvent(self.vehicle, self.parkDestination)
