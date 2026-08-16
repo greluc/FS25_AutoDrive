@@ -125,6 +125,18 @@ if math.clamp == nil then
 	end
 end
 
+-- Same arrangement as math.clamp above: the game extends the math table with this at C level - its
+-- own scripts call math.sign a hundred and seventy odd times and nothing in them defines it - so
+-- this only fills in for the test harness and for anywhere it might be missing.
+if math.sign == nil then
+	function math.sign(value)
+		if value == nil or value == 0 then
+			return 0
+		end
+		return value > 0 and 1 or -1
+	end
+end
+
 ------------------------------------------------------------------------------------------------------------------------
 --- Table and string helpers
 ------------------------------------------------------------------------------------------------------------------------

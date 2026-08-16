@@ -139,4 +139,47 @@ function TestDebugLayer:testGetDebugChannelIsSet()
     lu.assertFalse(AutoDrive.getDebugChannelIsSet(AutoDrive.DC_SENSORINFO))
 end
 
+
+------------------------------------------------------------------------------------------------------------------------
+--- math.sign
+---
+--- The game extends the math table with sign at C level - its own scripts call math.sign a hundred
+--- and seventy odd times and none of them defines it - exactly as it does with math.clamp, which
+--- this file already fills in for the same reason. UnloadBGATask called MathUtil.sign, which is not
+--- a member of anything: "attempt to call a nil value", every time an ARTICULATED vehicle ran a BGA
+--- unload. Found by decompiling the shipped engine scripts and checking every engine helper
+--- AutoDrive calls against what the engine actually defines.
+------------------------------------------------------------------------------------------------------------------------
+TestMathSign = {}
+
+function TestMathSign:setUp() TestSetup.reset() end
+
+function TestMathSign:testItIsAvailableAtAll()
+    lu.assertEquals(type(math.sign), 'function',
+        'the BGA unload steers with this on articulated vehicles')
+end
+
+function TestMathSign:testItAnswersTheSignOfANumber()
+    lu.assertEquals(math.sign(4.2), 1)
+    lu.assertEquals(math.sign(-0.001), -1)
+    lu.assertEquals(math.sign(0), 0)
+end
+
+--- The one caller passes a rotation speed straight out of a spec, which can be absent.
+function TestMathSign:testItSurvivesNil()
+    lu.assertEquals(math.sign(nil), 0)
+end
+
+--- And the caller must not reach for it on MathUtil, which has no such member.
+function TestMathSign:testTheBgaUnloadDoesNotCallItOnMathUtil()
+    local f = io.open('../../scripts/Tasks/UnloadBGATask.lua', 'r')
+    local src = f:read('*a')
+    f:close()
+
+    lu.assertNil(src:match('MathUtil%.sign%('),
+        'MathUtil has no sign member - the game puts sign on the math table')
+    lu.assertNotNil(src:match('math%.sign%('),
+        'and the articulated steering still needs the sign of the axis rotation')
+end
+
 os.exit(lu.LuaUnit.run())

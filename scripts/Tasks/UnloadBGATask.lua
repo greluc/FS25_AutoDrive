@@ -1110,9 +1110,14 @@ end
 function UnloadBGATask:getAngleToTarget()
     local x, _, z = getWorldTranslation(self.vehicle.components[1].node)
     local rx, _, rz =  AutoDrive.localDirectionToWorld(self.vehicle, 0, 0, 1)
+    -- math.sign, not MathUtil.sign. The game extends the math table with sign at C level - its own
+    -- scripts call math.sign a hundred and seventy odd times and none of them defines it - while
+    -- MathUtil has no such member at all. So this raised "attempt to call a nil value" every time,
+    -- and only an ARTICULATED vehicle reaches it: a wheel loader or an articulated tractor doing a
+    -- BGA unload. That narrowness is why it survived.
     if self.vehicle.spec_articulatedAxis ~= nil and self.vehicle.spec_articulatedAxis.rotSpeed ~= nil then
-        rx, _, rz =  AutoDrive.localDirectionToWorld(self.vehicle, MathUtil.sign(self.vehicle.spec_articulatedAxis.rotSpeed) * math.sin(self.vehicle.rotatedTime), 0, math.cos(self.vehicle.rotatedTime))
-        rx, _, rz =  AutoDrive.localDirectionToWorld(self.vehicle, MathUtil.sign(self.vehicle.spec_articulatedAxis.rotSpeed) * math.sin(self.vehicle.rotatedTime) / 2, 0, (1 + math.cos(self.vehicle.rotatedTime)) / 2)
+        rx, _, rz =  AutoDrive.localDirectionToWorld(self.vehicle, math.sign(self.vehicle.spec_articulatedAxis.rotSpeed) * math.sin(self.vehicle.rotatedTime), 0, math.cos(self.vehicle.rotatedTime))
+        rx, _, rz =  AutoDrive.localDirectionToWorld(self.vehicle, math.sign(self.vehicle.spec_articulatedAxis.rotSpeed) * math.sin(self.vehicle.rotatedTime) / 2, 0, (1 + math.cos(self.vehicle.rotatedTime)) / 2)
     end
     local vehicleVector = {x = rx, z = rz}
 
