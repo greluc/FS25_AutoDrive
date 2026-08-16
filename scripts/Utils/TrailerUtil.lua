@@ -344,6 +344,53 @@ function AutoDrive.getAllUnits(vehicle)
     return nil, 0
 end
 
+--- How deep the implement chain is followed. A dolly with a semitrailer on it is two.
+AutoDrive.MAX_TOWED_DEPTH = 6
+
+local function collectTowedUnits(vehicle, out, depth)
+    if vehicle == nil or depth > AutoDrive.MAX_TOWED_DEPTH then
+        return
+    end
+    out[#out + 1] = vehicle
+    if vehicle.getAttachedImplements ~= nil then
+        for _, implement in pairs(vehicle:getAttachedImplements()) do
+            local object = implement ~= nil and implement.object or nil
+            -- the same two the fill-capable walk leaves out: a shovel on the front is not a unit
+            -- being towed along behind
+            if object ~= nil
+                and object.typeDesc ~= g_i18n:getText("typeDesc_frontloaderTool")
+                and object.typeDesc ~= g_i18n:getText("typeDesc_wheelLoaderTool") then
+                collectTowedUnits(object, out, depth + 1)
+            end
+        end
+    end
+end
+
+--- Every unit of the physical rig: the vehicle plus everything hanging off it, however deep, whether
+--- or not any of it can be filled.
+---
+--- getAllUnits answers a different question and must not be used for this one. Its walk goes through
+--- getTrailersOfImplement, which demands getFillUnits - correct for the fill level callers it exists
+--- for, and wrong for anything asking how big the rig physically is. FS25 installs fillUnit through
+--- the baseFillable type, and two base game families do not inherit it: livestockTrailer and dolly.
+--- So a tractor towing any of the base game livestock trailers - up to fifteen metres of it -
+--- measured as a bare tractor, and a dolly rig lost the dolly out of the middle of itself. That
+--- length is the pathfinder's collision clearance and it decides whether a rig may be steered while
+--- reversing, so under-reporting it plans corners the rig cannot take and reverses a double
+--- articulated train as though it were rigid.
+function AutoDrive.getAllTowedUnits(vehicle)
+    if vehicle == nil then
+        return nil, 0
+    end
+    local root = vehicle.getRootVehicle ~= nil and vehicle:getRootVehicle() or vehicle
+    if root == nil then
+        return nil, 0
+    end
+    local units = {}
+    collectTowedUnits(root, units, 0)
+    return units, #units
+end
+
 -- reworked, valid
 function AutoDrive.getTrailersOfImplement(vehicle, attachedImplement, onlyDischargeable)
     if vehicle == nil then
@@ -914,18 +961,21 @@ end
 function AutoDrive.getTractorTrainLength(vehicle, includeTractor, onlyFirstTrailer)
     local totalLength = 0
     if vehicle ~= nil then
-        local trailers, _ = AutoDrive.getAllUnits(vehicle)
+        -- Every towed unit, not only the fill-capable ones: this is a question about how long the
+        -- thing physically is, and a livestock trailer or a dolly answers getFillUnits with nil.
+        local trailers, _ = AutoDrive.getAllTowedUnits(vehicle)
 
         if trailers then
             for i, trailer in ipairs(trailers) do
+                local length = trailer.size ~= nil and trailer.size.length or 0
 
                 if includeTractor and i == 1 then
                     -- first is the rootVehicle
-                    totalLength = totalLength + trailer.size.length
+                    totalLength = totalLength + length
                 end
                 if i > 1 then
                     -- trailers
-                    totalLength = totalLength + trailer.size.length
+                    totalLength = totalLength + length
                     if onlyFirstTrailer then
                         break
                     end

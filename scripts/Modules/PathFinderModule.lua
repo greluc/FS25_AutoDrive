@@ -1951,7 +1951,14 @@ function PathFinderModule:getShapeDefByDirectionType_New(cell)
 
     shapeDefinition.x = worldPos.x
     shapeDefinition.z = worldPos.z
-    shapeDefinition.widthX, shapeDefinition.widthZ = self:getTrainHalfExtents()
+    -- widthX is the extent ALONG travel and widthZ the one across it, because both this box and the
+    -- one in smoothResultingPPPath_Refined are turned by atan2(-dz, dx) and that call puts the
+    -- along-travel half length in the same slot (line 2310: length/2+2.5 there, sideLength+1.5
+    -- across). Assigning the half extents in their natural order put half WIDTH along travel and
+    -- half LENGTH across it, so the box stood broadside: as wide across the path as the train is
+    -- long. Every cell of every search was tested that way, and field entrances, gateways and lanes
+    -- the rig fits through were refused. The old box was immune only because it was square.
+    shapeDefinition.widthZ, shapeDefinition.widthX = self:getTrainHalfExtents()
 
     local corners = self:getCornersFromShapeDefinition(shapeDefinition)
     if corners ~= nil then

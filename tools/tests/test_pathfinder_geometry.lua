@@ -72,6 +72,32 @@ function TestBoxExtents:testExtentsAreCachedPerRun()
     lu.assertEquals(p:getTrainHalfExtents(), hw1, 'extents must not be recomputed per cell')
 end
 
+--- Which SLOT the extents land in, which is a different question from what they are worth.
+---
+--- The box is handed to overlapBox turned by atan2(-dz, dx), and under that angle the ex slot is the
+--- extent ALONG travel: smoothResultingPPPath_Refined builds its box with the very same angle and
+--- puts the along-travel half length there (length/2+2.5 in ex, sideLength+1.5 in ez). Assigning the
+--- half extents in their natural order put them the other way round, so the box stood broadside - as
+--- wide across the path as the train is long, and only as long as it is wide. Every cell of every
+--- search was tested that way, and a rig was refused every gap narrower than its own LENGTH.
+---
+--- The tests above pin the numbers getTrainHalfExtents returns and say nothing about where they go,
+--- which is why the whole gate stayed green with the box turned ninety degrees. The old box survived
+--- this because it was square: it is specifically a rig longer than its turn radius that suffers.
+function TestBoxExtents:testTheLongExtentRunsAlongTravelNotAcrossIt()
+    local p = pfm()
+    p.trainHalfWidth, p.trainHalfLength = 1.5, 7   -- a 14 m long, 3 m wide train
+
+    -- entered from the west, so travelling +x
+    local shape = p:getShapeDefByDirectionType_New({ x = 10, z = 0, incoming = { x = 9, z = 0 } })
+
+    lu.assertAlmostEquals(shape.angleRad, 0, 1e-9, 'test setup: travelling +x is angle zero')
+    lu.assertEquals(shape.widthX, 7,
+        'the ex slot is the along-travel extent, so it carries the half LENGTH')
+    lu.assertEquals(shape.widthZ, 1.5,
+        'and ez the half width - the other way round makes a 3 m rig demand a 14 m gap')
+end
+
 ------------------------------------------------------------------------------------------------------------------------
 --- K1 - box orientation follows the local direction of travel
 ------------------------------------------------------------------------------------------------------------------------

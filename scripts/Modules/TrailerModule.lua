@@ -233,12 +233,16 @@ function ADTrailerModule:updateStates()
 end
 
 
+--- Whether this rig may be steered while reversing, rather than having its joints locked.
+---
+--- Counted over every towed unit. It used to count self.trailers, which is the fill-capable list, so
+--- a tractor with a livestock trailer counted one unit instead of two and a dolly rig lost the dolly
+--- out of its middle and counted two instead of three - and both then reported that they may be
+--- steered backwards. For a double articulated train that is how it jackknifes. The fill list itself
+--- is left alone; it is the right list for what the rest of this module does with it.
 function ADTrailerModule:canBeHandledInReverse()
-    if self.trailers == nil then
-        self.trailers, self.trailerCount = AutoDrive.getAllUnits(self.vehicle)
-    end
-
-    return #self.trailers <= 2
+    local _, towedCount = AutoDrive.getAllTowedUnits(self.vehicle)
+    return towedCount <= 2
 end
 
 -- Code snippets used from mod: FS19_TrailerJointBlock - credits to Northern_Strike
