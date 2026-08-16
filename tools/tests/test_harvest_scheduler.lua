@@ -560,4 +560,82 @@ function TestAssignmentDeclines:testAWillingClosestOneIsTakenStraightAway()
 end
 
 
+
+------------------------------------------------------------------------------------------------------------------------
+--- The second unloader call has to walk past a candidate that cannot take it
+---
+--- driveToUnloader only acts on a mode still waiting to be called, and nothing removes a spare from
+--- idleUnloaders when it is committed - so a driver already following somebody else stayed the
+--- closest candidate and was silently re-picked on every tick, while one parked a few metres further
+--- on was never asked. Two combines on one field, four drivers: the second combine got no relief for
+--- the rest of the field. The sibling call site has carried a skip list for exactly this since it
+--- was found there; getClosestIdleUnloader has taken one all along.
+------------------------------------------------------------------------------------------------------------------------
+TestSecondUnloaderCall = {}
+
+--- `available` models the mode still being in its waiting state. A committed driver refuses, which
+--- in the real mode is driveToUnloader returning without doing anything.
+local function spareUnloader(id, x, available)
+    local v = TestSetup.vehicle({
+        id = id,
+        components = { { node = 'u' .. tostring(id) } },
+        getName = function() return 'U' .. tostring(id) end,
+    })
+    MockEngine.nodePositions['u' .. tostring(id)] = { x = x, y = 0, z = 0 }
+    v.ad.stateModule = stateModuleStub(1)
+    v.ad.modes = {
+        [AutoDrive.MODE_UNLOAD] = {
+            available = available,
+            follower = nil,
+            getFollowingUnloader = function(self) return self.follower end,
+            driveToUnloader = function(self, caller)
+                if self.available then
+                    caller.ad.modes[AutoDrive.MODE_UNLOAD].follower = v
+                    self.available = false
+                end
+            end,
+        },
+    }
+    return v
+end
+
+function TestSecondUnloaderCall:setUp()
+    TestSetup.reset()
+    ADHarvestManager:load()
+    self.harvester = harvesterStub(1, 1)
+    MockEngine.nodePositions['node1'] = { x = 0, y = 0, z = 0 }
+    -- the driver currently unloading, which is the one asking for company
+    self.caller = spareUnloader(2, 0, false)
+end
+
+function TestSecondUnloaderCall:testAnAvailableSpareIsCalled()
+    local free = spareUnloader(3, 100, true)
+    table.insert(ADHarvestManager.idleUnloaders, free)
+
+    lu.assertTrue(ADHarvestManager:callSecondUnloaderFor(self.harvester, self.caller))
+    lu.assertEquals(self.caller.ad.modes[AutoDrive.MODE_UNLOAD]:getFollowingUnloader(), free)
+end
+
+--- The measured case: the nearest one is already committed, and four metres behind it stands one
+--- that is not.
+function TestSecondUnloaderCall:testACommittedSpareDoesNotBlockTheOneBehindIt()
+    local committed = spareUnloader(3, 100, false)
+    local free = spareUnloader(4, 104, true)
+    table.insert(ADHarvestManager.idleUnloaders, committed)
+    table.insert(ADHarvestManager.idleUnloaders, free)
+
+    lu.assertTrue(ADHarvestManager:callSecondUnloaderFor(self.harvester, self.caller),
+        'the closest candidate cannot take the call, so the next one has to be asked')
+    lu.assertEquals(self.caller.ad.modes[AutoDrive.MODE_UNLOAD]:getFollowingUnloader(), free)
+end
+
+--- And when nobody can take it, the walk ends rather than looping.
+function TestSecondUnloaderCall:testItGivesUpWhenNobodyCanTakeIt()
+    table.insert(ADHarvestManager.idleUnloaders, spareUnloader(3, 100, false))
+    table.insert(ADHarvestManager.idleUnloaders, spareUnloader(4, 104, false))
+
+    lu.assertFalse(ADHarvestManager:callSecondUnloaderFor(self.harvester, self.caller))
+    lu.assertNil(self.caller.ad.modes[AutoDrive.MODE_UNLOAD]:getFollowingUnloader())
+end
+
 os.exit(lu.LuaUnit.run())

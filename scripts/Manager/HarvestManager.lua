@@ -248,10 +248,7 @@ function ADHarvestManager:update(dt)
                             local maxCapacity = fillLevel + fillFreeCapacity
 
                             if fillLevel >= (maxCapacity * AutoDrive.getSetting("preCallLevel", harvester)) then
-                                local closestUnloader = self:getClosestIdleUnloader(harvester)
-                                if closestUnloader ~= nil then
-                                    closestUnloader.ad.modes[AutoDrive.MODE_UNLOAD]:driveToUnloader(unloader)
-                                end
+                                self:callSecondUnloaderFor(harvester, unloader)
                             end
                         end
                     end
@@ -418,6 +415,34 @@ function ADHarvestManager:assignUnloaderToHarvester(harvester)
             table.insert(self.activeUnloaders, closestUnloader)
             ADTable.removeValue(self.idleUnloaders, closestUnloader)
             return
+        end
+        declined = declined or {}
+        declined[#declined + 1] = closestUnloader
+    end
+end
+
+--- Bring a spare driver in behind the one currently unloading, and return whether one took the call.
+---
+--- Walks past candidates that cannot take it, exactly as assignUnloaderToHarvester does and for the
+--- same reason. driveToUnloader only acts on a mode still waiting to be called, and nothing takes a
+--- spare out of idleUnloaders when it is committed - so one already following somebody else stayed
+--- the closest candidate and was re-picked on every tick, silently doing nothing, while a driver
+--- parked four metres further on was never asked. With two combines on one field that means the
+--- second one never gets relief for the rest of the field. getClosestIdleUnloader has taken a skip
+--- list all along; this call site simply never passed one.
+---
+--- Its own function so a test can drive the rule rather than restate it.
+function ADHarvestManager:callSecondUnloaderFor(harvester, unloader)
+    local mode = unloader.ad.modes[AutoDrive.MODE_UNLOAD]
+    local declined = nil
+    while true do
+        local closestUnloader = self:getClosestIdleUnloader(harvester, declined)
+        if closestUnloader == nil then
+            return false
+        end
+        closestUnloader.ad.modes[AutoDrive.MODE_UNLOAD]:driveToUnloader(unloader)
+        if mode:getFollowingUnloader() ~= nil then
+            return true
         end
         declined = declined or {}
         declined[#declined + 1] = closestUnloader

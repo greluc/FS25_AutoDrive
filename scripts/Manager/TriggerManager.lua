@@ -684,8 +684,28 @@ function ADTriggerManager.addBunkerSilo(bunkerSilo)
     table.insert(ADTriggerManager.bunkerSilos, bunkerSilo)
 
     local isConnected = false
-    if #ADTriggerManager.bunkerSilosResult > 0 then
+    -- Keep merging while anything still joins, rather than stopping at the first neighbour. A
+    -- segment that touches TWO existing entries - the middle one of three, placed last - joined only
+    -- one of them and the other stayed a separate silo forever, because loadAllTriggers re-walks the
+    -- placeables in the same placement order on every rebuild. getMaxBunkerSiloLength then reports
+    -- the longest fragment rather than the silo: measured on three twenty metre segments laid end to
+    -- end, the same geometry came out as one 60 m silo in two registration orders and as 20 m plus
+    -- 40 m in the other two. That number decides when a driver starts looking for the tip point, so
+    -- a 60 m silo reported as 40 m has the driver begin twenty metres late.
+    --
+    -- Bounded, and not as a formality. Each round removes both inputs and inserts one merged entry,
+    -- so the list shrinks by one every time and there can be no more rounds than there are entries.
+    -- A round that failed to remove one of its inputs would leave the old shape lying beside the
+    -- merged one and merge it again forever; that is not hypothetical, it is what a mutation of the
+    -- removal below did, and it hung the test run rather than failing it.
+    local merged = true
+    local roundsLeft = #ADTriggerManager.bunkerSilosResult + 1
+    while merged and roundsLeft > 0 do
+        merged = false
+        roundsLeft = roundsLeft - 1
         for _, bunkerSiloResult in ipairs(ADTriggerManager.bunkerSilosResult) do
+          -- not against itself: after a merge the running silo IS one of the entries below
+          if bunkerSiloResult ~= bunkerSilo then
             local isOppositeConnected = false
             local bunkerSiloConnectionType = ADTriggerManager.getBunkerSiloAreasConnectionType(bunkerSilo, bunkerSiloResult)
             if bunkerSiloConnectionType == 0 then
@@ -706,11 +726,18 @@ function ADTriggerManager.addBunkerSilo(bunkerSilo)
                     local length = MathUtil.vector2Length(bunkerSiloConnected.bunkerSiloArea.hx - bunkerSiloConnected.bunkerSiloArea.sx, bunkerSiloConnected.bunkerSiloArea.hz - bunkerSiloConnected.bunkerSiloArea.sz)
                     ADTriggerManager.maxBunkerSiloLength = math.max(ADTriggerManager.maxBunkerSiloLength, length)
                     ADTable.removeValue(ADTriggerManager.bunkerSilosResult, bunkerSiloResult)
+                    -- and the running one, which is already in the list once an earlier round of
+                    -- this same call put it there; a no-op on the first round. Without it the old
+                    -- shape stays beside the merged one and is merged again on every round.
+                    ADTable.removeValue(ADTriggerManager.bunkerSilosResult, bunkerSilo)
                     table.insert(ADTriggerManager.bunkerSilosResult, bunkerSiloConnected)
                     isConnected = true
+                    bunkerSilo = bunkerSiloConnected
+                    merged = true
                     break
                 end
             end
+          end
         end
     end
 
