@@ -141,19 +141,43 @@ function ADHudIcon:addTooltipString(vehicle, currentText)
     return currentText
 end
 
+--- Wrap the header at its own field separator.
+---
+--- The fields are joined with " - ", but this used to split on every "-" in the string and then chop
+--- one character off the front of each continued line to remove the leading space that separator
+--- leaves behind. A hyphen INSIDE a field broke both halves at once: the line was cut mid-word, and
+--- since that fragment has no leading space to remove, the chop ate its first letter instead. A
+--- version of "3.0.1.2-krt-special-edition" came out as a line reading "dition". Vehicle names carry
+--- hyphens as a matter of course - "832 Vario Gen5 - 60km/h" is a stock one - so this was never only
+--- about version strings.
+---
+--- Splitting on the separator itself makes the chop unnecessary, which is the point: there is
+--- nothing left to strip.
+ADHudIcon.FIELD_SEPARATOR = " - "
+
 function ADHudIcon:splitTextByLength(text, fontSize, maxLength)
-    local lines = {}
-    local textParts = string.split(text, "-")
-    local line = textParts[1]
-    local index = 2
-    while index <= #textParts do
-        if getTextWidth(fontSize, line .. "-" .. textParts[index]) > maxLength then
-            table.insert(lines, line)
-            line = textParts[index]:sub(2)
-        else
-            line = line .. "-" .. textParts[index]
+    local sep = ADHudIcon.FIELD_SEPARATOR
+    local parts = {}
+    local from = 1
+    while true do
+        local start, stop = string.find(text, sep, from, true)
+        if start == nil then
+            parts[#parts + 1] = text:sub(from)
+            break
         end
-        index = index + 1
+        parts[#parts + 1] = text:sub(from, start - 1)
+        from = stop + 1
+    end
+
+    local lines = {}
+    local line = parts[1] or ""
+    for index = 2, #parts do
+        if getTextWidth(fontSize, line .. sep .. parts[index]) > maxLength then
+            table.insert(lines, line)
+            line = parts[index]
+        else
+            line = line .. sep .. parts[index]
+        end
     end
     table.insert(lines, line)
     return lines

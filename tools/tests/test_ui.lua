@@ -548,4 +548,64 @@ function TestSettingsButton:testToolTipIsStillSet()
     lu.assertTrue(vehicle.ad.toolTipIsSetting)
 end
 
+
+------------------------------------------------------------------------------------------------------------------------
+--- Wrapping the HUD header
+---
+--- The header is a handful of fields joined with " - ": the mod name, the version, the mode, the
+--- drive time, the tooltip, the task. It wraps to fit the panel. It used to wrap by splitting on
+--- every "-" in the whole string and then chopping one character off the front of each continued
+--- line, to drop the leading space the separator leaves. A hyphen INSIDE a field broke both halves
+--- at once - the line was cut mid-word, and the fragment has no leading space to drop, so the chop
+--- ate its first letter. Seen in game: a line reading "dition".
+------------------------------------------------------------------------------------------------------------------------
+TestHeaderWrap = {}
+
+function TestHeaderWrap:setUp()
+    TestSetup.reset()
+    require('HudIcon')
+    -- one unit per character, so a maxLength is a character count and the numbers below are readable
+    getTextWidth = function(_, text) return #text end
+end
+
+local function wrap(text, maxLength)
+    return ADHudIcon.splitTextByLength(ADHudIcon, text, 1, maxLength)
+end
+
+--- Nothing may be lost, whatever the wrapping does. This is the property the bug violated.
+function TestHeaderWrap:testNoCharacterIsEverDropped()
+    local text = 'AutoDrive - 3.0.1.2-krt-special-edition - Drescher folgen - Hof 4 - Silo'
+    for maxLength = 8, 90 do
+        local joined = table.concat(wrap(text, maxLength), ' - ')
+        lu.assertEquals(joined, text, string.format('at a width of %d the text came back changed', maxLength))
+    end
+end
+
+--- The reported case, stated as itself.
+function TestHeaderWrap:testAHyphenatedVersionKeepsItsWord()
+    local lines = wrap('AutoDrive - 3.0.1.2-krt-special-edition - Drescher abfahren', 30)
+    for _, line in ipairs(lines) do
+        lu.assertNil(line:match('^dition'), 'the wrap ate the start of a word: ' .. line)
+    end
+    lu.assertStrContains(table.concat(lines, ' - '), '3.0.1.2-krt-special-edition')
+end
+
+--- A vehicle name with a hyphen in it is ordinary - "832 Vario Gen5 - 60km/h" is a stock one - and
+--- must not become a wrap point that swallows a character either.
+function TestHeaderWrap:testAHyphenInsideAFieldIsNotAWrapPoint()
+    local lines = wrap('AutoDrive - 3.0.1.2 - 832 Vario Gen5 - 60km/h', 1000)
+    lu.assertEquals(#lines, 1, 'it all fits, so it must stay on one line')
+    lu.assertEquals(lines[1], 'AutoDrive - 3.0.1.2 - 832 Vario Gen5 - 60km/h')
+end
+
+--- And it still wraps when it has to.
+function TestHeaderWrap:testItStillWrapsWhenTooLong()
+    local lines = wrap('AutoDrive - 3.0.1.2 - Drescher folgen - Hof 4', 20)
+    lu.assertTrue(#lines > 1, 'a long header has to be broken up')
+end
+
+function TestHeaderWrap:testASingleFieldSurvives()
+    lu.assertEquals(wrap('AutoDrive', 100), { 'AutoDrive' })
+end
+
 os.exit(lu.LuaUnit.run())

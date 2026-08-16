@@ -277,12 +277,28 @@ function ADString.random(length)
 	return ADString.random(length - 1) .. ADString.randomCharset[math.random(1, #ADString.randomCharset)]
 end
 
+--- Resolve every $l10n_key; placeholder in a string.
+---
+--- Both halves of the old substitution went through Lua patterns, which is wrong twice over. The
+--- placeholder was used as a search PATTERN, so its leading $ - and any magic character a key might
+--- carry - was at the mercy of pattern syntax. And the translated text was used as a REPLACEMENT,
+--- where % is an escape: a translator writing "50%" or "%s" into a task string made this raise
+--- "invalid use of '%' in replacement string" and took the whole HUD line with it. The translations
+--- come from eighteen separate files and as many contributors, so the substitution has to survive
+--- whatever any of them writes.
+---
+--- A replacement FUNCTION is substituted verbatim, which removes that class of failure outright.
 function AutoDrive.localize(text)
-	for m in text:gmatch("$l10n_.-;") do
-		local l10n = m:gsub("$l10n_", ""):gsub(";", "")
-		text = text:gsub(m, g_i18n:getText(l10n))
+	if text == nil then
+		return text
 	end
-	return text
+	local resolved = text:gsub("%$l10n_(.-);", function(key)
+		local translated = g_i18n:getText(key)
+		-- getText answers with the key itself when it does not know it; either way it is a string,
+		-- and nil here would leave the placeholder standing rather than blanking the line.
+		return translated ~= nil and translated or key
+	end)
+	return resolved
 end
 
 function AutoDrive.angleBetween(vec1, vec2)

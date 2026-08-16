@@ -182,4 +182,57 @@ function TestMathSign:testTheBgaUnloadDoesNotCallItOnMathUtil()
         'and the articulated steering still needs the sign of the axis rotation')
 end
 
+
+------------------------------------------------------------------------------------------------------------------------
+--- AutoDrive.localize
+---
+--- Task strings travel over the network as "$l10n_key;" placeholders and are resolved for display.
+--- The old substitution used the placeholder as a search PATTERN and the translation as a gsub
+--- REPLACEMENT, where % is an escape - so a translator writing a percent sign into any task string
+--- made the call raise and took the HUD line with it. Eighteen language files, as many contributors.
+------------------------------------------------------------------------------------------------------------------------
+TestLocalize = {}
+
+function TestLocalize:setUp()
+    TestSetup.reset()
+    self.texts = {
+        AD_task_chasing_combine = 'Drescher folgen',
+        AD_task_wait_for_combine_turn = 'Drescher wenden lassen',
+        AD_pct = 'zu 50% beladen',
+        AD_fmt = "Route '%s' loeschen",
+    }
+    local texts = self.texts
+    g_i18n = { getText = function(_, key) return texts[key] or key end }
+end
+
+function TestLocalize:testItResolvesOnePlaceholder()
+    lu.assertEquals(AutoDrive.localize('$l10n_AD_task_chasing_combine;'), 'Drescher folgen')
+end
+
+--- The HUD joins several of them into one line, which is where this is actually used.
+function TestLocalize:testItResolvesSeveralInOneString()
+    lu.assertEquals(
+        AutoDrive.localize('$l10n_AD_task_chasing_combine; - $l10n_AD_task_wait_for_combine_turn;'),
+        'Drescher folgen - Drescher wenden lassen')
+end
+
+--- The one that used to raise.
+function TestLocalize:testAPercentInATranslationSurvives()
+    lu.assertEquals(AutoDrive.localize('$l10n_AD_pct;'), 'zu 50% beladen')
+    lu.assertEquals(AutoDrive.localize('$l10n_AD_fmt;'), "Route '%s' loeschen")
+end
+
+function TestLocalize:testTextWithoutPlaceholdersIsUntouched()
+    lu.assertEquals(AutoDrive.localize('Drescher folgen - Hof 4 - Silo'), 'Drescher folgen - Hof 4 - Silo')
+end
+
+function TestLocalize:testNilSurvives()
+    lu.assertNil(AutoDrive.localize(nil))
+end
+
+--- An unknown key leaves something readable rather than an empty line.
+function TestLocalize:testAnUnknownKeyDoesNotBlankTheLine()
+    lu.assertEquals(AutoDrive.localize('$l10n_AD_nope;'), 'AD_nope')
+end
+
 os.exit(lu.LuaUnit.run())
