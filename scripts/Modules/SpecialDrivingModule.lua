@@ -27,6 +27,10 @@ function ADSpecialDrivingModule:reset()
     self.blockedTimer = AutoDriveTON:new()
     self.vehicle.trailer = {}
     self.isReversing = false
+    -- A reset ends whatever was going on, and that has to include the reverse target: leaving it
+    -- standing was half of how it survived into the next episode.
+    self.reverseTarget = nil
+    self.lastGuidedReverseFrame = nil
 end
 
 function ADSpecialDrivingModule:stopVehicle(isBlocked, lx, lz)
@@ -158,6 +162,22 @@ function ADSpecialDrivingModule:driveReverse(dt, maxSpeed, maxAcceleration, guid
             AutoDrive.driveInDirection(self.vehicle, dt, 30, acc, 0.2, 20, true, false, -lx, -lz, speed, 1)
             AutoDrive.smootherDriving = storedSmootherDriving
         else
+            -- A guided episode that does not continue the previous frame's starts fresh.
+            --
+            -- The target is a WORLD point a hundred metres behind wherever the vehicle stood when
+            -- the episode began, and the only thing that ever cleared it needs two consecutive
+            -- update() calls with isReversing already false. The chase path never makes them:
+            -- driveToPoint's driving branch does not call update at all, and the retreat-and-resume
+            -- route - back away from a harvester that asked for room, then carry on chasing - goes
+            -- straight from reversing to chasing without one. So the next reverse steered at a
+            -- point recorded minutes and hundreds of metres earlier: measured at 286 m of
+            -- staleness, near full lock instead of straight back, and once the rig has driven PAST
+            -- that point the controller considers itself arrived and commands nothing whatsoever.
+            local frame = g_updateLoopIndex or 0
+            if self.lastGuidedReverseFrame == nil or (frame - self.lastGuidedReverseFrame) > 1 then
+                self.reverseTarget = nil
+            end
+            self.lastGuidedReverseFrame = frame
             if self.reverseTarget == nil then
                 local x, y, z = AutoDrive.localToWorld(self.vehicle, 0, 0 , -100)
                 self.reverseTarget = {x=x, y=y, z=z}

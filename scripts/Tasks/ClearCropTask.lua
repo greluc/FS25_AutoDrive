@@ -113,6 +113,13 @@ function ClearCropTask:update(dt)
             self.state = ClearCropTask.STATE_CLEARING_FIRST
             return
         end
+        -- Hold the vehicle while it waits, the way EmptyHarvesterTask's own waiting state does.
+        -- Without this the whole ten second wait issued no command to either driving module, and
+        -- the task that hands over can leave the vehicle released and rolling - the chase ends with
+        -- driveToPoint, which releases. So the HUD said "waiting for room" while nothing at all was
+        -- holding the vehicle. It is the routine path for every chopper unloader, on every run.
+        self.vehicle.ad.specialDrivingModule:stopVehicle()
+        self.vehicle.ad.specialDrivingModule:update(dt)
     elseif self.state == ClearCropTask.STATE_CLEARING_FIRST then
         self.driveTimer:timer(true, ClearCropTask.DRIVE_TIME, dt)
         if self.vehicle.ad.drivePathModule:isTargetReached() then

@@ -24,6 +24,7 @@ require('PathFinderUtils')
 require('Queue')
 require('SortedQueue')
 require('CollisionDetectionUtils')
+require('AutoDriveTON')
 require('TriggerManager')
 require('AutoDrivePlaceableData')
 require('AbstractMode')
@@ -567,6 +568,25 @@ function TestDriveToMode:testNoAddTaskCallSitePassesAnExtraArgument()
             'addTask takes exactly one argument, found: addTask(' .. argumentList .. ')')
     end
     lu.assertTrue(seen >= 2, 'expected to find the addTask call sites in DriveToMode.lua')
+end
+
+
+--- A trigger that appears AFTER the initial scan has to arrive as complete as one found by it.
+---
+--- loadAllTriggers finishes by giving every trigger it registered a stoppedTimer. loadTriggerLoad -
+--- the only path for a trigger created later, which in practice means a mod or script spawned one, or
+--- a fuel or seed tender carrying a fill trigger for other vehicles - just inserted it. The trigger
+--- was then handed out by getLoadTriggers() like any other, and startLoadingAtTrigger dereferences
+--- stoppedTimer without a guard, unlike every other reference in that file. The first driver sent to
+--- load from it raised inside its own update and stopped loading, and only buying or selling a
+--- placeable re-runs the scan, so nothing repaired it.
+function TestRefuelTriggers:testATriggerRegisteredLaterGetsItsTimerToo()
+    local trigger = { triggerNode = 'late', load = function() return true end }
+
+    ADTriggerManager.loadTriggerLoad(trigger, function() return true end)
+
+    lu.assertNotNil(trigger.stoppedTimer,
+        'a trigger offered by getLoadTriggers has to carry the timer its consumers dereference')
 end
 
 os.exit(lu.LuaUnit.run())

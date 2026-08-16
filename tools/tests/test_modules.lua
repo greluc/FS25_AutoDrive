@@ -729,4 +729,78 @@ function TestDriveToPointBlocked:testReleasingStillClearsTheMotorStopTimer()
     lu.assertEquals(m.stoppedTimer.elapsedTime, 0)
 end
 
+
+--- The guided reverse target is a WORLD point a hundred metres behind where the episode began, and
+--- the only thing that ever cleared it needs two consecutive update() calls that the chase path
+--- never makes - driveToPoint's driving branch does not call update at all, and the
+--- retreat-and-resume route goes straight from reversing back to chasing without one. So the next
+--- reverse steered at a point recorded minutes and hundreds of metres earlier, and once the rig had
+--- driven past it the controller reported itself arrived and commanded nothing.
+function TestDriveToPointBlocked:testAFreshReverseEpisodeGetsAFreshTarget()
+    local m = drivingModule(0)
+    m.vehicle.ad.collisionDetectionModule = { checkReverseCollision = function() return false end }
+    -- driveReverse reaches the controller through vehicle.ad.specialDrivingModule, which in the
+    -- game is this very module
+    m.vehicle.ad.specialDrivingModule = m
+    local reversedTo = {}
+    m.reverseToTargetLocation = function(_, _, target) reversedTo[#reversedTo + 1] = target end
+    AutoDrive.localToWorld = function(_, _, _, z)
+        local pos = MockEngine.nodePositions['dtp']
+        return pos.x, 0, pos.z + z
+    end
+
+    g_updateLoopIndex = 100
+    m:driveReverse(16, 8, 1, true)
+    local firstTarget = reversedTo[1]
+    lu.assertNotNil(firstTarget)
+
+    -- the chase resumes: hundreds of frames elsewhere, and the vehicle moves a long way
+    g_updateLoopIndex = 100 + 3000
+    MockEngine.nodePositions['dtp'] = { x = 0, y = 0, z = 300 }
+
+    m:driveReverse(16, 8, 1, true)
+
+    lu.assertNotEquals(reversedTo[2].z, firstTarget.z,
+        'a reverse that does not continue the previous frame has to anchor where the vehicle is '
+        .. 'now, not where it stood the last time it reversed')
+end
+
+--- And a reverse that DOES continue keeps its target, or the vehicle chases a point that runs away
+--- from it every frame.
+function TestDriveToPointBlocked:testAContinuingReverseKeepsItsTarget()
+    local m = drivingModule(0)
+    m.vehicle.ad.collisionDetectionModule = { checkReverseCollision = function() return false end }
+    -- driveReverse reaches the controller through vehicle.ad.specialDrivingModule, which in the
+    -- game is this very module
+    m.vehicle.ad.specialDrivingModule = m
+    local reversedTo = {}
+    m.reverseToTargetLocation = function(_, _, target) reversedTo[#reversedTo + 1] = target end
+    AutoDrive.localToWorld = function(_, _, _, z)
+        local pos = MockEngine.nodePositions['dtp']
+        return pos.x, 0, pos.z + z
+    end
+
+    g_updateLoopIndex = 100
+    m:driveReverse(16, 8, 1, true)
+    g_updateLoopIndex = 101
+    MockEngine.nodePositions['dtp'] = { x = 0, y = 0, z = -2 }
+    m:driveReverse(16, 8, 1, true)
+
+    lu.assertEquals(reversedTo[2], reversedTo[1])
+end
+
+
+--- A reset ends whatever was going on. Leaving the reverse target standing was the other half of
+--- how it survived into the next episode.
+function TestDriveToPointBlocked:testResetDropsTheReverseTarget()
+    local m = drivingModule(0)
+    m.reverseTarget = { x = 1, y = 0, z = 2 }
+    m.lastGuidedReverseFrame = 42
+
+    ADSpecialDrivingModule.reset(m)
+
+    lu.assertNil(m.reverseTarget)
+    lu.assertNil(m.lastGuidedReverseFrame)
+end
+
 os.exit(lu.LuaUnit.run())

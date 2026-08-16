@@ -349,6 +349,17 @@ function ADTriggerManager:loadTriggerLoad(superFunc, ...)
 
     if ADTriggerManager ~= nil and ADTriggerManager.siloTriggers ~= nil then
         if not ADTable.contains(ADTriggerManager.siloTriggers, self) then
+            -- With the timer loadAllTriggers gives every trigger it registers. This is the only
+            -- path for a trigger that comes into existence AFTER the initial scan - a mod or
+            -- script spawned load trigger, a fuel or seed tender with a fill trigger for other
+            -- vehicles - and it used to hand it out through getLoadTriggers() without one.
+            -- ADTrailerModule:startLoadingAtTrigger dereferences trigger.stoppedTimer unguarded,
+            -- unlike every other reference in that file, so the first driver sent to load from
+            -- such a trigger raised inside its own update and stopped loading. Only buying or
+            -- selling a placeable re-runs the scan, so nothing repaired it either.
+            if self.stoppedTimer == nil then
+                self.stoppedTimer = AutoDriveTON:new()
+            end
             table.insert(ADTriggerManager.siloTriggers, self)
             ADTriggerManager.invalidateRefuelTriggerCandidates()
         end
