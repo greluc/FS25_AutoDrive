@@ -292,6 +292,22 @@ function FollowCombineTask:update(dt)
                 self.vehicle.ad.specialDrivingModule:stopVehicle()
                 self.vehicle.ad.specialDrivingModule:update(dt)
             end
+        else
+            -- The harvester has stopped turning, and none of the conditions below has released us
+            -- yet. Without this the whole state issued nothing at all on such a frame - no drive, no
+            -- brake, and no specialDrivingModule:update, so stopAndHoldVehicle never ran and nothing
+            -- whatsoever reached the vehicle. Nothing else in the frame covers it either: the task
+            -- module runs the active task and monitorTasks, and monitorTasks never drives.
+            --
+            -- It is the normal case, not an edge one. combineIsTurning goes false as soon as the
+            -- harvester has not moved for three seconds, which is exactly what a full AI or
+            -- Courseplay harvester does while it waits for us. Measured on the real task: up to
+            -- fourteen seconds of consecutive silent frames, ended only by the fifteen second turn
+            -- timeout. The task's own stuck detector cannot notice, because the last command before
+            -- the flag dropped was a stop and it only counts frames we were commanded to drive.
+            FollowCombineTask.debugMsg(self.vehicle, "FollowCombineTask:update STATE_WAIT_FOR_TURN - not turning, not released yet -> stopVehicle")
+            self.vehicle.ad.specialDrivingModule:stopVehicle()
+            self.vehicle.ad.specialDrivingModule:update(dt)
         end
 
         -- check if we could continue

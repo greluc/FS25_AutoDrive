@@ -58,6 +58,95 @@ function TestTurnChaseGuard:testSidewaysIsTheCutOff()
     end
 end
 
+------------------------------------------------------------------------------------------------------------------------
+--- Every frame of the state has to leave the vehicle with a drive command or a brake
+---
+--- All of the driving in STATE_WAIT_FOR_TURN sat inside `if AutoDrive.combineIsTurning(...)`. When
+--- that went false the branch fell straight through to the release conditions and issued nothing at
+--- all - no drive, no brake, and no specialDrivingModule:update, so nothing reached the vehicle for
+--- that frame. And it is the ordinary case, not an edge one: the turn flag drops as soon as the
+--- harvester has not moved for three seconds, which is exactly what a full AI or Courseplay
+--- harvester does while it waits for us. Measured up to fourteen seconds of consecutive silent
+--- frames, ended only by the fifteen second turn timeout.
+------------------------------------------------------------------------------------------------------------------------
+TestWaitForTurnAlwaysCommands = {}
+
+local commands
+
+local function waitingForTurn()
+    local o = setmetatable({}, { __index = FollowCombineTask })
+    o.vehicle = TestSetup.vehicle()
+    o.combine = TestSetup.vehicle()
+    o.combine.components = { { node = 'combineNode' } }
+    g_currentMission.nodeToObject = { combineNode = o.combine }
+
+    o.state = FollowCombineTask.STATE_WAIT_FOR_TURN
+    o.lastState = FollowCombineTask.STATE_WAIT_FOR_TURN   -- no transition, so no timer reset
+    o.waitForTurnTimer = AutoDriveTON:new()
+    o.stuckTimer = AutoDriveTON:new()
+    o.angleToCombineHeading = 0
+    o.angleToCombine = 0
+    o.distanceToCombine = 40
+    FollowCombineTask.setStateNames(o)
+
+    -- The state's own geometry is fixed above rather than recomputed, so what is under test is the
+    -- branch and not the twenty other things updateStates reaches for.
+    o.updateStates = function() end
+    o.isCommandedToDrive = function() return false end
+    o.hasPendingBackupRequest = function() return false end
+    o.getMinCombineDistance = function() return 10 end
+
+    commands = { drive = 0, stop = 0, update = 0 }
+    o.vehicle.ad.specialDrivingModule = {
+        stopVehicle = function() commands.stop = commands.stop + 1 end,
+        update = function() commands.update = commands.update + 1 end,
+        driveReverse = function() commands.drive = commands.drive + 1 end,
+        releaseVehicle = function() end,
+    }
+    o.followChasePoint = function() commands.drive = commands.drive + 1 end
+    o.reverse = function() commands.drive = commands.drive + 1 end
+
+    -- the release conditions below the branch stay shut, so the state is actually held
+    o.combine.ad.sensors = { frontSensorFruit = { pollInfo = function() return false end } }
+    o.combine.ad.driveForwardTimer = { elapsedTime = 0 }
+    o.combine.ad.isHarvester = true
+    o.combine.ad.isChopper = false
+    return o
+end
+
+function TestWaitForTurnAlwaysCommands:setUp()
+    TestSetup.reset()
+    self.turning = true
+    AutoDrive.combineIsTurning = function() return self.turning end
+end
+
+--- The control: while it really is turning, the state has always braked.
+function TestWaitForTurnAlwaysCommands:testItBrakesWhileTheHarvesterTurns()
+    local t = waitingForTurn()
+    self.turning = true
+
+    t:update(16)
+
+    lu.assertTrue(commands.stop + commands.drive > 0, 'test setup: the turning case commands something')
+    lu.assertEquals(commands.update, 1, 'and applies it in the same frame')
+end
+
+--- And the case that issued nothing: the harvester has stopped turning but has not released us yet.
+function TestWaitForTurnAlwaysCommands:testItStillBrakesOnceTheHarvesterStopsTurning()
+    local t = waitingForTurn()
+    self.turning = false
+
+    for _ = 1, 20 do
+        t:update(16)
+    end
+
+    lu.assertEquals(t.state, FollowCombineTask.STATE_WAIT_FOR_TURN,
+        'test setup: the release conditions have to still be shut for this to mean anything')
+    lu.assertEquals(commands.update, 20,
+        'every frame of the state has to reach the vehicle with something, or it coasts')
+    lu.assertEquals(commands.stop, 20, 'and with nothing else to do that something is the brake')
+end
+
 --- Source level: both followChasePoint calls in the turn branch must sit behind the guard, or the
 --- drive command is issued before anything checks the angle.
 function TestTurnChaseGuard:testBothTurnBranchesAreGuarded()

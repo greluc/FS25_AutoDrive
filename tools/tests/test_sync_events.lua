@@ -365,6 +365,100 @@ function TestMessageEvent:testPlainMessageFromAClientIsNotBroadcast()
 end
 
 ------------------------------------------------------------------------------------------------------------------------
+--- The config round trip on a save with no network recorded
+---
+--- readFromXML read the way point id first and returned outright when it was missing. Everything
+--- else the file carries - the twenty global settings, every per-vehicle "set as default", the debug
+--- channel mask, the experimental toggles - is read after that return, and saveToXML has no matching
+--- condition: it always writes them. So a player who installed the mod, changed settings and saved
+--- before recording anything had every one of them written faithfully to the config file and thrown
+--- away again on the next load. On every load, until the first way point was recorded. The comment
+--- there explains why the WAY POINTS cannot be parsed; it never justified dropping the settings.
+------------------------------------------------------------------------------------------------------------------------
+TestConfigRoundTrip = {}
+
+local doc
+
+local function inMemoryXML()
+    doc = {}
+    createXMLFile = function() return 'doc' end
+    saveXMLFile = function() end
+    delete = function() end
+    setXMLString = function(_, key, value) doc[key] = value end
+    setXMLInt = function(_, key, value) doc[key] = value end
+    setXMLFloat = function(_, key, value) doc[key] = value end
+    setXMLBool = function(_, key, value) doc[key] = value end
+    getXMLString = function(_, key) return doc[key] end
+    getXMLInt = function(_, key) return doc[key] end
+    getXMLFloat = function(_, key) return doc[key] end
+    getXMLBool = function(_, key) return doc[key] end
+end
+
+function TestConfigRoundTrip:setUp()
+    TestSetup.reset()
+    inMemoryXML()
+    g_currentMission.missionInfo.savegameDirectory = './savegame1'
+    AutoDrive.version = '3.0.0.0'
+    AutoDrive.loadedMap = 'MockMap'
+    AutoDrive.currentDebugChannelMask = 0
+    AutoDrive.experimentalFeatures = { RedLinePathfinder = false }
+    AutoDrive.settings = {
+        enableTrafficDetection = setting(1, false),
+        followDistance = setting(3, true, 8),
+    }
+    self.markersReset = 0
+    ADGraphManager = {
+        wayPoints = {},
+        mapMarkers = {},
+        groups = { All = 1 },
+    }
+    function ADGraphManager:getWayPoints() return self.wayPoints end
+    function ADGraphManager:getWayPointsCount() return #self.wayPoints end
+    function ADGraphManager:getMapMarkers() return self.mapMarkers end
+    function ADGraphManager:getMapMarkerById(id) return self.mapMarkers[id] end
+    function ADGraphManager:getGroups() return self.groups end
+    function ADGraphManager:deleteColorSelectionWayPoints() end
+end
+
+--- Written with an empty graph, read back: the settings have to survive.
+function TestConfigRoundTrip:testSettingsSurviveASaveWithNoWayPoints()
+    AutoDrive.settings.enableTrafficDetection.current = 2
+    AutoDrive.settings.followDistance.userDefault = 9
+    AutoDrive.experimentalFeatures.RedLinePathfinder = true
+    AutoDrive.currentDebugChannelMask = 512
+    AutoDrive.saveToXML()
+
+    lu.assertNil(doc['AutoDrive.waypoints.id'], 'test setup: nothing was recorded')
+    lu.assertEquals(doc['AutoDrive.enableTrafficDetection'], 2,
+        'test setup: the writer does put the setting in the document')
+
+    -- back to defaults, so a successful read has to have done the work
+    AutoDrive.settings.enableTrafficDetection.current = 1
+    AutoDrive.settings.followDistance.userDefault = 8
+    AutoDrive.experimentalFeatures.RedLinePathfinder = false
+    AutoDrive.currentDebugChannelMask = 0
+
+    AutoDrive.readFromXML('doc')
+
+    lu.assertEquals(AutoDrive.settings.enableTrafficDetection.current, 2)
+    lu.assertEquals(AutoDrive.settings.followDistance.userDefault, 9)
+    lu.assertTrue(AutoDrive.experimentalFeatures.RedLinePathfinder)
+    lu.assertEquals(AutoDrive.currentDebugChannelMask, 512)
+end
+
+--- And the guard still does the job it was there for: a marker names a way point, so with no way
+--- points there is nothing to parse and nothing to reset.
+function TestConfigRoundTrip:testTheMarkerParsingIsStillSkippedWithoutWayPoints()
+    local resets = 0
+    ADGraphManager.resetMapMarkers = function() resets = resets + 1 end
+    AutoDrive.saveToXML()
+
+    AutoDrive.readFromXML('doc')
+
+    lu.assertEquals(resets, 0, 'markers without way points are meaningless and must not be parsed')
+end
+
+------------------------------------------------------------------------------------------------------------------------
 --- A26 - the xml handle of the config writer
 ------------------------------------------------------------------------------------------------------------------------
 TestSaveToXML = {}

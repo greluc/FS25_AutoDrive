@@ -79,10 +79,6 @@ function AutoDrive.readFromXML(xmlFile)
 		idString = getXMLString(xmlFile, "AutoDrive." .. AutoDrive.loadedMap .. ".waypoints.id")
 	end
 
-	--maybe map was opened and saved, but no waypoints recorded with AutoDrive!
-	if idString == nil then
-		return
-	end
 	AutoDrive.ADRouteVersion = getXMLString(xmlFile, "AutoDrive.ADRouteVersion") or "no version defined"
 	AutoDrive.ADRouteAuthor = getXMLString(xmlFile, "AutoDrive.ADRouteAuthor") or "no Author defined"
 
@@ -105,6 +101,24 @@ function AutoDrive.readFromXML(xmlFile)
 
 	for feature, _ in pairs(AutoDrive.experimentalFeatures) do
 		AutoDrive.experimentalFeatures[feature] = Utils.getNoNil(getXMLBool(xmlFile, "AutoDrive.experimentalFeatures." .. feature .. "#enabled"), AutoDrive.experimentalFeatures[feature])
+	end
+
+	-- Maybe the map was opened and saved, but no waypoints were recorded with AutoDrive. Everything
+	-- above this line is read regardless, and that is the whole point of where this now stands.
+	--
+	-- It used to be the very first thing after reading the id, so a config file with no waypoints in
+	-- it was abandoned before a single setting had been read - while saveToXML has no such condition
+	-- and always writes them. Every global setting, every per-vehicle "set as default", the debug
+	-- channel mask and the experimental feature toggles were therefore written faithfully and thrown
+	-- away on the next load, on every load, until the player recorded their first waypoint. Measured:
+	-- thirteen of thirteen values lost with an empty graph, none with a populated one, from the same
+	-- document. The comment explains why the WAYPOINTS cannot be parsed; it never justified dropping
+	-- the settings.
+	--
+	-- Markers stay on this side of it: a marker is a name for a way point, and without way points
+	-- there is nothing for it to name.
+	if idString == nil then
+		return
 	end
 
 	-- load Map Markers
