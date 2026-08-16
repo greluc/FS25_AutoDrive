@@ -212,16 +212,25 @@ function ADSensor:init(vehicle, sensorType, sensorParameters)
     self:loadDynamicParameters(sensorParameters)
 end
 
--- Width and length the sensors should be built from.
+-- Width and length the front sensors are built from: the larger of the vehicle definition and the
+-- measured hull.
 --
--- vehicle.size describes the TRACTOR only, taken from its vehicle definition. Every sensor used
--- to be sized from it, so a trailer wider or longer than the tractor was invisible to obstacle
--- detection - which is how a trailer ends up catching a tree the tractor cleared.
+-- The name and the note that used to stand here overpromised, and the numbers say so. This does NOT
+-- give you the whole train. adDimensions is measured by ADDimensionSensor, whose callback counts a
+-- hit only for the vehicle itself or one of its FRONT implements - a trailer behind is a foreign
+-- object and never widens it. Measured on a 3 m tractor with a 2.4 m, a 5.4 m and a 9 m trailer
+-- behind it: 1.80/1.80 in all three cases, i.e. the tractor's own hull plus the measurement margin.
+-- So what this buys over vehicle.size is about 0.2 m per side, not a trailer.
 --
--- ADDimensionSensor already measures the real hull of the whole train and stores it in
--- vehicle.ad.adDimensions (see AutoDrive.getVehicleDimensions in CollisionDetectionUtils.lua).
--- Those numbers were only read in two places and never used to size the sensors. Prefer them,
--- and fall back to the vehicle definition when nothing has been measured yet.
+-- That is not a hole in obstacle detection. A trailer carries its own sensors, built on the trailer
+-- object and sized from its own definition (see the handleSensors call in
+-- ADCollisionDetectionModule), and these two boxes look FORWARD from the tractor - a trailer
+-- clipping a gatepost is its swept path in a turn, which is behind and beside.
+--
+-- Known limit, stated rather than implied: loadBaseParameters runs once per sensor at construction,
+-- which happens before startAD has measured anything, and nothing re-runs it. So a sensor built
+-- before the first measurement keeps the vehicle definition for the life of the vehicle. The split
+-- sensor avoids this by asking here on every scan instead of caching.
 function ADSensor.getTrainDimensions(vehicle)
     local width, length = vehicle.size.width, vehicle.size.length
     local dims = vehicle.ad ~= nil and vehicle.ad.adDimensions or nil

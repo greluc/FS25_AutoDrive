@@ -152,7 +152,13 @@ function ADCollSensorSplit:buildBoxShape(x, y, z, width, height, length, vecZ, v
 end
 
 function ADCollSensorSplit:getBoxShapes(minLength)
-    local width, length = AutoDrive.getVehicleDimensions(self.vehicle, false)
+    -- ADSensor.getTrainDimensions, not getVehicleDimensions(vehicle, false): that call overwrites
+    -- adDimensions.width and .length from vehicle.size before returning, so it can only ever hand
+    -- back the vehicle definition and the measured hull never reached this box at all - it spanned
+    -- exactly vehicle.size.width in every configuration. This is the sensor the driver is actually
+    -- stopped on, and it now agrees with the long one beside it. Asked here on every scan rather
+    -- than cached, so unlike the long sensor it is not frozen at construction time.
+    local width, length = ADSensor.getTrainDimensions(self.vehicle)
 
     local lookAheadDistance = math.clamp(self.vehicle.lastSpeedReal * 3600 * 15.5 / 40, minLength, 50)
     local steeringAngle = math.deg(math.abs(self.vehicle.rotatedTime))

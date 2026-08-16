@@ -261,4 +261,79 @@ function TestSensorLatch:testThePlainSensorClearsInTheSameUpdate()
     lu.assertFalse(s.triggered)
 end
 
+
+------------------------------------------------------------------------------------------------------------------------
+--- Both front sensors read the same measurement
+---
+--- The long one asks ADSensor.getTrainDimensions. The split one asked
+--- AutoDrive.getVehicleDimensions(vehicle, false), which overwrites adDimensions.width and .length
+--- from vehicle.size before returning - so it could only ever hand back the vehicle definition, and
+--- the measured hull never reached the box the driver is actually stopped on. It spanned exactly
+--- vehicle.size.width in every configuration tried.
+---
+--- Nothing covered either call site: reverting getTrainDimensions to vehicle.size at its only
+--- consumer left the whole gate green, because the geometry tests call the function directly and
+--- the scheduling tests preset v.ad.sensors so the sensors are never built.
+------------------------------------------------------------------------------------------------------------------------
+TestSensorWidthSource = {}
+
+function TestSensorWidthSource:setUp() TestSetup.reset() end
+
+local function measuredVehicle()
+    local v = TestSetup.vehicle()
+    v.size = { width = 3, length = 6, lengthOffset = 0 }
+    v.ad.adDimensions = { maxWidthLeft = 1.8, maxWidthRight = 1.8,
+                          maxLengthFront = 3, maxLengthBack = 9 }
+    v.lastSpeedReal = 0
+    v.rotatedTime = 0
+    return v
+end
+
+function TestSensorWidthSource:testTheLongSensorIsBuiltFromTheMeasurement()
+    local v = measuredVehicle()
+    local sensor = setmetatable({ vehicle = v }, { __index = ADSensor })
+    sensor.getLocationByPosition = function() return { x = 0, y = 0, z = 3 } end
+
+    sensor:loadBaseParameters()
+
+    lu.assertAlmostEquals(sensor.width, 3.6 * ADSensor.WIDTH_FACTOR, 1e-9,
+        'the measured hull is wider than the definition, so it is what the box is built from')
+end
+
+--- The split sensor divides its width into five boxes, so the covered span is what to compare.
+local function splitSpan(vehicle)
+    local sensor = setmetatable({ vehicle = vehicle }, { __index = ADCollSensorSplit })
+    -- what loadBaseParameters would set; it is not called here because getLocationByPosition reaches
+    -- into the vehicle's specs, and the box height reaches into the engine's density maps
+    sensor.location = { x = 0, y = 0, z = 3 }
+    sensor.position = ADSensor.POS_FRONT
+    sensor.frontFactor = 1
+    sensor.sideFactor = 1
+    AutoDrive.checkIsOnField = function() return false end
+    local boxes = sensor:getBoxShapes(2)
+    lu.assertNotNil(boxes[1], 'test setup: it has to build a box at all')
+    local span = 0
+    for _, box in ipairs(boxes) do
+        span = span + box.size[1] * 2
+    end
+    return span
+end
+
+function TestSensorWidthSource:testTheSplitSensorReadsTheSameMeasurement()
+    local v = measuredVehicle()
+
+    lu.assertAlmostEquals(ADSensor.getTrainDimensions(v), 3.6, 1e-9,
+        'test setup: the measured hull is the wider of the two')
+    lu.assertAlmostEquals(splitSpan(v), 3.6, 1e-6,
+        'the box the driver is stopped on has to span the measured hull, not the vehicle definition')
+end
+
+--- And with nothing measured yet, it falls back to the definition rather than to nothing.
+function TestSensorWidthSource:testTheSplitSensorFallsBackToTheVehicleDefinition()
+    local v = measuredVehicle()
+    v.ad.adDimensions = nil
+
+    lu.assertAlmostEquals(splitSpan(v), 3, 1e-6)
+end
+
 os.exit(lu.LuaUnit.run())
