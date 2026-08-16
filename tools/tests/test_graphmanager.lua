@@ -289,4 +289,80 @@ function TestNetworkCheck:testItStillFindsGenuineDuplicates()
         'a way point placed exactly on another one has to be reported as a fault')
 end
 
+
+------------------------------------------------------------------------------------------------------------------------
+--- Deleting a way point has to take every destination standing on it
+---
+--- removeMapMarkerByWayPoint removed the FIRST marker whose id matched and broke out of the loop.
+--- Nothing prevents two markers from sharing a way point: creating a destination does not check
+--- whether the closest one already carries one, way points sit three to five metres apart, so two
+--- names entered from the same spot land on the same point - and the road network debug channel
+--- adds its own markers on top of existing ones as well.
+---
+--- The survivor did not merely linger. The renumbering that follows a deletion only rewrites markers
+--- whose old id it knows about, and a marker on a DELETED point is not one of those, so its raw id
+--- was left alone and, once the graph was compacted, pointed at whatever way point had moved into
+--- that index. The destination did not disappear - it walked quietly down the route, and drivers
+--- sent there stopped somewhere else entirely.
+------------------------------------------------------------------------------------------------------------------------
+TestMarkerRemoval = {}
+
+function TestMarkerRemoval:setUp()
+    TestSetup.reset()
+    ADGraphManager:load()
+    AutoDrive.testSettings['mapMarkerDetour'] = 0
+    AutoDrive.Hud = { lastUIScale = 1 }
+    AutoDrive.getAllVehicles = function() return {} end
+    AutoDrive.notifyDestinationListeners = function() end
+
+    local wps = {}
+    for i = 1, 10 do
+        wps[i] = TestSetup.waypoint(i, i * 10, 0,
+            i < 10 and { i + 1 } or {}, i > 1 and { i - 1 } or {})
+    end
+    ADGraphManager:setWayPoints(wps)
+end
+
+local function markerNamed(name)
+    for _, marker in pairs(ADGraphManager:getMapMarkers()) do
+        if marker.name == name then return marker end
+    end
+    return nil
+end
+
+local function markerX(name)
+    local marker = markerNamed(name)
+    if marker == nil then return nil end
+    local wp = ADGraphManager:getWayPointById(marker.id)
+    return wp ~= nil and wp.x or nil
+end
+
+function TestMarkerRemoval:testBothDestinationsOnAPointGoWithIt()
+    ADGraphManager:createMapMarker(2, 'Hof', false)
+    ADGraphManager:createMapMarker(5, 'Silo', false)
+    ADGraphManager:createMapMarker(5, 'SiloTip', false)
+    ADGraphManager:createMapMarker(9, 'Feld', false)
+    lu.assertEquals(#ADGraphManager:getMapMarkers(), 4, 'test setup')
+
+    ADGraphManager:removeWayPoints({ 5 }, false)
+
+    lu.assertNil(markerNamed('Silo'), 'the destination on the deleted point has to go')
+    lu.assertNil(markerNamed('SiloTip'),
+        'and so does the second one on that same point - it cannot stay behind aiming at a '
+        .. 'way point that has moved underneath it')
+end
+
+--- And the destinations that were NOT on the deleted point keep pointing where they did.
+function TestMarkerRemoval:testTheOtherDestinationsStayWhereTheyWere()
+    ADGraphManager:createMapMarker(2, 'Hof', false)
+    ADGraphManager:createMapMarker(5, 'Silo', false)
+    ADGraphManager:createMapMarker(5, 'SiloTip', false)
+    ADGraphManager:createMapMarker(9, 'Feld', false)
+
+    ADGraphManager:removeWayPoints({ 5 }, false)
+
+    lu.assertEquals(markerX('Hof'), 20)
+    lu.assertEquals(markerX('Feld'), 90)
+end
+
 os.exit(lu.LuaUnit.run())

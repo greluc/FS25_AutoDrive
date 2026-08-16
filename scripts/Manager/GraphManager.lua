@@ -603,11 +603,21 @@ function ADGraphManager:removeMapMarkerByWayPoint(wayPointId, sendEvent)
         -- Finding the map waypoint where the marker should be
         local wayPoint = self.wayPoints[wayPointId]
         if wayPoint ~= nil then
-            for markerId, marker in pairs(self.mapMarkers) do
-                -- Checking if the waypoint id matches the marker id
-                if marker.id == wayPoint.id then
+            -- ALL of them, and walked backwards. Nothing stops two markers from sharing a way
+            -- point: creating a destination does not check whether the closest one already carries
+            -- one, and way points sit three to five metres apart, so two destinations entered from
+            -- the same spot land on the same point - as does a debug marker alongside a real one.
+            -- Removing only the first left the second behind, and the renumbering that follows a
+            -- deletion only rewrites markers whose old id it knows about. A marker on a deleted
+            -- point is not one of those, so its raw id survived and, after compaction, aimed at
+            -- whatever way point had moved into that index: the destination did not disappear, it
+            -- quietly walked down the route, and drivers stopped somewhere else.
+            --
+            -- Backwards because removeMapMarker renumbers the markers behind the one it removes.
+            for markerId = #self.mapMarkers, 1, -1 do
+                local marker = self.mapMarkers[markerId]
+                if marker ~= nil and marker.id == wayPoint.id then
                     self:removeMapMarker(markerId, sendEvent)
-                    break
                 end
             end
         end

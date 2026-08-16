@@ -692,4 +692,56 @@ function TestNetworkOnMap:testNothingIsDrawnOutsideTheEditorModes()
     lu.assertEquals(renders, 0)
 end
 
+
+------------------------------------------------------------------------------------------------------------------------
+--- The creation mode has to fit in the bits it is sent in
+---
+--- CREATE_OFF is 1 and the list has grown to CREATE_SUB_PRIO_DUAL_TWOWAY at 9, while the stream
+--- wrote it in three bits, which hold 0..7. The eighth mode wrapped to 0, matching no named mode at
+--- all, and the ninth wrapped to 1, which IS CREATE_OFF. A multiplayer client never sets this field
+--- itself - the input handler sends the event and returns - so what it displays is exactly what
+--- arrives, and a client recording "sub prio dual two way" watched its own record button tell it
+--- nothing was being recorded.
+---
+--- Read out of the source rather than by round-tripping the whole state module, so that the test
+--- also fails the day a tenth mode is added rather than the day somebody notices.
+------------------------------------------------------------------------------------------------------------------------
+TestCreationModeWidth = {}
+
+local function stateModuleSource()
+    local f = io.open('../../scripts/Modules/StateModule.lua', 'r')
+    local src = f:read('*a')
+    f:close()
+    return src
+end
+
+function TestCreationModeWidth:setUp() TestSetup.reset() end
+
+function TestCreationModeWidth:testTheWidthHoldsEveryCreationMode()
+    local src = stateModuleSource()
+    local bits = tonumber(src:match('streamWriteUIntN%(streamId, self%.creationMode, (%d+)%)'))
+    lu.assertNotNil(bits, 'could not find the creationMode write')
+
+    local highest = 0
+    -- [%w_], not %w: Lua's %w is letters and digits only, so CREATE_SUB_PRIO_DUAL_TWOWAY stopped
+    -- matching at its first underscore and the highest mode this found was 3.
+    for value in src:gmatch('ADStateModule%.CREATE_[%w_]+%s*=%s*(%d+)') do
+        highest = math.max(highest, tonumber(value))
+    end
+    lu.assertTrue(highest > 0, 'test setup: the CREATE_ constants have to be readable from the source')
+
+    lu.assertTrue(2 ^ bits > highest, string.format(
+        '%d bits hold 0..%d but the creation modes run to %d, so the top ones wrap on the wire',
+        bits, 2 ^ bits - 1, highest))
+end
+
+--- And the reader has to agree with the writer, or every field behind it in the stream shifts.
+function TestCreationModeWidth:testTheReaderUsesTheSameWidth()
+    local src = stateModuleSource()
+    local written = src:match('streamWriteUIntN%(streamId, self%.creationMode, (%d+)%)')
+    local read = src:match('self%.creationMode = streamReadUIntN%(streamId, (%d+)%)')
+    lu.assertNotNil(read, 'could not find the creationMode read')
+    lu.assertEquals(read, written)
+end
+
 os.exit(lu.LuaUnit.run())

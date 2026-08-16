@@ -226,7 +226,12 @@ function ADStateModule:doWriteStream(streamId)
     streamWriteUIntN(streamId, self.mode, 4)
     streamWriteUIntN(streamId, self:getFirstMarkerId() + 1, 20)
     streamWriteUIntN(streamId, self:getSecondMarkerId() + 1, 20)
-    streamWriteUIntN(streamId, self.creationMode, 3)
+    -- Four bits, not three. CREATE_OFF is 1 and CREATE_SUB_PRIO_DUAL_TWOWAY is 9, and three bits
+    -- hold 0..7: the eighth mode wrapped to 0, which matches no named mode, and the ninth wrapped to
+    -- 1, which is CREATE_OFF. A multiplayer client never sets this itself - the input handler sends
+    -- the event and returns - so what it shows is exactly what arrives here, and a client recording
+    -- "sub prio dual two way" watched its own record button say it was not recording at all.
+    streamWriteUIntN(streamId, self.creationMode, 4)
     streamWriteUIntN(streamId, self.fillType, 10)
     AutoDrive.streamWriteUIntNList(streamId, self.selectedFillTypes, 10)
     streamWriteBool(streamId, self.loadByFillLevel)
@@ -258,7 +263,7 @@ function ADStateModule:doReadStream(streamId)
     self.mode = streamReadUIntN(streamId, 4)
     self.firstMarker = ADGraphManager:getMapMarkerById(streamReadUIntN(streamId, 20) - 1)
     self.secondMarker = ADGraphManager:getMapMarkerById(streamReadUIntN(streamId, 20) - 1)
-    self.creationMode = streamReadUIntN(streamId, 3)
+    self.creationMode = streamReadUIntN(streamId, 4)   -- see the note in doWriteStream
     self.fillType = streamReadUIntN(streamId, 10)
     self.selectedFillTypes = AutoDrive.streamReadUIntNList(streamId, 10)
     self.loadByFillLevel = streamReadBool(streamId)
