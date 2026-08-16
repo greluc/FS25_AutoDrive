@@ -378,9 +378,7 @@ function ADDrivePathModule:followWaypoints(dt)
             local currentTask = self.vehicle.ad.taskModule:getActiveTask()
             local isCatchingCombine = currentTask.taskType ~= nil and self.vehicle.ad.taskModule:getActiveTask().taskType == "CatchCombinePipeTask"
             if not isCatchingCombine then
-                local min_speed = math.min(8, 2 + self.distanceToTarget)
-                local max_speed = math.max(8, 2 + self.distanceToTarget)
-                self.speedLimit = math.clamp(self.speedLimit, min_speed, max_speed)
+                self.speedLimit = ADDrivePathModule.approachSpeedLimit(self.speedLimit, self.distanceToTarget)
             end
         end
 
@@ -608,6 +606,23 @@ function ADDrivePathModule.speedForRadius(radius)
     end
     local effective = math.max(radius, ADDrivePathModule.MIN_CORNER_RADIUS)
     return math.sqrt(ADDrivePathModule.CORNER_LATERAL_ACCELERATION * effective) * 3.6
+end
+
+--- The speed cap on the final approach to the last way point.
+---
+--- A CAP, not a band. The intent - do not let the vehicle crawl the last few metres - lives entirely
+--- in math.max(8, ...), which never drops below 8 on its own. Clamping between that and a matching
+--- lower bound therefore only ever RAISED the limit, and it runs after the corner brake and after
+--- the road and field limits, so everything they had decided was discarded over the last stretch of
+--- every single route. Measured on a ninety degree turn into a yard: the corner rule wanted 3.2 km/h
+--- and the vehicle took the vertex at 8.0, over eleven metres of approach - and it is a fixed point,
+--- not a transient, because the look-ahead window that opens this branch grows with the very speed
+--- the floor is producing. A driver whose own speed setting is below 8 - both limits go down to 2 -
+--- had that setting ignored on every arrival.
+---
+--- Its own function so a test can drive the rule rather than restate it.
+function ADDrivePathModule.approachSpeedLimit(currentLimit, distanceToTarget)
+    return math.min(currentLimit, math.max(8, 2 + (distanceToTarget or 0)))
 end
 
 --- What a corner described by this radius AND this turn may be taken at: the lower of the two rules.

@@ -57,6 +57,50 @@ local function moduleOn(points, speedKmh)
 end
 
 ------------------------------------------------------------------------------------------------------------------------
+--- The final approach, which used to throw all of the above away
+---
+--- Everything this file measures is computed and then handed on, and over the last stretch of every
+--- route it met a clamp between math.min(8, 2+d) and math.max(8, 2+d). The upper bound alone is the
+--- anti-crawl rule and it never drops below 8, so the lower bound could only ever RAISE the limit -
+--- and it sits after the corner brake and after the road and field limits. The sharpest corner on a
+--- route is usually the last one, into a yard or a silo, which is exactly the stretch this covered.
+------------------------------------------------------------------------------------------------------------------------
+TestApproachLimit = {}
+
+function TestApproachLimit:setUp() TestSetup.reset() end
+
+--- The distances matter. The old floor was math.min(8, 2 + d), so it only reaches 8 once the target
+--- is more than six metres off - and the measured case, a ninety degree turn into a yard, had it
+--- binding from seventeen metres out to six. A test placed inside those last six metres passes
+--- against the broken version too, which is where the first draft of this one sat.
+function TestApproachLimit:testACornerLimitSurvivesTheFinalApproach()
+    for _, distance in ipairs({ 6.1, 10, 17 }) do
+        lu.assertAlmostEquals(ADDrivePathModule.approachSpeedLimit(3.2, distance), 3.2, 1e-9,
+            string.format('at %.1f m from the end the corner brake has to reach the vehicle', distance))
+    end
+end
+
+function TestApproachLimit:testTheDriversOwnSettingSurvivesIt()
+    -- both the road and the field speed limit can be set as low as 2
+    lu.assertAlmostEquals(ADDrivePathModule.approachSpeedLimit(4, 6), 4, 1e-9)
+    lu.assertAlmostEquals(ADDrivePathModule.approachSpeedLimit(2, 0), 2, 1e-9)
+end
+
+--- And the rule it is actually there for is untouched: close in, the vehicle is capped.
+function TestApproachLimit:testItStillCapsTheSpeedNearTheTarget()
+    lu.assertAlmostEquals(ADDrivePathModule.approachSpeedLimit(50, 0), 8, 1e-9)
+    lu.assertAlmostEquals(ADDrivePathModule.approachSpeedLimit(50, 20), 22, 1e-9)
+end
+
+--- Never below eight on its own, which is the whole of the anti-crawl intent.
+function TestApproachLimit:testTheCapNeverFallsBelowEight()
+    for d = 0, 30 do
+        lu.assertTrue(ADDrivePathModule.approachSpeedLimit(100, d) >= 8, string.format(
+            'at %d m from the target the cap is %.2f km/h', d, ADDrivePathModule.approachSpeedLimit(100, d)))
+    end
+end
+
+------------------------------------------------------------------------------------------------------------------------
 TestCornerSpeedLimit = {}
 
 function TestCornerSpeedLimit:setUp()
