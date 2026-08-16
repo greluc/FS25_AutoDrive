@@ -268,11 +268,18 @@ function PathFinderModule:selectNetworkEntryPoint(destinationId)
     local closest = self.vehicle:getClosestWayPoint()
     local x, _, z = getWorldTranslation(self.vehicle.components[1].node)
 
+    local range = AutoDrive.NETWORK_ENTRY_SEARCH_RANGE
     local candidates = {}
-    ADGraphManager:forEachWayPointNear({x = x, z = z}, AutoDrive.NETWORK_ENTRY_SEARCH_RANGE, function(wp)
+    ADGraphManager:forEachWayPointNear({x = x, z = z}, range, function(wp)
         -- a way point with no way in is an exit only and cannot be joined
         if wp.incoming == nil or #wp.incoming > 0 then
-            candidates[#candidates + 1] = {wp = wp, distance = MathUtil.vector2Length(wp.x - x, wp.z - z)}
+            -- forEachWayPointNear visits whole index cells, so it hands out way points from the
+            -- corners of the box that lie outside the radius. Without this test the range bounds
+            -- nothing and a joining point could be picked half as far again as it allows.
+            local distance = MathUtil.vector2Length(wp.x - x, wp.z - z)
+            if distance <= range then
+                candidates[#candidates + 1] = {wp = wp, distance = distance}
+            end
         end
     end)
     table.sort(candidates, function(a, b) return a.distance < b.distance end)
