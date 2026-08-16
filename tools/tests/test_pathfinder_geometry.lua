@@ -208,4 +208,84 @@ function TestOffTracking:testLongerTrainSweepsWider()
         'a longer train must cut the corner further')
 end
 
+
+------------------------------------------------------------------------------------------------------------------------
+--- The corner array has two consumers that want different things from it
+---
+--- getCorners returns (-u-v), (+u-v), (-u+v), (+u+v), which is exactly what getFruitValue wants:
+--- start, start+width, start+height. boxesIntersect walks its polygon CYCLICALLY, and in that order
+--- edges 2->3 and 4->1 are the rectangle's diagonals while 1->2 and 3->4 are the same axis twice -
+--- so one of the two face normals is never offered as a separating axis and quads that are
+--- genuinely apart come back as intersecting. Measured over 36180 placements: 644 false hits, worst
+--- case a real 2.69 m gap reported as blocked. The debug drawing already knew: it draws 1->2, 2->4,
+--- 4->3, 3->1.
+------------------------------------------------------------------------------------------------------------------------
+TestCornerPolygon = {}
+
+function TestCornerPolygon:setUp() TestSetup.reset() end
+
+--- The property, not the permutation: consecutive corners of the polygon have to be EDGES of the
+--- rectangle, never its diagonals. On a square the diagonal is longer than the side by root two.
+function TestCornerPolygon:testConsecutiveCornersAreEdgesNotDiagonals()
+    local p = pfm()
+    local half = 3.5
+    local corners = p:getCorners({ x = 0, z = 0 },
+        { x = half, z = 0 }, { x = 0, z = half })
+    local polygon = PathFinderModule.cornersAsPolygon(corners)
+
+    local side = half * 2
+    for i = 1, 4 do
+        local a, b = polygon[i], polygon[i % 4 + 1]
+        local length = MathUtil.vector2Length(b.x - a.x, b.z - a.z)
+        lu.assertAlmostEquals(length, side, 1e-6, string.format(
+            'corner %d to %d is %.2f m, which is the diagonal of a %.2f m square, not an edge - '
+            .. 'a separating axis test walking this order never sees one of the two face normals',
+            i, i % 4 + 1, length, side))
+    end
+end
+
+--- And the raw array keeps the shape its other consumer needs: 1->2 is the width, 1->3 the height.
+function TestCornerPolygon:testTheRawArrayIsStillTheFruitTriple()
+    local p = pfm()
+    local corners = p:getCorners({ x = 0, z = 0 }, { x = 3.5, z = 0 }, { x = 0, z = 3.5 })
+
+    lu.assertAlmostEquals(corners[2].x - corners[1].x, 7, 1e-6, 'corner 1 to 2 has to span the width')
+    lu.assertAlmostEquals(corners[2].z - corners[1].z, 0, 1e-6)
+    lu.assertAlmostEquals(corners[3].z - corners[1].z, 7, 1e-6, 'and 1 to 3 the height')
+    lu.assertAlmostEquals(corners[3].x - corners[1].x, 0, 1e-6)
+end
+
+------------------------------------------------------------------------------------------------------------------------
+--- Distance to the target is measured in metres, whoever is asking
+---
+--- cellDistance subtracted cell.x/cell.z directly. The A* cells are grid indices, so that worked;
+--- the Dubins samples carry WORLD coordinates, so it returned the vehicle's distance from the map
+--- origin - 1442 for a sample sitting exactly on the target. Its one consumer lifts the fruit
+--- restriction near the pipe, so the Dubins shortcut was held to a harsher rule than the A* it
+--- exists to short-circuit and every candidate curve died on its first sample.
+------------------------------------------------------------------------------------------------------------------------
+TestCellDistance = {}
+
+function TestCellDistance:setUp() TestSetup.reset() end
+
+function TestCellDistance:testAGridCellAndAWorldSampleOnTheSameSpotAgree()
+    local p = pfm()
+    p.targetCell = { x = 0, z = 0 }
+
+    local gridCell = { x = 3, z = 0 }
+    local worldSample = { x = 0, z = 0, worldPos = p:gridLocationToWorldLocation(gridCell) }
+
+    lu.assertAlmostEquals(p:cellDistance(worldSample), p:cellDistance(gridCell), 1e-6,
+        'the same physical point has to be the same distance from the target however the cell that '
+        .. 'describes it was built')
+end
+
+function TestCellDistance:testASampleOnTheTargetIsAtZero()
+    local p = pfm()
+    p.targetCell = { x = 0, z = 0 }
+    local onTarget = { x = 0, z = 0, worldPos = p:gridLocationToWorldLocation({ x = 0, z = 0 }) }
+
+    lu.assertAlmostEquals(p:cellDistance(onTarget), 0, 1e-6)
+end
+
 os.exit(lu.LuaUnit.run())
