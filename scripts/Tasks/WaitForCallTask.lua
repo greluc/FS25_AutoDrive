@@ -64,13 +64,19 @@ function WaitForCallTask:update(dt)
     end
 
     if self.state == WaitForCallTask.STATE_MAKING_WAY then
-        -- Drives the vehicle itself. Deliberately no specialDrivingModule:update afterwards: the
-        -- driving call already advances the module's stopped timer with this frame's dt, and doing
-        -- it twice made that timer run at double rate - so a manoeuvre that met any resistance was
-        -- declared stuck in five seconds instead of ten, and the mode tore the driver out of this
-        -- task to reverse it out of a spot it was only trying to leave.
+        -- Drives the vehicle itself, and owns the frame while it does: the driving call already
+        -- advances the module's stopped timer with this frame's dt, and advancing it twice made that
+        -- timer run at double rate - so a manoeuvre that met any resistance was declared stuck in
+        -- five seconds instead of ten, and the mode tore the driver out of this task to reverse it
+        -- out of a spot it was only trying to leave.
         self:updateMakingWay(dt)
-    else
+    end
+
+    -- Re-read the state rather than taking the else of the branch above: the manoeuvre can end
+    -- INSIDE that call, and stopMakingWay only raises the stop flag - it is this update that applies
+    -- it. Taking the else would leave the ending frame with a drive command withdrawn and no brake
+    -- put in its place.
+    if self.state ~= WaitForCallTask.STATE_MAKING_WAY then
         self.vehicle.ad.specialDrivingModule:stopVehicle()
         self.vehicle.ad.specialDrivingModule:update(dt)
     end

@@ -584,4 +584,37 @@ function TestSteppingOffTheRoute:testAnArrivedReverseEndsTheManoeuvre()
 end
 
 
+--- Every frame has to leave the vehicle with either a drive command or a brake, never neither.
+--- stopMakingWay only raises the stop flag; it is specialDrivingModule:update that applies it, so
+--- the frame a manoeuvre ends on has to reach that call too.
+function TestSteppingOffTheRoute:testTheEndingFrameStillBrakes()
+    local updates = 0
+    self.parked.ad.specialDrivingModule.update = function() updates = updates + 1 end
+    self.task:update(16)
+    lu.assertEquals(self.task.state, WaitForCallTask.STATE_MAKING_WAY, 'test setup: it has to be moving')
+    updates = 0
+    driveCalls = {}
+
+    -- the frame the timeout lands on
+    self.task:update(WaitForCallTask.MAKE_WAY_TIMEOUT + 1)
+
+    lu.assertEquals(self.task.state, WaitForCallTask.STATE_WAITING)
+    lu.assertEquals(updates, 1, 'the ending frame has to apply the stop it just asked for')
+    lu.assertEquals(lastDrive().what, 'stop')
+end
+
+--- Same on the other way out of the manoeuvre: having moved far enough.
+function TestSteppingOffTheRoute:testTheFrameItArrivesOnStillBrakes()
+    local updates = 0
+    self.task:update(16)
+    self.parked.ad.specialDrivingModule.update = function() updates = updates + 1 end
+    moveTo(self.parked, 2 + AutoDrive.MAKE_WAY_DISTANCE, 20)
+
+    self.task:update(16)
+
+    lu.assertEquals(self.task.state, WaitForCallTask.STATE_WAITING)
+    lu.assertEquals(updates, 1)
+end
+
+
 os.exit(lu.LuaUnit.run())
