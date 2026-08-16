@@ -19,6 +19,19 @@ require('SortedQueue')
 require('GraphManager')
 require('PathCalculation')
 
+-- Giants' event plumbing, only as much of it as the delete event touches at load time.
+if Class == nil then
+    function Class(newClass, baseClass)
+        if baseClass ~= nil then setmetatable(newClass, { __index = baseClass }) end
+        newClass.superClass = function() return baseClass end
+        return { __index = newClass }
+    end
+end
+if Event == nil then Event = {} end
+if InitEventClass == nil then function InitEventClass() end end
+package.path = package.path .. ';../../scripts/Events/Graph/?.lua'
+require('DeleteWayPointsEvent')
+
 local function buildGrid(nx, nz, spacing)
     -- A regular grid of waypoints, each linked to its right neighbour.
     local wps = {}
@@ -363,6 +376,102 @@ function TestMarkerRemoval:testTheOtherDestinationsStayWhereTheyWere()
 
     lu.assertEquals(markerX('Hof'), 20)
     lu.assertEquals(markerX('Feld'), 90)
+end
+
+
+------------------------------------------------------------------------------------------------------------------------
+--- The path the game actually takes to delete several way points
+---
+--- The batched removeWayPoints was unreachable. Every multi-point delete in the editor goes through
+--- AutoDriveDeleteWayPointsEvent, whose run() looped removeWayPoint once per id - and each of those
+--- renumbers the whole graph, every out and incoming list and every marker. So the M*N cost that
+--- removeWayPoints exists to remove was still being paid, on the server and on every client, because
+--- the event is broadcast to all of them. Measured on the network sizes the module's own comment
+--- cites: 200 points out of 55.595 took 13.5 s that way against 0.07 s batched.
+---
+--- The test above cannot see this, because it calls removeWayPoints directly - it asserts that the
+--- batched implementation is efficient while nothing in the game reached it. This one goes through
+--- the event.
+------------------------------------------------------------------------------------------------------------------------
+TestDeleteEvent = {}
+
+function TestDeleteEvent:setUp()
+    TestSetup.reset()
+    ADGraphManager:load()
+
+    local wps = {}
+    for i = 1, 10 do
+        wps[i] = TestSetup.waypoint(i, i * 10, 0,
+            i < 10 and { i + 1 } or {}, i > 1 and { i - 1 } or {})
+    end
+    ADGraphManager:setWayPoints(wps)
+end
+
+--- The event as the server receives its own broadcast: from the server, so it deletes rather than
+--- re-broadcasting.
+local function runDeleteEvent(ids)
+    local event = { wayPointIDs = ids }
+    AutoDriveDeleteWayPointsEvent.run(event, { getIsServer = function() return true end })
+end
+
+local function remainingX()
+    local xs = {}
+    for _, wp in ipairs(ADGraphManager:getWayPoints()) do
+        xs[#xs + 1] = wp.x
+    end
+    return xs
+end
+
+function TestDeleteEvent:testItDeletesThePointsItWasGiven()
+    runDeleteEvent({ 3, 5, 8 })
+
+    lu.assertEquals(remainingX(), { 10, 20, 40, 60, 70, 90, 100 })
+end
+
+--- removeWayPoints is order independent by construction. Its own carrier was not, because each
+--- per-point removal renumbers and every later id then means a different point - so the two branches
+--- of one function disagreed for the same argument.
+function TestDeleteEvent:testTheOrderOfTheIdsDoesNotMatter()
+    runDeleteEvent({ 3, 5, 8 })
+    local ascending = remainingX()
+
+    self:setUp()
+    runDeleteEvent({ 8, 5, 3 })
+
+    lu.assertEquals(ascending, remainingX())
+end
+
+function TestDeleteEvent:testTheEventRenumbersOnlyOnce()
+    ADGraphManager:resetRenumberCount()
+
+    runDeleteEvent({ 8, 5, 3 })
+
+    lu.assertEquals(ADGraphManager:getRenumberCount(), 1,
+        'three deleted points must cost one renumbering pass through the event too, not three - '
+        .. 'this is the path the editor uses and every client repeats')
+end
+
+
+--- The other multi-point delete: a section between two junctions, which had the same per-point loop
+--- and paid the same cost. Its descending sort was a workaround for that loop rather than a rule of
+--- its own, so it goes with it.
+---
+--- Asserted at source level rather than driven. Driving it needs a network whose junction
+--- classification actually yields a section, which is a great deal of fixture for one property, and
+--- the path the editor's box-select uses - the event above - is covered behaviourally.
+function TestDeleteEvent:testTheSectionDeleteDoesNotRemovePointsOneAtATime()
+    local f = io.open('../../scripts/Manager/GraphManager.lua', 'r')
+    local src = f:read('*a')
+    f:close()
+    local body = src:match(
+        'function ADGraphManager:deleteWayPointsInSection(.-)function ADGraphManager:')
+    lu.assertNotNil(body, 'could not isolate deleteWayPointsInSection')
+
+    lu.assertNil(body:match('removeWayPoint%('),
+        'the section delete must not remove its points one at a time - every one of those renumbers '
+        .. 'the whole graph, which is the cost the batched call exists to avoid')
+    lu.assertNotNil(body:match('removeWayPoints%(pointsToDelete'),
+        'it has to hand the whole list to the batched call')
 end
 
 os.exit(lu.LuaUnit.run())

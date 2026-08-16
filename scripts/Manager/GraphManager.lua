@@ -1898,14 +1898,12 @@ function ADGraphManager:deleteWayPointsInSection(startNodeId, nextNodeId, sendEv
                 table.insert(pointsToDelete, lastWayPointID)
             end
 
-            -- sort the wayPoints to delete in descant order to ensure correct linkage deletion
-            local sort_func = function(a, b)
-                return a > b
-            end
-            table.sort(pointsToDelete, sort_func)
-            for i = 1, #pointsToDelete do
-                ADGraphManager:removeWayPoint(pointsToDelete[i], false)
-            end
+            -- As a set, in one call. The descending sort this used to need was working around the
+            -- per-point loop below it: each removal renumbers, so every later id meant a different
+            -- point unless the list ran highest first. removeWayPoints collects its input into a set
+            -- and renumbers once at the end, so the order does not matter and the whole graph is not
+            -- walked once per deleted point.
+            ADGraphManager:removeWayPoints(pointsToDelete, false)
         end
     end
 end
