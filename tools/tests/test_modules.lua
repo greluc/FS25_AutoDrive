@@ -101,6 +101,7 @@ local function makeDrivePathModule(vehicleId)
         getSpeedLimitBySteeringAngle = function() return 999 end,
         isOnRoadNetwork = function() return true end,
         minDistanceTimer = { timer = function() end },
+        heldTimer = { timer = function() end },
         waitTimer = { timer = function() end },
         blinkTimer = { timer = function() end },
     })
@@ -805,27 +806,30 @@ end
 
 
 ------------------------------------------------------------------------------------------------------------------------
---- Getting nowhere while standing still
+--- Being held on the route
 ---
---- checkIfStuck measures progress towards the next way point, and its timer only runs while the
---- vehicle is NOT being stopped - the else branch resets it. So the instant anything holds the
---- vehicle, the stuck clock goes to zero and stays there, and a vehicle held by an obstacle can
---- never be found stuck however long it stands.
+--- A vehicle held by the collision module is not, by itself, a vehicle in trouble. Standing behind
+--- another one is very often exactly right: a driver whose destination is already occupied should
+--- wait for it to clear and then carry on. So nothing here declares anything stuck - that was tried
+--- and withdrawn, because it fired on precisely that case and restarted a driver that was doing its
+--- job, while the vehicles that WERE jammed stood on regardless.
 ---
---- Measured in game: four vehicles nose to tail at a field exit, every one reporting an obstacle and
---- braking every frame, four and a half minutes of standstill, and not one stuck message in the log.
---- Nothing else was going to break it either - the off-route yield does not run on the road network,
---- and a make-way request only goes to a PARKED vehicle, which none of them was.
+--- What it does is ask. If what is in the way is one of our own parked with nothing to do, asking it
+--- to move is the only thing that helps, and the machinery for it already existed: CombineUnloaderMode
+--- asks when it finds itself stuck. It could only ever get there through specialDrivingModule.isBlocked,
+--- and followWaypoints passes that as "not isOnRoadNetwork()" - so a vehicle held on the ROAD network,
+--- which is where queues form, never asked anybody. Measured in game: four vehicles held ninety
+--- seconds at a field exit, one of them a parked unloader waiting to be called, zero requests sent.
 ------------------------------------------------------------------------------------------------------------------------
-TestHeldTooLong = {}
+TestHeldOnTheRoute = {}
 
-function TestHeldTooLong:setUp()
+function TestHeldOnTheRoute:setUp()
     TestSetup.reset()
 end
 
---- The module with only what checkIfStuck touches, plus a record of the stuck calls.
+--- The module with only what checkIfStuck touches, plus a record of what it did.
 local function heldModule(held, activeTask)
-    local stuck = { count = 0 }
+    local record = { stuck = 0, asked = 0 }
     local vehicle = TestSetup.vehicle({ id = 1, isServer = true })
     vehicle.components = { { node = 'held' } }
     MockEngine.nodePositions['held'] = { x = 0, y = 0, z = 0 }
@@ -839,9 +843,11 @@ local function heldModule(held, activeTask)
         minDistanceToNextWp = math.huge,
         wayPoints = TestSetup.lineNetwork(6),
         currentWayPoint = 1,
-        handleBeingStuck = function() stuck.count = stuck.count + 1 end,
+        askedForWay = false,
+        handleBeingStuck = function() record.stuck = record.stuck + 1 end,
     })
-    return module, stuck
+    AutoDrive.askNearbyVehiclesToMakeWay = function() record.asked = record.asked + 1 return 1 end
+    return module, record
 end
 
 local function run(module, milliseconds)
@@ -851,47 +857,78 @@ local function run(module, milliseconds)
     end
 end
 
---- The reported case: held, and never let go.
-function TestHeldTooLong:testAVehicleHeldForeverIsEventuallyStuck()
-    local module, stuck = heldModule(true, {})
+--- The correction that produced this shape, kept as a test so it cannot come back: a vehicle queueing
+--- behind another at a shared destination is not stuck, however long it waits.
+function TestHeldOnTheRoute:testBeingHeldIsNeverCalledStuck()
+    local module, record = heldModule(true, {})
 
-    run(module, ADDrivePathModule.MAX_HELD_TIME + 2000)
+    run(module, ADDrivePathModule.MAX_HELD_TIME * 3)
 
-    lu.assertTrue(stuck.count > 0,
-        'four and a half minutes of standstill has to be noticed by something')
+    lu.assertEquals(record.stuck, 0,
+        'waiting behind a vehicle at your own destination is the right thing to do, not a fault')
 end
 
---- But an ordinary traffic wait must not raise anything.
-function TestHeldTooLong:testAShortWaitIsNotStuck()
-    local module, stuck = heldModule(true, {})
+function TestHeldOnTheRoute:testItAsksParkedVehiclesToMoveOnceHeldLongEnough()
+    local module, record = heldModule(true, {})
 
-    run(module, ADDrivePathModule.MAX_HELD_TIME - 5000)
+    run(module, ADDrivePathModule.ASK_FOR_WAY_AFTER + 1000)
 
-    lu.assertEquals(stuck.count, 0, 'waiting for traffic is normal and must stay silent')
+    lu.assertEquals(record.asked, 1, 'the parked vehicle in the way has to be asked to move')
 end
 
---- And the clock starts again once the vehicle is released, so a series of ordinary waits never
---- adds up to a fault.
-function TestHeldTooLong:testBeingReleasedResetsTheClock()
-    local module, stuck = heldModule(true, {})
-    run(module, ADDrivePathModule.MAX_HELD_TIME - 5000)
+--- An ordinary short wait asks nobody.
+function TestHeldOnTheRoute:testAShortWaitAsksNobody()
+    local module, record = heldModule(true, {})
+
+    run(module, ADDrivePathModule.ASK_FOR_WAY_AFTER - 5000)
+
+    lu.assertEquals(record.asked, 0)
+end
+
+--- Once per episode. A request is not read until the parked vehicle's next waiting frame, so asking
+--- every frame would keep overwriting one it has not seen yet.
+function TestHeldOnTheRoute:testItAsksOnlyOncePerStandstill()
+    local module, record = heldModule(true, {})
+
+    run(module, ADDrivePathModule.MAX_HELD_TIME * 2)
+
+    lu.assertEquals(record.asked, 1)
+end
+
+--- Being released ends the episode, so the next standstill may ask again.
+function TestHeldOnTheRoute:testANewStandstillMayAskAgain()
+    local module, record = heldModule(true, {})
+    run(module, ADDrivePathModule.ASK_FOR_WAY_AFTER + 1000)
 
     module.vehicle.ad.specialDrivingModule.isStoppingVehicle = function() return false end
     run(module, 1000)
     module.vehicle.ad.specialDrivingModule.isStoppingVehicle = function() return true end
-    run(module, ADDrivePathModule.MAX_HELD_TIME - 5000)
+    run(module, ADDrivePathModule.ASK_FOR_WAY_AFTER + 1000)
 
-    lu.assertEquals(stuck.count, 0, 'two short waits are not one long one')
+    lu.assertEquals(record.asked, 2)
 end
 
---- A driver waiting to be called is not stuck, and may stand for as long as the harvest takes.
---- Those tasks are exactly the ones that advertise canMakeWay.
-function TestHeldTooLong:testAParkedWaiterIsNeverStuck()
-    local module, stuck = heldModule(true, { canMakeWay = true })
+--- And two short waits do not add up to one long one.
+function TestHeldOnTheRoute:testBeingReleasedResetsTheClock()
+    local module, record = heldModule(true, {})
+    run(module, ADDrivePathModule.ASK_FOR_WAY_AFTER - 5000)
 
-    run(module, ADDrivePathModule.MAX_HELD_TIME * 3)
+    module.vehicle.ad.specialDrivingModule.isStoppingVehicle = function() return false end
+    run(module, 1000)
+    module.vehicle.ad.specialDrivingModule.isStoppingVehicle = function() return true end
+    run(module, ADDrivePathModule.ASK_FOR_WAY_AFTER - 5000)
 
-    lu.assertEquals(stuck.count, 0, 'waiting for a call is the job, not a fault')
+    lu.assertEquals(record.asked, 0)
+end
+
+--- A driver waiting to be called is not being held up, it is doing its job, and it asks nobody.
+function TestHeldOnTheRoute:testAParkedWaiterNeitherAsksNorIsStuck()
+    local module, record = heldModule(true, { canMakeWay = true })
+
+    run(module, ADDrivePathModule.MAX_HELD_TIME * 2)
+
+    lu.assertEquals(record.asked, 0)
+    lu.assertEquals(record.stuck, 0)
 end
 
 os.exit(lu.LuaUnit.run())

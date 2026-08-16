@@ -82,6 +82,8 @@ function ADDrivePathModule:reset()
     self.onRoadNetwork = true
     self.minDistanceToNextWp = math.huge
     self.minDistanceTimer:timer(false, 5000, 0)
+    self.heldTimer:timer(false, ADDrivePathModule.MAX_HELD_TIME, 0)
+    self.askedForWay = false
     self.waitTimer:timer(false, ADDrivePathModule.PAUSE_TIMEOUT, 0)
     self.blinkTimer:timer(false, ADDrivePathModule.BLINK_TIMEOUT, 0)
     self.vehicle.ad.stateModule:setCurrentWayPointId(-1)
@@ -982,12 +984,21 @@ function ADDrivePathModule:checkActiveAttributesSet(dt)
     end
 end
 
---- How long a vehicle may be held at a standstill on a route before it counts as stuck.
----
---- Generous on purpose. Waiting for traffic is legitimate and common - a junction, a vehicle
---- unloading ahead, a player in the way - and none of that should raise an error. Waiting for ever
---- is the one thing that cannot be legitimate, and it is the only case this catches.
+--- The window the held clock runs over. Nothing is declared stuck at the end of it - see
+--- trackBeingHeld - it only bounds the timer so it cannot run away.
 ADDrivePathModule.MAX_HELD_TIME = 60000
+
+--- How long a vehicle is held before it asks parked vehicles near it to move.
+---
+--- Well short of that window, because asking is cheap, targeted and harmless - and if what is in
+--- the way is one of our own parked with nothing to do, it is the only thing that actually helps.
+--- CombineUnloaderMode already does exactly this when it finds itself stuck, but it can only get
+--- there through specialDrivingModule.isBlocked, and followWaypoints passes that as
+--- "not isOnRoadNetwork()". So a vehicle held on the ROAD network - a field exit, a yard, a
+--- junction, which is where queues actually form - never reached it. Measured in game: four vehicles
+--- held for a minute and a half at a field exit, one of them a parked unloader waiting to be called,
+--- and not one request sent.
+ADDrivePathModule.ASK_FOR_WAY_AFTER = 20000
 
 --- Whether the vehicle is getting nowhere.
 ---
@@ -1023,25 +1034,58 @@ function ADDrivePathModule:checkIfStuck(dt)
         self.minDistanceTimer:timer(false)
     end
 
-    if self:isHeldTooLong(held, dt) then
-        self:handleBeingStuck()
-    end
+    -- Held, so count how long for, and ask once whatever is parked around us to move.
+    --
+    -- What is deliberately NOT here is calling it stuck. Standing behind another vehicle is very
+    -- often exactly right: a driver whose destination is already occupied should wait for it to
+    -- clear and then carry on. Declaring that stuck restarts a driver that was doing its job, and
+    -- it was tried - it misfired on precisely that case, and it did not free the vehicles that WERE
+    -- jammed either, which stood on for another twenty-four seconds after it fired. Asking is what
+    -- can actually help, so asking is what is left.
+    self:trackBeingHeld(held, dt)
 end
 
---- Whether the vehicle has been held still longer than any traffic wait should last.
+--- Keep the clock on how long we have been held, and ask for room once it has run long enough.
 ---
---- Tasks that park on purpose are exempt: a driver waiting to be called is not stuck, and it may
---- stand for as long as the harvest takes. They are exactly the tasks that advertise canMakeWay,
---- which is the same property AutoDrive:requestMakeWay uses to tell a parked vehicle from a driving
---- one, so the two agree by construction rather than by a second list that could drift.
-function ADDrivePathModule:isHeldTooLong(held, dt)
+--- Tasks that park on purpose are exempt: a driver waiting to be called is not being held up, it is
+--- doing its job, and may stand for as long as the harvest takes. They are exactly the tasks that
+--- advertise canMakeWay, the same property AutoDrive:requestMakeWay uses to tell a parked vehicle
+--- from a driving one, so the two agree by construction rather than by a second list that drifts.
+function ADDrivePathModule:trackBeingHeld(held, dt)
     local taskModule = self.vehicle.ad ~= nil and self.vehicle.ad.taskModule or nil
     local activeTask = taskModule ~= nil and taskModule.getActiveTask ~= nil and taskModule:getActiveTask() or nil
     if activeTask ~= nil and activeTask.canMakeWay == true then
         self.heldTimer:timer(false)
-        return false
+        self.askedForWay = false
+        return
     end
-    return self.heldTimer:timer(held == true, ADDrivePathModule.MAX_HELD_TIME, dt)
+
+    self.heldTimer:timer(held == true, ADDrivePathModule.MAX_HELD_TIME, dt)
+    if held then
+        self:askForWayIfHeldLongEnough()
+    else
+        self.askedForWay = false
+    end
+end
+
+--- Ask the vehicles parked around us to move, once per held episode.
+---
+--- Once, not once per frame: a request carries its own lifetime and is not read until the parked
+--- vehicle's next waiting frame, so re-sending it would keep overwriting one it has not seen yet.
+--- The flag clears the moment we are released, so the next standstill may ask afresh.
+function ADDrivePathModule:askForWayIfHeldLongEnough()
+    if self.askedForWay or AutoDrive.askNearbyVehiclesToMakeWay == nil then
+        return
+    end
+    if self.heldTimer.elapsedTime < ADDrivePathModule.ASK_FOR_WAY_AFTER then
+        return
+    end
+    self.askedForWay = true
+    local asked = AutoDrive:askNearbyVehiclesToMakeWay(self.vehicle)
+    if asked > 0 then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO,
+            "ADDrivePathModule: held on the route - asked %d parked vehicle(s) to make way", asked)
+    end
 end
 
 function ADDrivePathModule:handleBeingStuck()
