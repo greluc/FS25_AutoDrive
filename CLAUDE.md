@@ -3,6 +3,23 @@
 A Farming Simulator 25 mod. Lua, no build step for the mod itself - the game loads the `.lua`
 files directly out of the zip.
 
+## Upstream is off limits unless asked
+
+This repository is a fork. `origin` is **greluc/FS25_AutoDrive** and that is the only remote to
+touch. Anything involving the upstream AutoDrive project happens **only on an explicit instruction
+from the user, for that specific action** - never on your own initiative, never as a step towards
+something else you were asked to do, and never because it seems obviously helpful.
+
+That covers, at minimum:
+
+- adding an upstream remote, or fetching, pulling, merging or rebasing from one
+- pushing any branch or tag to upstream
+- opening, editing or commenting on issues, pull requests or discussions there
+- reading upstream code or history to compare against
+
+A general instruction like "commit and push" means `origin`. It is not permission for anything
+above. If upstream genuinely looks like the right move, say so and wait to be told.
+
 ## The gate
 
 ```bash
