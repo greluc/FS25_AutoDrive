@@ -175,7 +175,7 @@ function AutoDriveVehicleData:saveToXMLFile(xmlFile, key)
         if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_EXTERNALINTERFACEINFO) then
             AutoDrive.debugPrint(self, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDriveVehicleData.saveToXMLFile actualparkDestination %s", tostring(actualparkDestination))
         end
-        local adKey = string.gsub(key, "FS25_AutoDrive.AutoDriveVehicleData", "AutoDrive")
+        local adKey = AutoDrive.getSavegameNodeKey(key, AutoDrive.ADVDSpecName)
         xmlFile:setValue(adKey .. "#parkDestination", actualparkDestination)
     end
 end

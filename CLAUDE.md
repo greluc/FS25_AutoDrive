@@ -32,6 +32,23 @@ Two independent checks, both must pass:
    (`fs-luau-compile`). FS25 runs Luau, not Lua 5.4, and the two disagree about what is valid.
 2. **TESTS** - every `tools/tests/test_*.lua`, run under Lua 5.4 as standalone luaunit suites.
 
+There is a third check that is deliberately **not** part of it:
+
+```bash
+python tools/check_globals.py [--cp <path to Courseplay_FS25>]
+```
+
+It reports whether this mod's global names and Courseplay's are still disjoint - 163 against 402,
+overlap zero as of 2026-08-17. That matters because the two mods are maintained together and a merge
+is on the table: mod environments fall through to `_G` by `__index`, so a collision in one shared
+environment is a silent last-definition-wins overwrite, with nothing logged. Keeping the sets
+disjoint is what keeps that option open, and it costs nothing to keep.
+
+It is separate from `check.py` because it needs the *other* repository, which is not always there,
+and a check that quietly passes when its input is missing is worse than no check. It exits 1 when it
+cannot find Courseplay, so wire it in per machine rather than making the suite depend on a sibling
+checkout.
+
 The suite loads **real mod files**, not copies. That only works because the codebase deliberately
 avoids Luau-only syntax, so the same source parses under both. Keep it that way: if a file stops
 loading under Lua 5.4 the test that covers it silently stops existing.

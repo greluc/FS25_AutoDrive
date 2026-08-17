@@ -498,7 +498,7 @@ function AutoDrive:saveToXMLFile(xmlFile, key, usedModNames)
     if self.ad == nil or self.ad.stateModule == nil then
         return
     end
-    local adKey = string.gsub(key, "FS25_AutoDrive.AutoDrive", "AutoDrive")
+    local adKey = AutoDrive.getSavegameNodeKey(key, AutoDrive.ADSpecName)
 
     --if not xmlFile:hasProperty(key) then
         --xmlFile:setValue(adKey, {})
