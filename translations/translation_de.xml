@@ -78,6 +78,8 @@
 		<text name="AD_No_Refuel_Station"								text="konnte keine Tankstelle finden" />
 		<text name="AD_No_Repair_Station"								text="konnte keine Werkstatt finden für:" />
 		<text name="AD_Wrong_Mode_takeover_from_CP"					text="Falscher AD-Modus für Arbeit mit CP" />
+		<text name="AD_CP_could_not_start"						text="Courseplay konnte den Job nicht starten" />
+		<text name="AD_CP_too_far_from_start"					text="Zu weit vom ersten Marker entfernt für die Übergabe an Courseplay" />
 		<text name="AD_Unable_to_start_AIJob"							text="Der KI-Helfer kann nicht gestartet werden." />
 		<text name="AD_AIJob_active"									text="Der KI-Helfer ist noch aktiv!" />
 		<text name="AD_MODE_DRIVETO"									text="Fahren" />

@@ -78,6 +78,8 @@
 		<text name="AD_No_Refuel_Station"								text="kan ikke finde tankstation til:" />
 		<text name="AD_No_Repair_Station"								text="kan ikke finde værksted til:" />
 		<text name="AD_Wrong_Mode_takeover_from_CP"					text="Forkert AD indstilling til at virke med CP" />
+		<text name="AD_CP_could_not_start"						text="Courseplay could not start the job" />
+		<text name="AD_CP_too_far_from_start"					text="Too far from the first marker to hand over to Courseplay" />
 		<text name="AD_Unable_to_start_AIJob"							text="Kan ikke starte AI-medarbejder" />
 		<text name="AD_AIJob_active"									text="AI-medarbejder er stadig igang!" />
 		<text name="AD_MODE_DRIVETO"									text="Kør" />

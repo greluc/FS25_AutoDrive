@@ -35,8 +35,16 @@ AutoDrive.MODE_BGA = 6
 -- Before this existed the two mods probed each other function by function and a rename simply
 -- meant a feature stopped working, silently.
 --
+-- The number is a label for bug reports, NOT a gate. Every capability on both sides is discovered
+-- by probing for the function by name, and it has to stay that way: the moment one is derived from
+-- this number instead, a player who updates only one of the two mods loses the other half with no
+-- way of finding out. Courseplay logs the resolved set at load; that is what the version is for.
+--
 -- 1: requestCourseplayProximity, requestBackupForReversingCombine, onCpHarvesterStateChanged
-AutoDrive.INTERFACE_VERSION = 1
+-- 2: requestMakeWay opened to Courseplay (it already existed, nobody was calling it),
+--    cpReconfirmUnloaderRendezvous called during our approach so a harvester keeps waiting,
+--    StartCP/RestartCP read Courseplay's refusal and report it instead of dropping it
+AutoDrive.INTERFACE_VERSION = 2
 
 -- Two route targets closer than this count as "the same place". Used when deciding whether one
 -- AutoDrive vehicle may reserve its destination against another: protecting a shared target
