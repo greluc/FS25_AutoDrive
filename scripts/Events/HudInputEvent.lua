@@ -41,6 +41,14 @@ end
 
 function AutoDriveHudInputEventEvent:run(connection)
     if g_server ~= nil then
+        --- The vehicle comes off the wire as an object id and NetworkUtil.getObject answers nil for
+        --- one that has since been sold, or that this machine has not finished creating. Everything
+        --- below dereferences self.vehicle.ad.stateModule without asking, so a click timed against a
+        --- sale used to take the server down. AutoDrive already guards exactly this shape in
+        --- ExternalInterface:StopCP; the events never did.
+        if self.vehicle == nil or self.vehicle.ad == nil or self.vehicle.ad.stateModule == nil then
+            return
+        end
         if self.eventType == self.TYPE_FIRST_MARKER then
 			local currentFirstMarker = self.vehicle.ad.stateModule:getFirstMarkerId()
 			if currentFirstMarker > 0 and currentFirstMarker ~= self.value then

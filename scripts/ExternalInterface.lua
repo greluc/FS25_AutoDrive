@@ -242,36 +242,66 @@ function AutoDrive:getCombineOpenPipePercent(combine)	--for AIVE
 	return pipePercent
 end
 
+--- Hand a vehicle to Courseplay, and do something about it when Courseplay says no.
+---
+--- This used to call and walk away. Courseplay's start functions answer false on every failure path
+--- - no course, wrong implement, not on a field, validation refused - and answer WHY as a second
+--- return value, and all of that was dropped on the floor. The vehicle stood where AutoDrive parked
+--- it, engine running, button still lit, and nothing in the log, the HUD or a notification said
+--- anything at all. The player found a machine standing in a field and had to work out why.
+---
+--- On a refusal: tell the player what Courseplay said, put the button out so the HUD stops claiming
+--- a helper is coming, and clear restartCP so we do not try the same handover again on the next
+--- opportunity.
+---@param vehicle table
+---@param what string for the log line
+---@return boolean true if Courseplay took the job
+local function passToCourseplay(vehicle, what)
+    local start = vehicle.startCpAtLastWp or vehicle.startCpALastWp
+    if start == nil then
+        AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO,
+                "AutoDrive:" .. what .. " - Not possible. CP interface not found")
+        return false
+    end
+    local started, message = start(vehicle)
+    if started then
+        return true
+    end
+    AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO,
+            "AutoDrive:" .. what .. " - Courseplay refused: %s", tostring(message))
+    if vehicle.ad ~= nil then
+        vehicle.ad.restartCP = false
+        if vehicle.ad.stateModule ~= nil then
+            vehicle.ad.stateModule:setStartHelper(false)
+            AutoDriveMessageEvent.sendMessageOrNotification(vehicle, ADMessagesManager.messageTypes.ERROR,
+                    "$l10n_AD_Driver_of; %s: %s", 5000, vehicle.ad.stateModule:getName(),
+                    message or g_i18n:getText("AD_CP_could_not_start"))
+        end
+    end
+    return false
+end
+
 -- start CP at first wayPoint
 function AutoDrive:StartCP(vehicle)
-    if vehicle == nil then 
-        return 
+    if vehicle == nil then
+        return false
     end
     AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:StartCP...")
-    -- if vehicle.startCpAtFirstWp ~= nil then
-        -- vehicle:startCpAtFirstWp()
-    if vehicle.startCpAtLastWp ~= nil then
-        vehicle:startCpAtLastWp()
-    elseif vehicle.startCpALastWp ~= nil then
-        vehicle:startCpALastWp()
-    else
-        AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:StartCP - Not possible. CP interface not found")
-    end
+    -- Named StartCP and documented as starting at the first waypoint, but the first-waypoint call
+    -- has been commented out for a long time and this starts at the last one, exactly like
+    -- RestartCP. Left as it is deliberately: passToExternalMod_CP branches between the two and
+    -- changing what StartCP does would change where every handed-over job resumes. The names lie;
+    -- the behaviour is what players have.
+    return passToCourseplay(vehicle, "StartCP")
 end
 
 -- restart CP to continue
 function AutoDrive:RestartCP(vehicle)
-    if vehicle == nil then 
-        return 
+    if vehicle == nil then
+        return false
     end
     AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:RestartCP...")
-    if vehicle.startCpAtLastWp ~= nil then
-        vehicle:startCpAtLastWp()
-    elseif vehicle.startCpALastWp ~= nil then
-        vehicle:startCpALastWp()
-    else
-        AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:RestartCP - Not possible. CP interface not found")
-    end
+    return passToCourseplay(vehicle, "RestartCP")
 end
 
 -- stop CP if it is active
@@ -303,6 +333,62 @@ function AutoDrive:StopCP(vehicle)
             AutoDrive.debugPrint(vehicleToCheck, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive:StopCP - Not possible. CP interface not found")
         end
     end
+end
+
+------------------------------------------------------------------------------------------------------------------------
+--- C5: taking a Courseplay vehicle away for an errand, and giving it back
+---
+--- The manual refuel and repair buttons stop Courseplay and run the vehicle to a station. The
+--- automatic twins - onCpFuelEmpty and onCpBroken - hand it back afterwards. The manual ones never
+--- did, and two separate things had to be put back for that to work:
+---
+---   the start-helper flag, which StopCP clears and which the handover gate in
+---   passToExternalMod_CP requires, and
+---
+---   the mode, which the errand overwrites with MODE_DRIVETO. That one is easy to miss because
+---   nothing fails at the time: the vehicle drives to the station and refuels perfectly well. It
+---   fails later, at the next onCpFull, when handleCPFieldWorker finds MODE_DRIVETO is not in
+---   modesToStartFromCP, reports Wrong_Mode and disarms the button - a full harvester parked in a
+---   field, one errand after the fact.
+------------------------------------------------------------------------------------------------------------------------
+
+--- Remember that Courseplay was driving, before an errand takes the vehicle away.
+---@return boolean true if there is something to give back later
+function AutoDrive:rememberCpBeforeErrand(vehicle)
+    if vehicle == nil or vehicle.ad == nil or vehicle.ad.stateModule == nil then
+        return false
+    end
+    vehicle.ad.cpErrandReturn = nil
+    if vehicle.ad.stateModule:getUsedHelper() ~= ADStateModule.HELPER_CP
+            or not vehicle.ad.stateModule:getStartHelper() then
+        -- not a Courseplay vehicle, or the player had already switched Courseplay off; the errand
+        -- is then just an errand and there is nothing to return to
+        return false
+    end
+    vehicle.ad.cpErrandReturn = { mode = vehicle.ad.stateModule:getMode() }
+    AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO,
+            "AutoDrive:rememberCpBeforeErrand mode %s", tostring(vehicle.ad.cpErrandReturn.mode))
+    return true
+end
+
+--- Put back what the errand borrowed. Call before stopAutoDrive, which is where the handover to
+--- Courseplay actually happens.
+---@return boolean true if a Courseplay job was handed back
+function AutoDrive:restoreCpAfterErrand(vehicle)
+    if vehicle == nil or vehicle.ad == nil or vehicle.ad.stateModule == nil then
+        return false
+    end
+    local remembered = vehicle.ad.cpErrandReturn
+    if remembered == nil then
+        return false
+    end
+    vehicle.ad.cpErrandReturn = nil
+    vehicle.ad.stateModule:setMode(remembered.mode)
+    vehicle.ad.stateModule:setStartHelper(true)
+    vehicle.ad.restartCP = true
+    AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO,
+            "AutoDrive:restoreCpAfterErrand mode %s", tostring(remembered.mode))
+    return true
 end
 
 function AutoDrive:HoldDriving(vehicle)

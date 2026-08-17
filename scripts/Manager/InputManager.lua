@@ -477,6 +477,8 @@ function ADInputManager:input_parkVehicle(vehicle, farmId)
     local actualParkDestination = vehicle.ad.stateModule:getParkDestinationAtJobFinished()
     if actualParkDestination >= 1 then
         vehicle.ad.stateModule:setFirstMarker(actualParkDestination)
+        -- deliberately no rememberCpBeforeErrand here: parking is not a temporary errand. A vehicle
+        -- the player sent to park is meant to stay parked, not resume its Courseplay job on arrival.
         AutoDrive:StopCP(vehicle)
         if vehicle.ad.stateModule:isActive() then
             self:input_start_stop(vehicle, farmId) --disable if already active
@@ -540,6 +542,9 @@ function ADInputManager:input_refuelVehicle(vehicle, farmId)
     local refuelDestination = ADTriggerManager.getClosestRefuelDestination(vehicle, true)
     if refuelDestination ~= nil and refuelDestination >= 1 then
         -- vehicle.ad.stateModule:setFirstMarker(refuelDestination)
+        -- before StopCP clears the flag and setMode below overwrites the mode: this errand is
+        -- temporary and has to hand the vehicle back to Courseplay when it is done
+        AutoDrive:rememberCpBeforeErrand(vehicle)
         AutoDrive:StopCP(vehicle)
         if vehicle.ad.stateModule:isActive() then
             self:input_start_stop(vehicle, farmId) --disable if already active
@@ -561,6 +566,8 @@ function ADInputManager:input_repairVehicle(vehicle, farmId)
     AutoDrive.debugPrint(vehicle, AutoDrive.DC_VEHICLEINFO, "ADInputManager:input_repairVehicle ")
     local repairDestinationMarkerNodeID = AutoDrive:getClosestRepairTrigger(vehicle)
     if repairDestinationMarkerNodeID ~= nil then
+        -- same as the refuel errand above: temporary, so remember what to give back
+        AutoDrive:rememberCpBeforeErrand(vehicle)
         AutoDrive:StopCP(vehicle)
         if vehicle.ad.stateModule:isActive() then
             self:input_start_stop(vehicle, farmId) --disable if already active

@@ -67,6 +67,24 @@ function EmptyHarvesterTask:update(dt)
         self.state = EmptyHarvesterTask.STATE_REVERSING
     end
 
+    --- Tell a Courseplay harvester we are still coming, for as long as we are still coming.
+    ---
+    --- A Courseplay harvester that stops at the end of a row gives an unloader thirty seconds and
+    --- only its own unloaders could renew that. We are dispatched at about five seconds in, so path
+    --- planning plus the whole approach drive had to fit inside twenty-five - which it usually does
+    --- not on any field worth harvesting. The harvester gave up, turned, and ran the next row with
+    --- its pipe in the fruit while we were still on our way.
+    ---
+    --- Repeated rather than fired once, like requestCourseplayProximity: the harvester's side
+    --- expires, and the harvester caps how many times it will renew, so getting stuck here cannot
+    --- hold it in place.
+    if self.state == EmptyHarvesterTask.STATE_PATHPLANNING or
+            self.state == EmptyHarvesterTask.STATE_DRIVING then
+        if self.combine ~= nil and self.combine.cpReconfirmUnloaderRendezvous ~= nil then
+            self.combine:cpReconfirmUnloaderRendezvous()
+        end
+    end
+
     if self.state == EmptyHarvesterTask.STATE_PATHPLANNING then
         if self.vehicle.ad.pathFinderModule:hasFinished() then
             self.wayPoints = self.vehicle.ad.pathFinderModule:getPath()

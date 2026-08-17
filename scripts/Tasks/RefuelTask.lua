@@ -86,6 +86,7 @@ function RefuelTask:update(dt)
 end
 
 function RefuelTask:abort()
+    self.vehicle.ad.cpErrandReturn = nil
     self.vehicle.ad.onRouteToRefuel = false
     self.refuelTrigger = nil
     self.wasRefuelling = false
@@ -95,6 +96,8 @@ function RefuelTask:finished()
     self.vehicle.ad.onRouteToRefuel = #AutoDrive.getRequiredRefuels(self.vehicle, self.vehicle.ad.onRouteToRefuel) > 0
     self.refuelTrigger = nil
     self.wasRefuelling = false
+    -- before stopAutoDrive, which is where the handover to Courseplay happens
+    AutoDrive:restoreCpAfterErrand(self.vehicle)
     self.vehicle:stopAutoDrive()
     self.vehicle.ad.stateModule:getCurrentMode():start()
     self.vehicle.ad.taskModule:setCurrentTaskFinished(ADTaskModule.DONT_PROPAGATE)

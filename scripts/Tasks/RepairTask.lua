@@ -82,12 +82,15 @@ function RepairTask:update(dt)
 end
 
 function RepairTask:abort()
+    self.vehicle.ad.cpErrandReturn = nil
     self.vehicle.ad.onRouteToRepair = false
 end
 
 function RepairTask:finished()    
     self.vehicle.ad.onRouteToRepair = false
 
+    -- before stopAutoDrive, which is where the handover to Courseplay happens
+    AutoDrive:restoreCpAfterErrand(self.vehicle)
     self.vehicle:stopAutoDrive()
     self.vehicle.ad.stateModule:getCurrentMode():start()
     self.vehicle.ad.taskModule:setCurrentTaskFinished(ADTaskModule.DONT_PROPAGATE)

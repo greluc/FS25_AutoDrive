@@ -78,6 +78,8 @@
 		<text name="AD_No_Refuel_Station"								text="no puede encontrar estación de repostaje" />
 		<text name="AD_No_Repair_Station"								text="no puede encontrar la estación de reparación:" />
 		<text name="AD_Wrong_Mode_takeover_from_CP"					text="Modo AD incorrecto para trabajar junto con CP" />
+		<text name="AD_CP_could_not_start"						text="Courseplay could not start the job" />
+		<text name="AD_CP_too_far_from_start"					text="Too far from the first marker to hand over to Courseplay" />
 		<text name="AD_Unable_to_start_AIJob"							text="No se puede iniciar Ayudante AI" />
 		<text name="AD_AIJob_active"									text="Ayudante AI sigue activo!" />
 		<text name="AD_MODE_DRIVETO"									text="Conducir" />

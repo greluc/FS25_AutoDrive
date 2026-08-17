@@ -78,6 +78,8 @@
 		<text name="AD_No_Refuel_Station"								text="не удалось найти заправочну станцію" />
 		<text name="AD_No_Repair_Station"								text="не зміг знайти ремонтну станцію для:" />
 		<text name="AD_Wrong_Mode_takeover_from_CP"					text="Неправильний режим AD для сумісної роботи з CP" />
+		<text name="AD_CP_could_not_start"						text="Courseplay could not start the job" />
+		<text name="AD_CP_too_far_from_start"					text="Too far from the first marker to hand over to Courseplay" />
 		<text name="AD_Unable_to_start_AIJob"							text="Неможливо запустити ШІ-робітника" />
 		<text name="AD_AIJob_active"									text="ШІ-робітник все ще активний!" />
 		<text name="AD_MODE_DRIVETO"									text="Перегін" />

@@ -1439,23 +1439,55 @@ function AutoDrive.passToExternalMod_CP(vehicle)
     -- TODO: check if this dirty hack works in future!
     local isControlled = vehicle:getIsControlled()
 
+    --- The other silent way this handover does not happen. More than 30 m from the first marker and
+    --- the whole block below is skipped: no start, no message, no log line. From the player's side
+    --- that is indistinguishable from Courseplay refusing, and both look like the vehicle simply
+    --- stopped somewhere. Say which one it was.
+    if not vehicle.ad.isStoppingWithError and distanceToStart >= 30
+            and vehicle.cpStartStopDriver ~= nil
+            and vehicle.ad.stateModule:getUsedHelper() == ADStateModule.HELPER_CP then
+        AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO,
+                "AutoDrive.passToExternalMod_CP too far from the first marker (%.1f m), not handing over",
+                distanceToStart)
+        AutoDriveMessageEvent.sendMessageOrNotification(vehicle, ADMessagesManager.messageTypes.WARN,
+                "$l10n_AD_Driver_of; %s: $l10n_AD_CP_too_far_from_start;", 5000,
+                vehicle.ad.stateModule:getName())
+        vehicle.ad.stateModule:setStartHelper(false)
+    end
+
     if not vehicle.ad.isStoppingWithError and distanceToStart < 30 then
         AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive.passToExternalMod_CP")
         -- CP button enabled
         if (vehicle.cpStartStopDriver ~= nil and vehicle.ad.stateModule:getUsedHelper() == ADStateModule.HELPER_CP) then
             -- CP button active
+            --- isControlled is forced off across the call because Courseplay refuses to start a job
+            --- on a vehicle a player is sitting in. Restoring it through pcall rather than after the
+            --- call: an error anywhere inside Courseplay's start used to skip the restore and leave
+            --- the vehicle permanently marked as not controlled, which breaks the player's own input
+            --- on it for the rest of the session. The error still surfaces, it just cannot take the
+            --- flag with it.
             vehicle.spec_enterable.isControlled = false
-            if vehicle.ad.restartCP == true then
+            local restart = vehicle.ad.restartCP == true
+            if restart then
                 -- restart CP to continue
                 vehicle.ad.restartCP = false
                 AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive.passToExternalMod_CP pass control to CP with restart")
-                AutoDrive:RestartCP(vehicle)
             else
                 -- start CP from beginning
                 AutoDrive.debugPrint(vehicle, AutoDrive.DC_EXTERNALINTERFACEINFO, "AutoDrive.passToExternalMod_CP pass control to CP with start")
-                AutoDrive:StartCP(vehicle)
             end
+            local ok, err = pcall(function()
+                if restart then
+                    AutoDrive:RestartCP(vehicle)
+                else
+                    AutoDrive:StartCP(vehicle)
+                end
+            end)
             vehicle.spec_enterable.isControlled = isControlled
+            if not ok then
+                Logging.error("AutoDrive.passToExternalMod_CP: handing over to Courseplay failed: %s",
+                        tostring(err))
+            end
         end
     end
 end
