@@ -70,6 +70,50 @@ AutoDrive.MAKE_WAY_VALID_TIME = 30000
 AutoDrive.MAKE_WAY_DISTANCE = 18
 AutoDrive.MAKE_WAY_ASK_RANGE = 35
 
+-- The savegame node every AutoDrive specialization reads from and writes to. A literal, on purpose:
+-- the schema registers "vehicles.vehicle(?).AutoDrive#..." (Specialization.lua) and the load side
+-- builds savegame.key .. ".AutoDrive" (Specialization.lua, AutoDriveVehicleData.lua), neither of
+-- which involves the mod name. Two specializations share this one node, which is why the name here
+-- is not derived from either of them.
+AutoDrive.SAVEGAME_NODE = "AutoDrive"
+
+--- Turn the key the game hands a specialization into the node AutoDrive actually stores under.
+---
+--- The game gives saveToXMLFile "vehicles.vehicle(N).<modName>.<SpecName>". The data has always
+--- lived under the plain "vehicles.vehicle(N).AutoDrive" instead, and the two write paths reached it
+--- by string.gsub with the mod name spelled out: "FS25_AutoDrive.AutoDrive" in Specialization.lua
+--- and "FS25_AutoDrive.AutoDriveVehicleData" in AutoDriveVehicleData.lua.
+---
+--- Two things were wrong with that, and the second one is why this is a function and not a fixed
+--- string. First, on any install whose folder is not called FS25_AutoDrive the pattern matches
+--- nothing, the write lands on an unregistered path, XMLFile:setValue silently does nothing, and
+--- every AutoDrive setting on every vehicle is lost at the next save - while the READ side, being
+--- name-free, keeps working, so the session it happens in looks completely normal. Second,
+--- string.gsub takes a Lua PATTERN, and the dot in the mod name is the any-character wildcard; the
+--- literal in Specialization.lua is also a prefix of the one in AutoDriveVehicleData.lua, so the
+--- obvious "just use g_currentModName" rewrite mangles the vehicle data key instead of fixing it.
+---
+--- Symmetric with the load side by construction: strip the specialization suffix the game added,
+--- append the node the schema declares.
+---@param key string the key passed to saveToXMLFile
+---@param specName string this specialization's registered name, e.g. AutoDrive.ADSpecName
+---@return string
+function AutoDrive.getSavegameNodeKey(key, specName)
+    if type(key) ~= "string" or type(specName) ~= "string" then
+        return key
+    end
+    local suffix = "." .. specName
+    if #key > #suffix and string.sub(key, -#suffix) == suffix then
+        return string.sub(key, 1, #key - #suffix) .. "." .. AutoDrive.SAVEGAME_NODE
+    end
+    -- Not the shape we were promised. Loud, because the whole point of this function is that the
+    -- failure it replaces was silent: a key we cannot convert means the data is about to go into a
+    -- path the schema does not know, and nothing else will say so.
+    Logging.error("[AD] AutoDrive.getSavegameNodeKey: cannot derive the savegame node from '%s' for specialization '%s'",
+            tostring(key), tostring(specName))
+    return key
+end
+
 -- Joining the way point network. How far to look for an entry point, how close another vehicle has
 -- to be before that point counts as occupied, and how many alternatives to weigh up before giving
 -- up - each one costs a graph search. Way points sit roughly four metres apart on a recorded route,

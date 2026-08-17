@@ -118,6 +118,10 @@ g_currentMission = {
 }
 
 function getUserProfileAppPath() return './' end
+
+--- Draw-distance scaling. AutoDrive.lua reads it at file scope for AutoDrive.drawDistance, so any
+--- test that loads that file needs it to exist before the first line runs.
+function getViewDistanceCoeff() return 1 end
 function fileExists() return false end
 function createFolder() end
 function getfenv() return _G end
