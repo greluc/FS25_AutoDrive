@@ -600,6 +600,26 @@ ADSpecialDrivingModule.FOLD_RECOVERY_MAX = 8000
 --- it - straightening to exactly the limit only folds again on the next metre.
 ADSpecialDrivingModule.FOLD_RECOVERED_FRACTION = 0.6
 
+--- Whether the way forward is clear enough to pull into.
+---
+--- The forward pull moves the rig in a direction nothing asked for. The argument that it is safe -
+--- it goes back into the space the tractor itself occupied moments earlier - is a good one and it is
+--- still only an argument, so this asks instead. frontSensor is the plain forward box; polling it
+--- has no side effects, unlike hasDetectedObstable, whose timers would be advanced twice a frame if
+--- this called it as well.
+---
+--- Blocked means the rig holds where it is rather than reversing deeper into the fold. That is no
+--- worse than the behaviour this replaces, and the fold clock keeps running, so it pulls forward as
+--- soon as whatever is in front has gone.
+function ADSpecialDrivingModule:canPullForward()
+    local sensors = self.vehicle.ad ~= nil and self.vehicle.ad.sensors or nil
+    local front = sensors ~= nil and sensors.frontSensor or nil
+    if front == nil or front.pollInfo == nil then
+        return true
+    end
+    return not front:pollInfo()
+end
+
 --- Whether reversing is still winning against the fold.
 ---
 --- Its own function so a test can drive the rule rather than restate it.
@@ -703,7 +723,16 @@ function ADSpecialDrivingModule:reverseToPoint(dt, maxSpeed)
     -- A rig folded past what steering can undo is not helped by more reversing. Pull forward
     -- instead; the trailer straightens itself, and the manoeuvre picks up where it left off.
     if self:updateFoldRecovery(dt, maxTrailerAngle) then
-        self:driveForward(dt)
+        if self:canPullForward() then
+            self:driveForward(dt)
+        else
+            -- Something is in front. Holding is not a fix, but it is better than reversing deeper
+            -- into a fold that reversing cannot undo, and the clock keeps running.
+            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO,
+                "reverse: folded to %.1f deg and the way forward is blocked - holding",
+                self.angleToTrailer or 0)
+            self:stopAndHoldVehicle(dt)
+        end
         self.lastAngleToPoint = self.angleToPoint
         return
     end

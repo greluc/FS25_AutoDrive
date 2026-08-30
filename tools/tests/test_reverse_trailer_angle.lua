@@ -311,4 +311,45 @@ function TestFoldRecovery:testTheControllerActsOnTheDecision()
         'and answering yes means pulling forward')
 end
 
+--- The forward pull moves the rig in a direction nothing asked for, so it asks whether the way is
+--- clear rather than arguing that it probably is.
+function TestFoldRecovery:testItRefusesToPullIntoSomething()
+    local module = folding()
+    module.vehicle.ad.sensors = { frontSensor = { pollInfo = function() return true end } }
+
+    lu.assertFalse(module:canPullForward(), 'something is in front - do not drive into it')
+end
+
+function TestFoldRecovery:testAClearWayForwardIsPullable()
+    local module = folding()
+    module.vehicle.ad.sensors = { frontSensor = { pollInfo = function() return false end } }
+
+    lu.assertTrue(module:canPullForward())
+end
+
+--- A rig without that sensor is not a reason to refuse the recovery entirely.
+function TestFoldRecovery:testAMissingSensorDoesNotBlockTheRecovery()
+    local module = folding()
+    module.vehicle.ad.sensors = nil
+    lu.assertTrue(module:canPullForward())
+
+    module.vehicle.ad.sensors = { }
+    lu.assertTrue(module:canPullForward())
+end
+
+--- And the controller has to consult it before driving.
+function TestFoldRecovery:testTheControllerChecksBeforePulling()
+    local f = io.open('../../scripts/Modules/SpecialDrivingModule.lua', 'r')
+    local src = f:read('*a')
+    f:close()
+
+    local decide = src:find('if self:updateFoldRecovery%(dt, maxTrailerAngle%) then')
+    local ask = src:find('if self:canPullForward%(%) then')
+    local hold = src:find('reverse: folded to %%.1f deg and the way forward is blocked')
+    lu.assertNotNil(decide, 'the controller has to ask whether the rig has folded past recovery')
+    lu.assertNotNil(ask, 'and then whether the way forward is clear')
+    lu.assertNotNil(hold, 'and hold rather than reverse deeper when it is not')
+    lu.assertTrue(ask > decide, 'the check belongs inside the recovery branch')
+end
+
 os.exit(lu.LuaUnit.run())
