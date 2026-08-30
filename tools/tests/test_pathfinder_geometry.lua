@@ -805,4 +805,86 @@ function TestCellConsultsVehicles:testAnEmptyCellIsStillDriveable()
 end
 
 
+------------------------------------------------------------------------------------------------------------------------
+--- The goal cell is part of the path, so somebody has to look at it
+---
+--- The moment reachedGoal says yes, update() writes came_from[nodeGoal] and appends nodeGoal to the
+--- path. The goal node is never expanded, so isDriveableAstar was never called on it - the last leg
+--- of every path was the one leg nobody checked. The log said it once it was asked to:
+--- "giving up - target restricted nil". Not false. Nil, as in never tested.
+---
+--- It bites hardest where it hurt: the target is a way point on the field course, which is where a
+--- queue forms, so the machine in the way is standing ON the goal.
+------------------------------------------------------------------------------------------------------------------------
+TestGoalCellIsChecked = {}
+
+function TestGoalCellIsChecked:setUp() TestSetup.reset() end
+
+local function searching(goalDriveable)
+    local p = pfm()
+    p.tested = 0
+    p.isDriveableAstar = function(self, cell)
+        self.tested = self.tested + 1
+        cell.isRestricted = not goalDriveable
+        return goalDriveable
+    end
+    return p
+end
+
+function TestGoalCellIsChecked:testAClearGoalIsAccepted()
+    local p = searching(true)
+
+    lu.assertTrue(p:reachedGoal({ x = 3, z = 0 }, { x = 4, z = 0 }))
+end
+
+function TestGoalCellIsChecked:testAGoalWithSomethingStandingInItIsNotAccepted()
+    local p = searching(false)
+
+    lu.assertFalse(p:reachedGoal({ x = 3, z = 0 }, { x = 4, z = 0 }),
+        'a path that ends inside a machine is not a path')
+end
+
+--- The distance rule is unchanged, and it is checked first: nothing far away costs a cell test.
+function TestGoalCellIsChecked:testSomethingFarAwayIsNotTheGoal()
+    local p = searching(true)
+
+    lu.assertFalse(p:reachedGoal({ x = 9, z = 0 }, { x = 4, z = 0 }))
+    lu.assertFalse(p:reachedGoal({ x = 4, z = 9 }, { x = 4, z = 0 }))
+    lu.assertEquals(p.tested, 0, 'the cheap test comes first')
+end
+
+--- Two cells apart is still out of reach, one is not. The boundary as it always was.
+function TestGoalCellIsChecked:testTheReachIsUnchanged()
+    local p = searching(true)
+
+    lu.assertTrue(p:reachedGoal({ x = 5, z = 1 }, { x = 4, z = 0 }))
+    lu.assertFalse(p:reachedGoal({ x = 6, z = 0 }, { x = 4, z = 0 }))
+end
+
+--- The goal is popped as a candidate many times over one search; testing the cell each time would
+--- pay for the most expensive check in the module over and over for an answer that cannot change.
+function TestGoalCellIsChecked:testTheGoalIsTestedOncePerSearch()
+    local p = searching(true)
+    local goal = { x = 4, z = 0 }
+
+    p:reachedGoal({ x = 3, z = 0 }, goal)
+    p:reachedGoal({ x = 3, z = 1 }, goal)
+    p:reachedGoal({ x = 4, z = 1 }, goal)
+
+    lu.assertEquals(p.tested, 1)
+end
+
+--- And it is tested from where the path would actually arrive, which is what the slope and heading
+--- checks inside isDriveableAstar read.
+function TestGoalCellIsChecked:testTheGoalIsTestedFromWhereWeArrive()
+    local p = searching(true)
+    local goal = { x = 4, z = 0 }
+    local current = { x = 3, z = 0 }
+
+    p:reachedGoal(current, goal)
+
+    lu.assertEquals(goal.from_node, current)
+end
+
+
 os.exit(lu.LuaUnit.run())

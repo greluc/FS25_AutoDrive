@@ -3363,12 +3363,35 @@ function PathFinderModule:setBlockedGoal()
     end
 end
 
+--- Close enough to the goal to stop searching - AND the goal itself actually driveable.
+---
+--- The second half was missing, and it is the reason a plan could end inside a machine. The goal
+--- node is never expanded: the moment this returns true, update() writes came_from[nodeGoal] and
+--- appends nodeGoal to the path. Nothing calls isDriveableAstar on it, ever. So the last leg of
+--- every path found this way was the one leg nobody looked at.
+---
+--- The log said so plainly once it was asked: "giving up - target restricted nil". Not false, nil -
+--- the field isDriveableAstar sets on its first line had never been set, because the cell had never
+--- been through it.
+---
+--- That matters most exactly where it hurt: the target is a way point on the field course, which is
+--- where a queue forms, so the machine standing in the way stands ON the goal. Reported from the
+--- game as a planned path running straight into the harvester.
+---
+--- Tested once and remembered. The cell is popped as a goal candidate many times over a search, and
+--- the answer only depends on the cell; the incoming direction it is tested with is whichever
+--- candidate got there first, which is the direction the path would actually arrive from.
 function PathFinderModule:reachedGoal(current, goal)
-    if math.abs(current.x - goal.x) < 2 and math.abs(current.z - goal.z) < 2 then
-        return true
-    else
+    if math.abs(current.x - goal.x) >= 2 or math.abs(current.z - goal.z) >= 2 then
         return false
     end
+    if goal.goalDriveable == nil then
+        if goal.from_node == nil then
+            goal.from_node = current
+        end
+        goal.goalDriveable = self:isDriveableAstar(goal) == true
+    end
+    return goal.goalDriveable
 end
 
 function PathFinderModule:setupNew(behindStartCell, startCell, targetCell, userdata)
