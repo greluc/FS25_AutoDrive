@@ -52,6 +52,7 @@ function ADCollSensor:onUpdate(dt)
     self.mask = self:getMask()
     local box = self:getBoxShape()
     self.newHit = false
+    self.newHitName = nil
 
     local offsetCompensation = math.max(-math.tan(box.rx) * box.size[3], 0)
     box.y = math.max(getTerrainHeightAtWorldPos(g_currentMission.terrainRootNode, box.x, 300, box.z), box.y) + offsetCompensation
@@ -65,6 +66,7 @@ function ADCollSensor:onUpdate(dt)
     -- mod's own dimension sensor relies on when it reads its hit count on the very next line, so
     -- there was nothing to wait for.
     self.hit = self.newHit
+    self.hitName = self.newHitName
     self:setTriggered(self.hit)
     self:onDrawDebug(box)
 end
@@ -85,9 +87,12 @@ function ADCollSensor:collisionTestCallback(transformId)
         if collisionObject ~= self and collisionObject ~= self.vehicle and not AutoDrive:checkIsConnected(self.vehicle:getRootVehicle(), collisionObject) then
             if unloadDriver == nil or (collisionObject ~= unloadDriver and (not AutoDrive:checkIsConnected(unloadDriver:getRootVehicle(), collisionObject))) then
                 self.newHit = true
+                self.newHitName = collisionObject.getName ~= nil
+                    and collisionObject:getName() or "unnamed vehicle"
             end
         end
     elseif self:isElementBlockingVehicle(transformId) then
         self.newHit = true
+        self.newHitName = "scenery"
     end
 end

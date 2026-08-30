@@ -555,6 +555,13 @@ function ADSensor:onDrawDebug(box)
     end
 end
 
+--- What the sensor last hit, for the log. A driver reporting only "something is in front of me" is
+--- why several standstills here took a round trip each to diagnose: a harvester, another AutoDrive
+--- vehicle, a parked trailer and a tree all look identical from outside.
+function ADSensor:getLastHitName()
+    return self.hitName
+end
+
 function ADSensor:pollInfo(forced, widthFactor, lengthFactor)
     self.executionDelay = self.executionDelay -1
     if self.executionDelay <= 0 or forced or AutoDrive.getDebugChannelIsSet(AutoDrive.DC_SENSORINFO) then

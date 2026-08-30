@@ -75,7 +75,8 @@ function ADCollisionDetectionModule:detectObstacle()
             end
             if (not frontSensorDynamicInBunkerArea) then
                 if AutoDrive.getDebugChannelIsSet(AutoDrive.DC_SENSORINFO) then
-                    AutoDrive.debugMsg(self.vehicle, "CDM: detectObstacle frontSensorDynamicShort:pollInfo -> return true")
+                    AutoDrive.debugMsg(self.vehicle, "CDM: detectObstacle frontSensorDynamicShort -> blocked by %s"
+                , tostring(self.vehicle.ad.sensors.frontSensorDynamicShort:getLastHitName() or "something unnamed"))
                 end
                 return true
             end

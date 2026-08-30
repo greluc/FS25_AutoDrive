@@ -36,6 +36,7 @@ function ADCollSensorSplit:onUpdate(dt)
 
 
     self.newHit = false
+    self.newHitName = nil
     self.boxes = nil
 
     if self.sensorParameters.minDynamicLengthForVehicles then
@@ -63,6 +64,7 @@ function ADCollSensorSplit:onUpdate(dt)
     -- scan's outcome cost a full ten frames on top of that throttle - measured at exactly ten in
     -- every phase. This is the sensor the driver is stopped on.
     self.hit = self.newHit
+    self.hitName = self.newHitName
     self:setTriggered(self.hit)
     self:onDrawDebug(self.boxes)
 end
@@ -83,10 +85,13 @@ function ADCollSensorSplit:collisionTestCallbackSplit(transformId)
         if collisionObject ~= self and collisionObject ~= self.vehicle and not AutoDrive:checkIsConnected(self.vehicle:getRootVehicle(), collisionObject) then
             if unloadDriver == nil or (collisionObject ~= unloadDriver and (not AutoDrive:checkIsConnected(unloadDriver:getRootVehicle(), collisionObject))) then
                 self.newHit = true
+                self.newHitName = collisionObject.getName ~= nil
+                    and collisionObject:getName() or "unnamed vehicle"
             end
         end
     elseif self:isElementBlockingVehicle(transformId) then
         self.newHit = true
+        self.newHitName = "scenery"
     end
 end
 
