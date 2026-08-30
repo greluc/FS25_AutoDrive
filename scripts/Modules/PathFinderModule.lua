@@ -117,6 +117,7 @@ end
 function PathFinderModule:reset()
     PathFinderModule.debugMsg(self.vehicle, "PFM:reset start")
     self.mask = AutoDrive.collisionMaskTerrain
+    self.obstacleExcluded = nil
     self.steps = 0
     self.grid = {}
     self.wayPoints = {}
@@ -161,7 +162,7 @@ function PathFinderModule:reset()
             "PP_UP_RIGHT",
             "unknown"
         }
-        self.minTurnRadius = AutoDrive.getDriverRadius(self.vehicle)
+        self.minTurnRadius = math.max(AutoDrive.getDriverRadius(self.vehicle), self:getTrainTurnRadius())
         self:resetDubins()
         self.isNewPF = true
     else
@@ -184,7 +185,9 @@ function PathFinderModule:reset()
             "PP_UP_LEFT",
             "unknown"
         }
-        self.minTurnRadius = AutoDrive.getDriverRadius(self.vehicle) * 2 / 3
+        -- The old pathfinder plans even tighter than the new one, so the rig's own requirement
+        -- matters here at least as much. Same floor, applied to both.
+        self.minTurnRadius = math.max(AutoDrive.getDriverRadius(self.vehicle) * 2 / 3, self:getTrainTurnRadius())
         self.isNewPF = false
     end
 end
@@ -938,6 +941,17 @@ function PathFinderModule:update(dt)
     end
 
     if self.completelyBlocked or self.targetBlocked or self.steps > (self.max_pathfinder_steps) then
+        -- What the search actually ran into. "It gave up" is not a diagnosis: a target standing in a
+        -- wall, a target that is fine but walled in, and a search that simply ran long all end here
+        -- and want different answers. Read-only - the cell's own flags as the sweep left them.
+        if self.targetCell ~= nil then
+            PathFinderModule.debugMsg(self.vehicle, "PFM:update giving up - target %d,%d restricted %s collision %s, last obstacle %s"
+                , self.targetCell.x, self.targetCell.z
+                , tostring(self.targetCell.isRestricted)
+                , tostring(self.targetCell.hasCollision)
+                , tostring(self.lastCollisionName or "none")
+            )
+        end
         --[[ We need some better logic here.
         Some situations might be solved by the module itself by either
             a) 'fallBackMode (ignore fruit and field restrictions)'
@@ -1870,6 +1884,81 @@ function PathFinderModule:drawDebugForCreatedRoute()
             end
         end
     end
+end
+
+-- A vehicle STANDING in the cell, as opposed to a vehicle whose route crosses it.
+--
+-- The planner had no notion of the first one. checkForVehiclePathInBox, the only vehicle test it
+-- ran, walks other vehicles' waypoint routes - and only for vehicles that are AutoDrive-active and
+-- on a pathfinder route. A harvester parked on the headland is in none of those: not active under
+-- AutoDrive, no route, and its BODY was never compared against anything. So it was not something to
+-- plan around, only something to brake for once you had already driven at it.
+--
+-- Which is exactly what the player saw: a path that "differs hardly at all from the field course"
+-- and arrives at the harvester again, running through its left side and its maize header. The mod
+-- already owns the right test - checkForVehiclesInBox is what CollisionDetectionModule uses every
+-- frame while driving, with its own 50 m cull, its exclusion of the vehicle's own implements and of
+-- conveyors and trains. Nothing ever called it from the planner.
+--
+-- The target vehicle is spared, on the same grounds as in collisionTestCallback: a path to a
+-- harvester's pipe ends alongside the harvester, so counting it as a wall walls in the destination.
+--
+-- The cell corners carry no y - getCorners builds them in the plane - and checkForVehiclesInBox
+-- compares heights, so the ground height under the cell is filled in here. Passing the bare corners
+-- would arithmetic-error on nil the first time a vehicle came within fifty metres.
+function PathFinderModule:vehicleBlockingCell(cell, corners)
+    if AutoDrive.checkForVehiclesInBox == nil or corners == nil then
+        return false
+    end
+    if self.obstacleExcluded == nil then
+        self.obstacleExcluded = { self.vehicle }
+        if self.targetVehicle ~= nil then
+            self.obstacleExcluded[#self.obstacleExcluded + 1] = self.targetVehicle
+        end
+    end
+    local y = cell.shapeDefinition ~= nil and cell.shapeDefinition.y or 0
+    local box = {}
+    for i, corner in ipairs(PathFinderModule.cornersAsPolygon(corners)) do
+        box[i] = { x = corner.x, y = y, z = corner.z }
+    end
+    return AutoDrive.checkForVehiclesInBox(box, self.obstacleExcluded) == true
+end
+
+-- The tightest corner the RIG can hold, as opposed to the one the tractor could.
+--
+-- A tractor going round a bend of radius R pulls its trailer at a steady hitch angle of roughly
+-- atan(L / R), L being the distance from the hitch to the trailer's axle. Turn tighter and that
+-- angle keeps growing until the drawbar hits its stop and the trailer corners the tractor. So the
+-- rig's minimum radius is L / tan(maximum hitch angle), and planning with anything smaller puts
+-- corners in the route that the vehicle physically cannot drive.
+--
+-- Which is what was happening. getDriverRadius asks the engine for
+-- getAttachedImplementsMaxTurnRadius, and that reads the aiTurnRadiusLimitation declared in a
+-- vehicle's XML - which trailers almost never declare, so it answers -1 and the radius falls back to
+-- the TRACTOR's own. Reported from the game twice: first while reversing, then, once this got used
+-- for more paths, driving forwards as well - the trailer hits the tractor in the bend, the rig stops
+-- following the planned course, and the driver corrects or gives up.
+--
+-- L is approximated by the length of what is being towed. The real distance is hitch to axle, which
+-- is shorter, so this errs towards gentler corners on purpose: the cost of a corner too wide is a
+-- longer path, the cost of one too tight is a rig that cannot drive it at all. MAX_TRAILER_ANGLE is
+-- the same limit the reversing code steers by, so the two agree by construction.
+function PathFinderModule:getTrainTurnRadius()
+    local vehicle = self.vehicle
+    if vehicle == nil or AutoDrive.getTractorTrainLength == nil then
+        return 0
+    end
+    local trainLength = AutoDrive.getTractorTrainLength(vehicle, true, false)
+    local tractorLength = vehicle.size ~= nil and vehicle.size.length or nil
+    if trainLength == nil or tractorLength == nil then
+        return 0
+    end
+    local towedLength = trainLength - tractorLength
+    if towedLength <= 0 then
+        return 0   -- nothing towed, the tractor's own radius is the honest answer
+    end
+    local limit = ADSpecialDrivingModule ~= nil and ADSpecialDrivingModule.MAX_TRAILER_ANGLE or 40
+    return towedLength / math.tan(math.rad(limit))
 end
 
 -- Room to leave beside the rig when testing a cell, on top of its measured half width.
@@ -2940,6 +3029,14 @@ function PathFinderModule:isDriveableAstar(cell)
                 end
             end
         end
+    end
+
+    if not cell.isRestricted and self:vehicleBlockingCell(cell, corners) then
+        cell.hasCollision = true
+        cell.isRestricted = true
+        PathFinderModule.debugMsg(self.vehicle, "PFM:isDriveableAstar vehicle standing in cell xz %d,%d"
+            , cell.x, cell.z
+        )
     end
 
     if not cell.isRestricted and cell.incoming ~= nil then

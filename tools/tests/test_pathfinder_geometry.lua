@@ -16,6 +16,9 @@ require('SortedQueue')
 require('Dubins')
 require('PathFinderUtils')
 require('PathFinderModule')
+-- for MAX_TRAILER_ANGLE: the planner and the reversing code must agree on the hitch limit,
+-- so the test reads the real constant rather than restating it
+require('SpecialDrivingModule')
 
 --- A pathfinder instance with just enough state for the geometry helpers.
 local function pfm(overrides)
@@ -435,5 +438,282 @@ function TestCollisionCallback:testBothEntryPointsRecordTheVehicleTheyAreDriving
     contains('self.targetVehicle = nil',
         'and it has to be let go when the chase ends, or the next search spares a stranger')
 end
+
+
+------------------------------------------------------------------------------------------------------------------------
+--- A vehicle STANDING in the way, as opposed to one whose route crosses it
+---
+--- The planner ran exactly one vehicle test, checkForVehiclePathInBox, and that walks other
+--- vehicles' waypoint ROUTES - only for vehicles that are AutoDrive-active and on a pathfinder path.
+--- A harvester parked on the headland is none of those, and its body was never compared against
+--- anything, so it was not an obstacle to plan around at all.
+---
+--- Measured: in a 62 MB log the harvester blocked exactly ONE cell, while buildings blocked
+--- hundreds. Reported by the player in the same words - the planned path "differs hardly at all
+--- from the field course", arrives at the harvester again and runs through its left half and its
+--- maize header.
+------------------------------------------------------------------------------------------------------------------------
+TestVehicleAsObstacle = {}
+
+function TestVehicleAsObstacle:setUp()
+    TestSetup.reset()
+    self.savedCheck = AutoDrive.checkForVehiclesInBox
+    self.seen = {}
+    local seen = self.seen
+    AutoDrive.checkForVehiclesInBox = function(box, excluded)
+        seen.box = box
+        seen.excluded = excluded
+        return seen.answer == true
+    end
+end
+
+function TestVehicleAsObstacle:tearDown()
+    AutoDrive.checkForVehiclesInBox = self.savedCheck
+end
+
+local function cellWithCorners()
+    local cell = { x = 0, z = 0, shapeDefinition = { y = 42 } }
+    local corners = {
+        { x = 0, z = 0 }, { x = 4, z = 0 }, { x = 0, z = 4 }, { x = 4, z = 4 },
+    }
+    return cell, corners
+end
+
+function TestVehicleAsObstacle:testAStandingVehicleBlocksTheCell()
+    local p = pfm()
+    self.seen.answer = true
+    local cell, corners = cellWithCorners()
+
+    lu.assertTrue(p:vehicleBlockingCell(cell, corners))
+end
+
+function TestVehicleAsObstacle:testAnEmptyCellIsNotBlocked()
+    local p = pfm()
+    self.seen.answer = false
+    local cell, corners = cellWithCorners()
+
+    lu.assertFalse(p:vehicleBlockingCell(cell, corners))
+end
+
+--- The corners are built in the plane and the check compares heights, so the ground height has to be
+--- filled in. Without it the first vehicle within fifty metres makes it error on nil.
+function TestVehicleAsObstacle:testTheBoxCarriesTheGroundHeight()
+    local p = pfm()
+    local cell, corners = cellWithCorners()
+
+    p:vehicleBlockingCell(cell, corners)
+
+    for _, corner in ipairs(self.seen.box) do
+        lu.assertEquals(corner.y, 42)
+    end
+end
+
+function TestVehicleAsObstacle:testOurOwnRigIsNotAnObstacleToItself()
+    local p = pfm()
+    local cell, corners = cellWithCorners()
+
+    p:vehicleBlockingCell(cell, corners)
+
+    lu.assertEquals(self.seen.excluded[1], p.vehicle)
+end
+
+--- Same rule as collisionTestCallback: a path to a harvester's pipe ends alongside the harvester, so
+--- counting it as a wall walls in the destination.
+function TestVehicleAsObstacle:testTheVehicleWeAreDrivingToIsSpared()
+    local p = pfm()
+    p.targetVehicle = TestSetup.vehicle({ id = 99 })
+    local cell, corners = cellWithCorners()
+
+    p:vehicleBlockingCell(cell, corners)
+
+    lu.assertEquals(#self.seen.excluded, 2)
+    lu.assertEquals(self.seen.excluded[2], p.targetVehicle)
+end
+
+function TestVehicleAsObstacle:testWithoutATargetOnlyOurselvesAreSpared()
+    local p = pfm()
+    local cell, corners = cellWithCorners()
+
+    p:vehicleBlockingCell(cell, corners)
+
+    lu.assertEquals(#self.seen.excluded, 1)
+end
+
+
+------------------------------------------------------------------------------------------------------------------------
+--- The corner the RIG can hold, not the one the tractor could
+---
+--- getDriverRadius asks the engine for getAttachedImplementsMaxTurnRadius, which reads the
+--- aiTurnRadiusLimitation a vehicle declares in its XML. Trailers almost never declare one, so it
+--- answers -1 and the planned radius is the TRACTOR's. Reported from the game twice: the trailer
+--- reaches the tractor in the bend, first while reversing and then driving forwards too, and the rig
+--- stops following the course it was given.
+------------------------------------------------------------------------------------------------------------------------
+TestRigTurnRadius = {}
+
+function TestRigTurnRadius:setUp()
+    TestSetup.reset()
+    self.savedLength = AutoDrive.getTractorTrainLength
+end
+
+function TestRigTurnRadius:tearDown()
+    AutoDrive.getTractorTrainLength = self.savedLength
+end
+
+--- A tractor at radius R pulls its trailer at a hitch angle of about atan(L / R), so the tightest
+--- radius it can hold is L / tan(max angle).
+function TestRigTurnRadius:testATrailerNeedsAWiderCornerThanTheTractor()
+    local p = pfm()
+    p.vehicle.size = { length = 6, width = 3 }
+    AutoDrive.getTractorTrainLength = function() return 16 end   -- 10 m of trailer
+
+    local expected = 10 / math.tan(math.rad(ADSpecialDrivingModule.MAX_TRAILER_ANGLE))
+    lu.assertAlmostEquals(p:getTrainTurnRadius(), expected, 0.001)
+    lu.assertTrue(p:getTrainTurnRadius() > 8, 'and that is wider than the tractor alone')
+end
+
+function TestRigTurnRadius:testASoloTractorKeepsItsOwnRadius()
+    local p = pfm()
+    p.vehicle.size = { length = 6, width = 3 }
+    AutoDrive.getTractorTrainLength = function() return 6 end
+
+    lu.assertEquals(p:getTrainTurnRadius(), 0, 'nothing towed, nothing to widen for')
+end
+
+function TestRigTurnRadius:testAnUnmeasurableRigDoesNotWidenAnything()
+    local p = pfm()
+    p.vehicle.size = nil
+    AutoDrive.getTractorTrainLength = function() return 16 end
+
+    lu.assertEquals(p:getTrainTurnRadius(), 0)
+end
+
+--- A longer trailer needs a wider corner, monotonically. The rule is the point, not the constant.
+function TestRigTurnRadius:testALongerTrailerNeedsAWiderCorner()
+    local p = pfm()
+    p.vehicle.size = { length = 6, width = 3 }
+    AutoDrive.getTractorTrainLength = function() return 12 end
+    local short = p:getTrainTurnRadius()
+    AutoDrive.getTractorTrainLength = function() return 22 end
+
+    lu.assertTrue(p:getTrainTurnRadius() > short)
+end
+
+
+--- And the planner has to actually USE it. reset() is where the search picks its cell size, and the
+--- rig's requirement has to beat the tractor's radius there or none of the above reaches a path.
+function TestRigTurnRadius:testResetPlansWithTheWiderOfTheTwo()
+    local savedRadius = AutoDrive.getDriverRadius
+    local savedSetting = AutoDrive.getSetting
+    local savedMask = AutoDrive.collisionMaskTerrain
+    AutoDrive.getDriverRadius = function() return 7 end
+    AutoDrive.getSetting = function(name) if name == 'Pathfinder' then return 1 end return 0 end
+    AutoDrive.collisionMaskTerrain = 0
+    AutoDrive.getTractorTrainLength = function() return 16 end
+
+    local p = setmetatable({}, { __index = PathFinderModule })
+    p.vehicle = TestSetup.vehicle()
+    p.vehicle.size = { length = 6, width = 3, height = 4 }
+    p:reset()
+
+    AutoDrive.getDriverRadius = savedRadius
+    AutoDrive.getSetting = savedSetting
+    AutoDrive.collisionMaskTerrain = savedMask
+
+    lu.assertAlmostEquals(p.minTurnRadius, 10 / math.tan(math.rad(ADSpecialDrivingModule.MAX_TRAILER_ANGLE)), 0.001,
+        'the rig needs a wider corner than the tractor, so the rig decides')
+    lu.assertTrue(p.minTurnRadius > 7)
+end
+
+--- And the same for the other pathfinder, which plans tighter still.
+function TestRigTurnRadius:testTheOldPathfinderAlsoRespectsTheRig()
+    local savedRadius = AutoDrive.getDriverRadius
+    local savedSetting = AutoDrive.getSetting
+    local savedMask = AutoDrive.collisionMaskTerrain
+    AutoDrive.getDriverRadius = function() return 7 end
+    AutoDrive.getSetting = function(name) if name == 'Pathfinder' then return 0 end return 0 end
+    AutoDrive.collisionMaskTerrain = 0
+    AutoDrive.getTractorTrainLength = function() return 16 end
+
+    local p = setmetatable({}, { __index = PathFinderModule })
+    p.vehicle = TestSetup.vehicle()
+    p.vehicle.size = { length = 6, width = 3, height = 4 }
+    p:reset()
+
+    AutoDrive.getDriverRadius = savedRadius
+    AutoDrive.getSetting = savedSetting
+    AutoDrive.collisionMaskTerrain = savedMask
+
+    lu.assertTrue(p.minTurnRadius > 7 * 2 / 3,
+        'two thirds of the tractor radius is tighter still, and the trailer does not care')
+end
+
+
+------------------------------------------------------------------------------------------------------------------------
+--- The cell test has to ask. A rule nothing calls is not a rule.
+------------------------------------------------------------------------------------------------------------------------
+TestCellConsultsVehicles = {}
+
+function TestCellConsultsVehicles:setUp()
+    TestSetup.reset()
+    self.saved = {
+        onField = AutoDrive.checkIsOnField,
+        inBox = AutoDrive.checkForVehiclesInBox,
+        pathInBox = AutoDrive.checkForVehiclePathInBox,
+        overlap = _G.overlapBox,
+    }
+    AutoDrive.checkIsOnField = function() return true end
+    AutoDrive.checkForVehiclePathInBox = function() return false end
+    _G.overlapBox = function() return 0 end
+end
+
+function TestCellConsultsVehicles:tearDown()
+    AutoDrive.checkIsOnField = self.saved.onField
+    AutoDrive.checkForVehiclesInBox = self.saved.inBox
+    AutoDrive.checkForVehiclePathInBox = self.saved.pathInBox
+    _G.overlapBox = self.saved.overlap
+end
+
+--- A pathfinder with every OTHER check in isDriveableAstar neutralised, so the only thing that can
+--- refuse the cell is a vehicle standing in it.
+local function driveable()
+    local p = pfm()
+    p.restrictToField = false
+    p.avoidFruitSetting = false
+    p.isSecondChasingVehicle = false
+    p.vectorX = { x = 1, z = 0 }
+    p.vectorZ = { x = 0, z = 1 }
+    p.collisionhits = 0
+    p.getShapeDefByDirectionType_New = function(_, cell)
+        return { x = cell.x, y = 0, z = cell.z, angleRad = 0, widthX = 1, widthZ = 1, height = 3 }
+    end
+    p.checkSlopeAngle = function() return false, 0 end
+    p.getOffTrackingOffset = function() return nil end
+    p.checkForFruitInArea = function() end
+    return p
+end
+
+function TestCellConsultsVehicles:testACellWithAVehicleStandingInItIsRefused()
+    local p = driveable()
+    AutoDrive.checkForVehiclesInBox = function() return true end
+    local cell = { x = 2, z = 0, from_node = { x = 1, z = 0 } }
+
+    p:isDriveableAstar(cell)
+
+    lu.assertTrue(cell.isRestricted,
+        'a machine parked on the route is something to plan around, not to arrive at')
+    lu.assertTrue(cell.hasCollision)
+end
+
+function TestCellConsultsVehicles:testAnEmptyCellIsStillDriveable()
+    local p = driveable()
+    AutoDrive.checkForVehiclesInBox = function() return false end
+    local cell = { x = 2, z = 0, from_node = { x = 1, z = 0 } }
+
+    p:isDriveableAstar(cell)
+
+    lu.assertFalse(cell.isRestricted)
+end
+
 
 os.exit(lu.LuaUnit.run())
