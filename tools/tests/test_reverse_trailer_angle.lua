@@ -352,4 +352,40 @@ function TestFoldRecovery:testTheControllerChecksBeforePulling()
     lu.assertTrue(ask > decide, 'the check belongs inside the recovery branch')
 end
 
+
+--- Calibration against the real fleet, not against numbers invented for a fixture.
+---
+--- Widths read out of the shipped vehicle data: 267 vehicles carry an input attacher joint, their
+--- widths run from 1.5 m to 16.6 m and the median is exactly 3.0 m. Those are the numbers this
+--- formula has to behave sensibly across, and the spread is the whole argument against a fixed
+--- forty degrees - the same gap gives a standard tipper 34 degrees and a header 20.
+function TestRigClearance:testItIsCalibratedForRealMachines()
+    -- rig() takes spacing between roots; hulls of 3 m behind the tractor and 3.5 m ahead of the
+    -- trailer, so spacing minus 6.5 is the gap.
+    local median = rig(7.5, 3, 3.5, 1.5)          -- 3.0 m wide trailer, 1 m of gap
+    lu.assertAlmostEquals(median:getRigClearanceAngle(), 33.7, 0.5,
+        'the commonest trailer in the game with a metre of room')
+
+    local wide = rig(9.5, 3, 3.5, 8.3)            -- a 16.6 m header, 3 m of gap
+    lu.assertTrue(wide:getRigClearanceAngle() < 25,
+        'sixteen metres across cannot swing as far as three metres across')
+
+    local narrow = rig(9.5, 3, 3.5, 0.75)         -- 1.5 m wide, 3 m of gap
+    lu.assertTrue(narrow:getRigClearanceAngle() > 70,
+        'a narrow trailer on a long drawbar is limited by the controller, not by its own shape')
+end
+
+--- Across that whole real range the answer stays an angle, never a nonsense number.
+function TestRigClearance:testItStaysSaneAcrossTheWholeFleet()
+    for _, halfWidth in ipairs({ 0.75, 1.25, 1.5, 2.0, 3.5, 5.7, 8.3 }) do
+        for _, spacing in ipairs({ 6.5, 7.0, 8.0, 10.0, 14.0 }) do
+            local module = rig(spacing, 3, 3.5, halfWidth)
+            local angle = module:getRigClearanceAngle()
+            lu.assertNotNil(angle)
+            lu.assertTrue(angle >= 0 and angle < 90, string.format(
+                'half width %.2f, spacing %.1f gave %.1f degrees', halfWidth, spacing, angle))
+        end
+    end
+end
+
 os.exit(lu.LuaUnit.run())
