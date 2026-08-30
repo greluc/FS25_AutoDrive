@@ -242,13 +242,18 @@ function TestFoldRecovery:testItFoldsBothWays()
     lu.assertFalse(ADSpecialDrivingModule.isFoldGettingWorse(-45, -50, 40))
 end
 
+--- Returns the last answer, and separately whether it EVER pulled forward. The difference matters:
+--- a pull that starts, runs its length and gives up ends on false, so asking only the last answer
+--- would call that "never pulled" - which is how the first version of the solo test passed against
+--- a version that did pull.
 local function run(module, angles, dt)
-    local pulling = nil
+    local pulling, everPulled = nil, false
     for _, a in ipairs(angles) do
         module.angleToTrailer = a
         pulling = module:updateFoldRecovery(dt or 100, 40)
+        everPulled = everPulled or pulling == true
     end
-    return pulling
+    return pulling, everPulled
 end
 
 --- One bad frame is not a fold. It has to persist.
@@ -488,6 +493,64 @@ function TestRigClearance:testTheSameTrailerIsNotRemeasured()
     MockEngine.nodePositions['trailer'] = { x = 0, y = 0, z = -20 }
     lu.assertAlmostEquals(module:getRigClearanceAngle(), first, 0.01,
         'the gap does not change while driving, so it is not measured again')
+end
+
+
+--- A vehicle with nothing behind it cannot jackknife, and must not think it has.
+---
+--- On a solo reverse getBasicStates fills angleToTrailer with the STEERING angle instead of a hitch
+--- angle - see its reverseSolo branch - and a tractor at full lock reaches forty to sixty degrees of
+--- that. Read as a fold it is past any limit this module sets, so a bare tractor reversing round a
+--- corner would have decided it had jackknifed and pulled forward, with no trailer at all.
+function TestFoldRecovery:testASoloVehicleNeverPullsForward()
+    local module = folding()
+    module.reverseSolo = true
+
+    local hardLock = {}
+    for i = 1, 200 do hardLock[i] = 55 + i * 0.01 end
+
+    local _, everPulled = run(module, hardLock)
+    lu.assertFalse(everPulled,
+        'full steering lock on a solo reverse is not a jackknife')
+    lu.assertFalse(module.straightening)
+end
+
+--- And it does not carry a half filled fold clock into the moment a trailer IS found.
+function TestFoldRecovery:testTheSoloCaseLeavesNoResidue()
+    local module = folding()
+    module.reverseSolo = true
+    local hardLock = {}
+    for i = 1, 50 do hardLock[i] = 55 + i * 0.01 end
+    run(module, hardLock)
+
+    module.reverseSolo = false
+    local angles = {}
+    for i = 1, 10 do angles[i] = 45 + i * 0.1 end
+    lu.assertFalse(run(module, angles) == true,
+        'the fold has to be observed afresh, not inherited from the solo steering')
+end
+
+
+--- Losing the trailer mid-pull must not leave a pull half finished, ready to resume from a stale
+--- clock when one is found again. getReverseNode can fail to identify a reverse attachable on one
+--- frame and find it on the next.
+function TestFoldRecovery:testLosingTheTrailerMidPullEndsThePull()
+    local module = folding()
+    local angles = {}
+    for i = 1, 50 do angles[i] = 45 + i * 0.1 end
+    run(module, angles)
+    lu.assertTrue(module.straightening, 'test setup: pulling forward')
+
+    module.reverseSolo = true
+    run(module, { 55 })
+    lu.assertFalse(module.straightening, 'no trailer means no pull to finish')
+
+    -- and when one is found again, the fold has to be observed afresh
+    module.reverseSolo = false
+    local again = {}
+    for i = 1, 10 do again[i] = 45 + i * 0.1 end
+    local _, everPulled = run(module, again)
+    lu.assertFalse(everPulled, 'a second of fold is not a resumed pull')
 end
 
 os.exit(lu.LuaUnit.run())

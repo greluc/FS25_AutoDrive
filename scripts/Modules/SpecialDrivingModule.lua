@@ -658,6 +658,26 @@ end
 
 --- Track the fold and decide whether the vehicle should be pulling forward this frame.
 function ADSpecialDrivingModule:updateFoldRecovery(dt, limit)
+    -- Nothing to fold. On a solo reverse getBasicStates fills angleToTrailer with the STEERING angle
+    -- instead - see the reverseSolo branch there - and a tractor at full lock reaches forty to sixty
+    -- degrees of that. Read as a hitch angle it is past any limit this module sets, so a bare
+    -- tractor reversing round a corner would have decided it had jackknifed and pulled forward, with
+    -- no trailer behind it at all.
+    if self.reverseSolo then
+        -- straighteningTimer is deliberately not touched: the trigger below clears it whenever a
+        -- pull begins, so clearing it here as well would be a line no test can miss.
+        --
+        -- The first two ARE load bearing - ending a pull that was running, and emptying a fold clock
+        -- that would otherwise fire the instant a trailer is found again. The third is not, and is
+        -- kept as belt and braces rather than passed off as necessary: the angle history belongs to
+        -- the non-solo episode, but every path that reads it is behind the clock the line above
+        -- already emptied.
+        self.straightening = false
+        self.foldTimer:timer(false)
+        self.lastFoldAngle = nil
+        return false
+    end
+
     if self.straightening then
         self.straighteningTimer:timer(true, ADSpecialDrivingModule.FOLD_RECOVERY_MAX, dt)
         local recovered = math.abs(self.angleToTrailer or 0)
