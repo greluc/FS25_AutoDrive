@@ -388,4 +388,69 @@ function TestRigClearance:testItStaysSaneAcrossTheWholeFleet()
     end
 end
 
+
+--- The oscillation this could have become, and the reason it does not.
+---
+--- On giving up, the recovery used to clear its own clock and let reversing resume - into the same
+--- fold. Past the limit and still worsening, the fold clock fills again in three seconds, pulls
+--- forward for another eight, gives up again: a rig shuffling back and forth on an eleven second
+--- cycle for ever. That is precisely the "corrects over and over" this was built to cure, so one
+--- attempt per manoeuvre and then it hands over.
+function TestFoldRecovery:testAFailedPullIsNotRetriedForever()
+    local module = folding()
+    local angles = {}
+    for i = 1, 50 do angles[i] = 45 + i * 0.1 end
+    run(module, angles)
+    lu.assertTrue(module.straightening, 'test setup: it has to be pulling forward first')
+
+    -- the pull runs its full length without ever straightening the rig
+    for _ = 1, math.ceil(ADSpecialDrivingModule.FOLD_RECOVERY_MAX / 100) + 5 do
+        module.angleToTrailer = 60
+        module:updateFoldRecovery(100, 40)
+    end
+    lu.assertFalse(module.straightening, 'test setup: it has to have given up by now')
+
+    -- and the fold is still there, worsening, for far longer than it took to trigger the first time
+    local pulling = false
+    for i = 1, 200 do
+        module.angleToTrailer = 60 + i * 0.01
+        pulling = module:updateFoldRecovery(100, 40) or pulling
+    end
+
+    lu.assertFalse(pulling, 'a pull that failed once must not be started again in the same manoeuvre')
+end
+
+--- A fresh manoeuvre may try again - the refusal belongs to the episode, not to the vehicle.
+function TestFoldRecovery:testANewManoeuvreMayTryAgain()
+    local module = folding()
+    module.foldRecoveryGaveUp = true
+    module.vehicle.trailer = {}
+    module.vehicle.ad.trailerModule = nil
+
+    ADSpecialDrivingModule.reset(module)
+
+    lu.assertFalse(module.foldRecoveryGaveUp, 'a reset ends the episode and the refusal with it')
+end
+
+
+--- A pull that WORKED earns no such refusal. Only failure does. A rig that folds again later in the
+--- same manoeuvre - which is ordinary in a long reverse - must still be helped.
+function TestFoldRecovery:testASuccessfulPullDoesNotBlockLaterOnes()
+    local module = folding()
+    local angles = {}
+    for i = 1, 50 do angles[i] = 45 + i * 0.1 end
+    run(module, angles)
+    lu.assertTrue(module.straightening, 'test setup: pulling forward')
+
+    -- this one straightens the rig properly
+    run(module, { 20 })
+    lu.assertFalse(module.straightening, 'test setup: recovered and resumed')
+    lu.assertFalse(module.foldRecoveryGaveUp, 'success is not a reason to refuse the next one')
+
+    -- and it folds again later in the same manoeuvre
+    local again = {}
+    for i = 1, 50 do again[i] = 45 + i * 0.1 end
+    lu.assertTrue(run(module, again), 'a second fold in one reverse still gets helped')
+end
+
 os.exit(lu.LuaUnit.run())

@@ -12,6 +12,7 @@ function ADSpecialDrivingModule:new(vehicle)
     o.foldTimer = AutoDriveTON:new()
     o.straighteningTimer = AutoDriveTON:new()
     o.straightening = false
+    o.foldRecoveryGaveUp = false
     return o
 end
 
@@ -35,6 +36,11 @@ function ADSpecialDrivingModule:reset()
     -- standing was half of how it survived into the next episode.
     self.reverseTarget = nil
     self.lastGuidedReverseFrame = nil
+    -- and the fold recovery, so a manoeuvre that gave up on straightening does not hand that refusal
+    -- to the next one
+    self.straightening = false
+    self.foldRecoveryGaveUp = false
+    self.lastFoldAngle = nil
 end
 
 function ADSpecialDrivingModule:stopVehicle(isBlocked, lx, lz)
@@ -646,12 +652,24 @@ function ADSpecialDrivingModule:updateFoldRecovery(dt, limit)
             self.straightening = false
             self.straighteningTimer:timer(false)
             self.foldTimer:timer(false)
+            -- A pull that ran its full length without straightening the rig will not do better on
+            -- the second attempt, and retrying is not harmless: reversing resumes into the same
+            -- fold, the fold clock fills again in three seconds, and the rig shuffles forward and
+            -- back for ever - eleven seconds a cycle. That is the "corrects over and over" this was
+            -- meant to cure. One attempt per episode; the ordinary stuck handling takes it from
+            -- here, and reset() clears the flag when the next manoeuvre begins.
+            self.foldRecoveryGaveUp = not recovered
             AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO,
                 "reverse: straightened to %.1f deg - resuming (%s)",
-                self.angleToTrailer or 0, recovered and "recovered" or "gave up")
+                self.angleToTrailer or 0, recovered and "recovered" or "gave up, not trying again")
         end
         self.lastFoldAngle = self.angleToTrailer
         return self.straightening
+    end
+
+    if self.foldRecoveryGaveUp then
+        self.lastFoldAngle = self.angleToTrailer
+        return false
     end
 
     local worsening = ADSpecialDrivingModule.isFoldGettingWorse(
