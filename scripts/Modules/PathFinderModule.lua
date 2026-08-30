@@ -1872,6 +1872,15 @@ function PathFinderModule:drawDebugForCreatedRoute()
     end
 end
 
+-- Room to leave beside the rig when testing a cell, on top of its measured half width.
+--
+-- Judgement, not measurement, and worth saying so: the A* steps by minTurnRadius and the driven line
+-- is smoothed between cell centres, so the vehicle does not track the centres exactly and a corridor
+-- of exactly rig width would be optimistic. A metre a side is enough to absorb that without going
+-- back to demanding room the rig does not need. The measured half widths already carry
+-- AutoDrive.DIMENSION_ADDITION (0.2 m) each; this is on top of that.
+PathFinderModule.TRAIN_SIDE_CLEARANCE = 1.0
+
 -- Half extents of the box a cell is tested with, derived from the actual train.
 --
 -- K1: this used to be minTurnRadius/2 in both axes - a square built from a STEERING property.
@@ -1890,7 +1899,20 @@ function PathFinderModule:getTrainHalfExtents()
     local vehicle = self.vehicle
     local dims = vehicle ~= nil and vehicle.ad ~= nil and vehicle.ad.adDimensions or nil
     if dims ~= nil and dims.maxWidthLeft ~= nil and dims.maxWidthRight ~= nil then
-        halfWidth = math.max(halfWidth, (dims.maxWidthLeft + dims.maxWidthRight) / 2)
+        -- The measurement REPLACES the fallback rather than being maxed with it.
+        --
+        -- It used to be math.max, which is my own mistake and it made the measurement inert: a
+        -- tractor and trailer measure about 1.5 m to a side, minTurnRadius/2 is four to seven, so
+        -- the max picked the turn radius every time and the corridor came out three to four times
+        -- wider than the rig. Everything the "measure the train" work was for never took effect,
+        -- while the comment beside it claimed the opposite.
+        --
+        -- A steering radius says nothing about how much room a vehicle needs beside itself, and
+        -- demanding a fourteen metre corridor for a three metre rig refuses headlands, gateways and
+        -- field entrances it drives through comfortably. Measured in one session: 5,178 cells
+        -- refused for collision against 8 refused for fruit, and the player freed a search that had
+        -- failed four times by nudging the vehicle two metres.
+        halfWidth = (dims.maxWidthLeft + dims.maxWidthRight) / 2 + PathFinderModule.TRAIN_SIDE_CLEARANCE
     end
     if AutoDrive.getTractorTrainLength ~= nil and vehicle ~= nil then
         local trainLength = AutoDrive.getTractorTrainLength(vehicle, true, false)
@@ -1989,8 +2011,9 @@ function PathFinderModule:getShapeDefByDirectionType_New(cell)
     -- smoothResultingPPPath_Refined are turned by atan2(-dz, dx), and that call puts the along-travel
     -- half length in the same slot (line 2310: length/2+2.5 there, sideLength+1.5 across).
     --
-    -- ACROSS is the rig's half width. That is the honest number and the point of measuring the train
-    -- at all: the corridor has to be wide enough for what is being towed. Assigning the extents in
+    -- ACROSS is the rig's half width plus a clearance. That is the honest number and the point of
+    -- measuring the train at all: the corridor has to be wide enough for what is being towed, and no
+    -- wider - see getTrainHalfExtents for what demanding more than that refused. Assigning the extents in
     -- their natural order put half LENGTH across instead, and the box stood broadside - as wide as
     -- the train is long - which refused field entrances and gateways the rig fits through.
     --

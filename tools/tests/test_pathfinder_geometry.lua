@@ -55,14 +55,36 @@ function TestBoxExtents:testUsesMeasuredTrainWidth()
     -- 11 m wide train, i.e. wider than the minTurnRadius/2 = 4 fallback
     p.vehicle.ad.adDimensions = { maxWidthLeft = 5.5, maxWidthRight = 5.5 }
     local hw = p:getTrainHalfExtents()
-    lu.assertEquals(hw, 5.5, 'half width must come from the measured hull when it is wider')
+    lu.assertAlmostEquals(hw, 5.5 + PathFinderModule.TRAIN_SIDE_CLEARANCE, 0.001,
+        'half width comes from the measured hull, plus room to drive in')
 end
 
-function TestBoxExtents:testNeverShrinksBelowTheTurnRadiusFallback()
+--- The reversal of an earlier call of mine, and the reason it was wrong.
+---
+--- This used to assert the opposite - that a narrow rig keeps the wider turn-radius box, "must not
+--- shrink below the old behaviour". That made the measurement inert, because a tractor and trailer
+--- measure about 1.5 m to a side and minTurnRadius/2 is four to seven, so the box was always the
+--- turn radius and the rig was never consulted. A steering radius says nothing about how much room
+--- a vehicle needs BESIDE itself, and demanding a fourteen metre corridor for a three metre rig
+--- refuses headlands and field entrances it drives through comfortably. Measured in one session:
+--- 5,178 cells refused for collision against 8 refused for fruit, and a search that had failed four
+--- times succeeded once the player nudged the vehicle two metres.
+function TestBoxExtents:testANarrowRigGetsACorridorItsOwnSize()
     local p = pfm()
     p.vehicle.ad.adDimensions = { maxWidthLeft = 0.5, maxWidthRight = 0.5 }
     local hw = p:getTrainHalfExtents()
-    lu.assertEquals(hw, 4, 'a narrow implement must not shrink the box below the old behaviour')
+    lu.assertAlmostEquals(hw, 0.5 + PathFinderModule.TRAIN_SIDE_CLEARANCE, 0.001,
+        'the corridor is the rig plus clearance, not the steering radius')
+    lu.assertTrue(hw < 4, 'and that is narrower than the fallback, which is the whole point')
+end
+
+--- The clearance is real room, not a rounding error: a corridor of exactly rig width would be
+--- optimistic, because the driven line is smoothed between cell centres rather than tracking them.
+function TestBoxExtents:testTheCorridorIsWiderThanTheRigItself()
+    local p = pfm()
+    p.vehicle.ad.adDimensions = { maxWidthLeft = 1.5, maxWidthRight = 1.5 }
+
+    lu.assertTrue(p:getTrainHalfExtents() > 1.5)
 end
 
 function TestBoxExtents:testExtentsAreCachedPerRun()
@@ -74,8 +96,9 @@ end
 
 --- What the cell box is, in both axes.
 ---
---- ACROSS travel is the rig's half width. That is the honest number and the reason for measuring the
---- train at all: the corridor has to be wide enough for what is being towed. Assigning the extents
+--- ACROSS travel is the rig's half width plus a clearance. That is the honest number and the reason
+--- for measuring the train at all: the corridor has to be wide enough for what is being towed, and
+--- no wider. Assigning the extents
 --- in their natural order put half LENGTH across instead - the box stood broadside, as wide as the
 --- train is long - and refused field entrances and gateways the rig fits through comfortably.
 ---
