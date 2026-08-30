@@ -156,6 +156,19 @@ function ADSpecialDrivingModule:driveReverse(dt, maxSpeed, maxAcceleration, guid
     local acc = maxAcceleration
 
 
+    -- Which of the two reverses this is, and why. The guided one steers the trailer and is where
+    -- the fold limit and the recovery live; the blind one drives straight back with the joints
+    -- locked and sees neither. Nothing said which was in use, so a rig folding into itself on the
+    -- blind path looked exactly like one on the guided path with the telemetry switched off.
+    if (g_updateLoopIndex + self.vehicle.id) % AutoDrive.PERF_FRAMES == 0 then
+        local _, towed = AutoDrive.getAllTowedUnits(self.vehicle)
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO,
+            "reverse: %s (%d towed units, reverse node %s)",
+            guided == true and "guided" or "blind, straight back",
+            towed or -1,
+            self.reverseNode ~= nil and "yes" or "no")
+    end
+
     if self.vehicle.ad.collisionDetectionModule:checkReverseCollision() then
         self:stopAndHoldVehicle(dt)
     else
