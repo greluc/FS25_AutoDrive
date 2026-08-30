@@ -962,6 +962,13 @@ local function monitored(state, distance)
         isBlocked = false,
         releaseVehicle = function() log.released = log.released + 1 end,
     }
+    -- isBlocked stays false throughout, which is the whole point: it is what followWaypoints passes
+    -- for a vehicle ON the road network, so the held flag is the only way this case is ever seen.
+    log.heldTooLong = false
+    vehicle.ad.drivePathModule = {
+        isHeldTooLongOnRoute = function() return log.heldTooLong end,
+        releaseHeld = function() log.heldTooLong = false log.heldReleased = (log.heldReleased or 0) + 1 end,
+    }
     ADHarvestManager.unregisterAsUnloader = function() log.unregistered = log.unregistered + 1 end
     AutoDrive.askNearbyVehiclesToMakeWay = function() return 0 end
     -- the real one lives in CollisionDetectionUtils, which this suite does not load
@@ -1043,6 +1050,44 @@ function TestMonitorTasks:testItReversesOutWhenNobodyCanMakeWay()
     -- structurally, so every one of them is "equal" to every other and the assertion would hold
     -- whatever the state actually is.
     lu.assertTrue(rawequal(mode.state, CombineUnloaderMode.STATE_REVERSE_FROM_BAD_LOCATION))
+end
+
+--- Held on the road network, which is the case none of this could see before.
+---
+--- Reported from the game and confirmed in the log: a full unloader stood seventy-seven seconds nose
+--- to tail behind the stationary harvester it had just served, braking every frame, while that
+--- harvester waited for a replacement unloader that could not reach its pipe because this one was
+--- parked in it. Every party to the deadlock was on the network, so every party reported
+--- isBlocked = false and this recovery never ran for any of them.
+function TestMonitorTasks:testBeingHeldOnTheNetworkReachesTheRecovery()
+    local mode, log = monitored(CombineUnloaderMode.STATE_DRIVE_TO_UNLOAD, 10)
+    log.heldTooLong = true
+
+    mode:monitorTasks(16)
+
+    lu.assertEquals(log.aborted, 1, 'held a full minute on the network is stuck, network or not')
+    lu.assertTrue(rawequal(mode.state, CombineUnloaderMode.STATE_REVERSE_FROM_BAD_LOCATION))
+end
+
+--- And it is consumed, or the next frame tears out the reverse task this one just created.
+function TestMonitorTasks:testTheHeldFlagIsConsumedByTheRecovery()
+    local mode, log = monitored(CombineUnloaderMode.STATE_DRIVE_TO_UNLOAD, 10)
+    log.heldTooLong = true
+
+    mode:monitorTasks(16)
+    mode:monitorTasks(16)
+
+    lu.assertEquals(log.heldReleased, 1)
+    lu.assertEquals(log.aborted, 1, 'the recovery is started once, not rebuilt every frame')
+end
+
+--- Nothing else changed: a driver that is not held still gets nowhere near the recovery.
+function TestMonitorTasks:testAnUnheldDriverOnTheNetworkIsUntouched()
+    local mode, log = monitored(CombineUnloaderMode.STATE_DRIVE_TO_UNLOAD, 10)
+
+    mode:monitorTasks(16)
+
+    lu.assertEquals(log.aborted, 0)
 end
 
 --- A driver mid step-aside is not stuck - the manoeuvre meets resistance by design and has its own

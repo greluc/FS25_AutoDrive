@@ -872,30 +872,65 @@ function TestHeldOnTheRoute:testADriverArrivingIsNeverCalledStuck()
         'waiting behind a vehicle at your own destination is the right thing to do, not a fault')
 end
 
---- But a driver on its way somewhere ELSE, held a full minute with nothing able to move, has a route
---- through ground somebody is occupying - and re-planning is the only thing left. Reported from the
---- game: an unloader on the headland stood two minutes behind the harvester it had just unloaded,
---- with the off-route yield not running there and CombineUnloaderMode's own recovery gated on
---- isBlocked, which followWaypoints sets to "not on the road network" and which is false for
---- exactly this case.
-function TestHeldOnTheRoute:testADriverPassingThroughIsEventuallyReplanned()
-    local module, record = heldModule(true, {})
+--- But a driver on its way somewhere ELSE, held a full minute with nothing able to move, is flagged
+--- so the mode can act on it. Reported from the game: an unloader on the headland stood two minutes
+--- behind the harvester it had just unloaded, with the off-route yield not running there and
+--- CombineUnloaderMode's own recovery gated on isBlocked, which followWaypoints sets to "not on the
+--- road network" and which is false for exactly this case.
+function TestHeldOnTheRoute:testADriverPassingThroughIsEventuallyFlagged()
+    local module = heldModule(true, {})
     module.distanceToTarget = math.huge
 
     run(module, ADDrivePathModule.MAX_HELD_TIME + 2000)
 
-    lu.assertEquals(record.stuck, 1, 'a minute of standing still on the way somewhere is stuck')
+    lu.assertTrue(module:isHeldTooLongOnRoute(),
+        'a minute of standing still on the way somewhere is something the mode has to hear about')
 end
 
---- And it does not fire twice in the same standstill.
-function TestHeldOnTheRoute:testTheReplanDoesNotRepeatEveryFrame()
+--- What it must NOT do is restart the driver itself. That was tried: stopAndRestartAD rebuilds the
+--- same route from the same graph and drives it back into the same machine, measured twice in one
+--- log thirty-five seconds apart with an identical task chain and an identical standstill.
+function TestHeldOnTheRoute:testItDoesNotRestartTheDriverItself()
     local module, record = heldModule(true, {})
     module.distanceToTarget = math.huge
 
-    run(module, ADDrivePathModule.MAX_HELD_TIME + 2000)
-    run(module, 5000)
+    run(module, ADDrivePathModule.MAX_HELD_TIME * 3)
 
-    lu.assertEquals(record.stuck, 1)
+    lu.assertEquals(record.stuck, 0, 'a restart rebuilds the route that is already wrong')
+end
+
+--- A driver that gets moving again is no longer held, however long it stood before.
+function TestHeldOnTheRoute:testGettingMovingClearsTheFlag()
+    local module = heldModule(true, {})
+    module.distanceToTarget = math.huge
+    run(module, ADDrivePathModule.MAX_HELD_TIME + 2000)
+
+    module.vehicle.ad.specialDrivingModule.isStoppingVehicle = function() return false end
+    run(module, 200)
+
+    lu.assertFalse(module:isHeldTooLongOnRoute())
+end
+
+--- And the mode consuming it clears it, or the condition stands on the next frame and tears out the
+--- recovery task it just created.
+function TestHeldOnTheRoute:testReleasingClearsTheFlag()
+    local module = heldModule(true, {})
+    module.distanceToTarget = math.huge
+    run(module, ADDrivePathModule.MAX_HELD_TIME + 2000)
+
+    module:releaseHeld()
+
+    lu.assertFalse(module:isHeldTooLongOnRoute())
+end
+
+--- A driver arriving at its own destination is never flagged, however long the queue takes.
+function TestHeldOnTheRoute:testADriverArrivingIsNeverFlagged()
+    local module = heldModule(true, {})
+    module.distanceToTarget = AutoDrive.MAKE_WAY_ASK_RANGE - 1
+
+    run(module, ADDrivePathModule.MAX_HELD_TIME * 3)
+
+    lu.assertFalse(module:isHeldTooLongOnRoute())
 end
 
 function TestHeldOnTheRoute:testItAsksParkedVehiclesToMoveOnceHeldLongEnough()
@@ -959,7 +994,7 @@ function TestHeldOnTheRoute:testAParkedWaiterNeitherAsksNorIsStuck()
     run(module, ADDrivePathModule.MAX_HELD_TIME * 2)
 
     lu.assertEquals(record.asked, 0)
-    lu.assertEquals(record.stuck, 0)
+    lu.assertFalse(module:isHeldTooLongOnRoute())
 end
 
 

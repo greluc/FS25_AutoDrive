@@ -99,8 +99,33 @@ function CombineUnloaderMode:monitorTasks(dt)
     local activeTask = self.vehicle.ad.taskModule:getActiveTask()
     local isMakingWay = activeTask ~= nil and activeTask.isMakingWay ~= nil and activeTask:isMakingWay()
 
+    -- Held on the ROAD NETWORK by something that will not move.
+    --
+    -- The condition below could never see that case. isBlocked is what followWaypoints passes to
+    -- stopVehicle, and it passes literally `not isOnRoadNetwork()` - so a driver blocked while ON
+    -- the network reports false and none of this ran. Measured in game: a full unloader stood
+    -- seventy-seven seconds nose to tail behind the stationary harvester it had just served,
+    -- braking every single frame, with the harvester waiting for a replacement unloader that could
+    -- not reach its pipe because this one was parked in it. A three way deadlock that nothing in
+    -- the mod was watching for, because every party to it was on the network.
+    --
+    -- drivePathModule measures it - a full minute held, passing through, asking already tried - and
+    -- this is where it is acted on, because reversing out is the only recovery that exists and it
+    -- lives here. Backing away also does something the restart never could: it puts the vehicle
+    -- further than a driver radius from the network, which is exactly the test ExitFieldTask uses
+    -- to decide whether to run the pathfinder at all. Standing on the network it short circuits to
+    -- "close enough, finished"; a few metres off it, it plans a real path around the obstacle.
+    local heldTooLong = self.vehicle.ad.drivePathModule ~= nil
+        and self.vehicle.ad.drivePathModule.isHeldTooLongOnRoute ~= nil
+        and self.vehicle.ad.drivePathModule:isHeldTooLongOnRoute()
+
     --We are stuck
-    if not isMakingWay and (self.failedPathFinder >= 5 or ((self.vehicle.ad.specialDrivingModule:shouldStopMotor() or self.vehicle.ad.specialDrivingModule.stoppedTimer:done()) and self.vehicle.ad.specialDrivingModule.isBlocked)) then
+    if not isMakingWay and (self.failedPathFinder >= 5 or heldTooLong or ((self.vehicle.ad.specialDrivingModule:shouldStopMotor() or self.vehicle.ad.specialDrivingModule.stoppedTimer:done()) and self.vehicle.ad.specialDrivingModule.isBlocked)) then
+        -- Consume it in both branches below, or the flag stands on the next frame and tears out
+        -- whatever this one just started.
+        if self.vehicle.ad.drivePathModule ~= nil and self.vehicle.ad.drivePathModule.releaseHeld ~= nil then
+            self.vehicle.ad.drivePathModule:releaseHeld()
+        end
         -- Before backing out: if what we are stuck behind is one of our own vehicles parked with
         -- nothing to do, asking it to move is both cheaper and likelier to help than reversing and
         -- approaching again from somewhere else - the parked one would still be there.

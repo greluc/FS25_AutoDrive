@@ -60,6 +60,7 @@ function ADDrivePathModule:new(vehicle)
     -- Its own timer, not minDistanceTimer: that one is reset on every frame the vehicle is being
     -- held, which is exactly when this one has to keep counting.
     o.heldTimer = AutoDriveTON:new()
+    o.heldTooLong = false
     o.waitTimer = AutoDriveTON:new()
     o.blinkTimer = AutoDriveTON:new()
     o.brakeHysteresisActive = false
@@ -1069,9 +1070,19 @@ function ADDrivePathModule:trackBeingHeld(held, dt)
         -- here, and CombineUnloaderMode's own recovery is gated on isBlocked, which followWaypoints
         -- sets to "not on the road network" and which is therefore false for exactly this case.
         --
-        -- Re-planning is the escalation because the route is the thing that is wrong: the path was
-        -- laid through ground somebody else is now occupying, and the pathfinder will route around
-        -- what it can see.
+        -- What is raised here is a FLAG, and nothing more. Deciding what to do about it belongs to
+        -- the mode, because the mode is the only thing that owns a recovery.
+        --
+        -- This used to call handleBeingStuck, which is stopAndRestartAD. Measured in game and the
+        -- reason this changed: the unloader restarted, CombineUnloaderMode ran from STATE_INIT,
+        -- ExitFieldTask found it already within a driver radius of the network and finished without
+        -- ever starting the pathfinder, and the network follower drove it back into the same
+        -- harvester. Twice in one log, thirty-five seconds apart, an identical task chain and an
+        -- identical standstill. A restart cannot help when the route it rebuilds is the same route.
+        --
+        -- The comment that stood here claimed "the pathfinder will route around what it can see".
+        -- It does not: the leg being driven is the waypoint NETWORK, which no pathfinder revises,
+        -- and a machine parked on it stays parked on it.
         --
         -- Only while PASSING THROUGH, never while arriving. That distinction is what stopped this
         -- from firing on a driver queueing at its own destination, which is not stuck but patient.
@@ -1079,9 +1090,9 @@ function ADDrivePathModule:trackBeingHeld(held, dt)
         self.askedForWay = false
         if self:isPassingThrough() then
             AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO,
-                "ADDrivePathModule: held on the route for %d s with nothing able to move - replanning",
+                "ADDrivePathModule: held on the route for %d s with nothing able to move",
                 ADDrivePathModule.MAX_HELD_TIME / 1000)
-            self:handleBeingStuck()
+            self.heldTooLong = true
             return
         end
     end
@@ -1090,7 +1101,27 @@ function ADDrivePathModule:trackBeingHeld(held, dt)
         self:askForWayIfHeldLongEnough()
     else
         self.askedForWay = false
+        self.heldTooLong = false
     end
+end
+
+--- Held on our own route for the full window, on the way somewhere else, with asking already tried.
+---
+--- Read by CombineUnloaderMode, which is the only mode that owns a recovery for it. Modes without
+--- one are left exactly as they were before any of this existed, which is deliberate: a driver
+--- standing behind another is usually doing the right thing, and declaring it stuck was tried,
+--- reported from the game as wrong, and withdrawn.
+function ADDrivePathModule:isHeldTooLongOnRoute()
+    return self.heldTooLong == true
+end
+
+--- Consume the flag. The mirror of specialDrivingModule:releaseVehicle, and needed for the same
+--- reason: without it the condition stands on the next frame and tears out the recovery task it
+--- just created.
+function ADDrivePathModule:releaseHeld()
+    self.heldTooLong = false
+    self.heldTimer:timer(false, ADDrivePathModule.MAX_HELD_TIME, 0)
+    self.askedForWay = false
 end
 
 --- Whether the end of our own route is far enough off that whatever is in front of us is in the way
