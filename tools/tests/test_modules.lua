@@ -860,14 +860,42 @@ local function run(module, milliseconds)
 end
 
 --- The correction that produced this shape, kept as a test so it cannot come back: a vehicle queueing
---- behind another at a shared destination is not stuck, however long it waits.
-function TestHeldOnTheRoute:testBeingHeldIsNeverCalledStuck()
+--- behind another AT ITS OWN DESTINATION is not stuck, however long it waits. That is the case that
+--- made an earlier version of this misfire and restart a driver that was doing its job.
+function TestHeldOnTheRoute:testADriverArrivingIsNeverCalledStuck()
     local module, record = heldModule(true, {})
+    module.distanceToTarget = AutoDrive.MAKE_WAY_ASK_RANGE - 1
 
     run(module, ADDrivePathModule.MAX_HELD_TIME * 3)
 
     lu.assertEquals(record.stuck, 0,
         'waiting behind a vehicle at your own destination is the right thing to do, not a fault')
+end
+
+--- But a driver on its way somewhere ELSE, held a full minute with nothing able to move, has a route
+--- through ground somebody is occupying - and re-planning is the only thing left. Reported from the
+--- game: an unloader on the headland stood two minutes behind the harvester it had just unloaded,
+--- with the off-route yield not running there and CombineUnloaderMode's own recovery gated on
+--- isBlocked, which followWaypoints sets to "not on the road network" and which is false for
+--- exactly this case.
+function TestHeldOnTheRoute:testADriverPassingThroughIsEventuallyReplanned()
+    local module, record = heldModule(true, {})
+    module.distanceToTarget = math.huge
+
+    run(module, ADDrivePathModule.MAX_HELD_TIME + 2000)
+
+    lu.assertEquals(record.stuck, 1, 'a minute of standing still on the way somewhere is stuck')
+end
+
+--- And it does not fire twice in the same standstill.
+function TestHeldOnTheRoute:testTheReplanDoesNotRepeatEveryFrame()
+    local module, record = heldModule(true, {})
+    module.distanceToTarget = math.huge
+
+    run(module, ADDrivePathModule.MAX_HELD_TIME + 2000)
+    run(module, 5000)
+
+    lu.assertEquals(record.stuck, 1)
 end
 
 function TestHeldOnTheRoute:testItAsksParkedVehiclesToMoveOnceHeldLongEnough()
@@ -892,7 +920,8 @@ end
 function TestHeldOnTheRoute:testItAsksOnlyOncePerStandstill()
     local module, record = heldModule(true, {})
 
-    run(module, ADDrivePathModule.MAX_HELD_TIME * 2)
+    -- within one held window: past the replan the clock restarts and a fresh ask is correct
+    run(module, ADDrivePathModule.MAX_HELD_TIME - 2000)
 
     lu.assertEquals(record.asked, 1)
 end

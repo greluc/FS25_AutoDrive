@@ -1060,12 +1060,44 @@ function ADDrivePathModule:trackBeingHeld(held, dt)
         return
     end
 
-    self.heldTimer:timer(held == true, ADDrivePathModule.MAX_HELD_TIME, dt)
+    if self.heldTimer:timer(held == true, ADDrivePathModule.MAX_HELD_TIME, dt) then
+        -- A minute of standing still on a route that goes somewhere else. Asking has already been
+        -- tried and either found nobody or did not help, so the thing in the way is not one of ours
+        -- with nothing to do - a working harvester on the headland, in the case this was written
+        -- for, where an unloader on its way to tip stood for two minutes behind the machine it had
+        -- just unloaded. Nothing else was ever going to move it: the off-route yield does not run
+        -- here, and CombineUnloaderMode's own recovery is gated on isBlocked, which followWaypoints
+        -- sets to "not on the road network" and which is therefore false for exactly this case.
+        --
+        -- Re-planning is the escalation because the route is the thing that is wrong: the path was
+        -- laid through ground somebody else is now occupying, and the pathfinder will route around
+        -- what it can see.
+        --
+        -- Only while PASSING THROUGH, never while arriving. That distinction is what stopped this
+        -- from firing on a driver queueing at its own destination, which is not stuck but patient.
+        self.heldTimer:timer(false, ADDrivePathModule.MAX_HELD_TIME, 0)
+        self.askedForWay = false
+        if self:isPassingThrough() then
+            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO,
+                "ADDrivePathModule: held on the route for %d s with nothing able to move - replanning",
+                ADDrivePathModule.MAX_HELD_TIME / 1000)
+            self:handleBeingStuck()
+            return
+        end
+    end
+
     if held then
         self:askForWayIfHeldLongEnough()
     else
         self.askedForWay = false
     end
+end
+
+--- Whether the end of our own route is far enough off that whatever is in front of us is in the way
+--- rather than at our destination. getDistanceToLastWaypoint answers math.huge until the end is
+--- within reach, so this is true for a driver on its way somewhere else and false for one arriving.
+function ADDrivePathModule:isPassingThrough()
+    return (self.distanceToTarget or math.huge) >= AutoDrive.MAKE_WAY_ASK_RANGE
 end
 
 --- Ask the vehicles parked around us to move, once per held episode.
@@ -1091,7 +1123,7 @@ function ADDrivePathModule:askForWayIfHeldLongEnough()
     -- getDistanceToLastWaypoint answers math.huge until the end of the route is within reach, so
     -- this is false for exactly the case the asking is for - a loaded driver trying to get PAST
     -- something on its way somewhere else.
-    if (self.distanceToTarget or math.huge) < AutoDrive.MAKE_WAY_ASK_RANGE then
+    if not self:isPassingThrough() then
         return
     end
     self.askedForWay = true
