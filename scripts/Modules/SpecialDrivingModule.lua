@@ -182,12 +182,38 @@ function ADSpecialDrivingModule:driveReverse(dt, maxSpeed, maxAcceleration, guid
                     self.vehicle:startMotor()
                 end
             end
+            -- The blind reverse folds too, and used to have nothing watching it. It drives straight
+            -- back in the TRACTOR's frame, so a trailer already at an angle is pushed further off by
+            -- exactly that, and locking the joints holds the fold rather than undoing it. This is
+            -- the path a rig of three or more units takes - a dolly, a road train - which is the
+            -- shape most able to jackknife, and the one the fold work was reaching least.
+            local towed = self:firstTowedUnit()
+            local hitch = self:getHitchAngle(towed)
+            if hitch ~= nil
+                and self:updateFoldRecovery(dt, self:getMaxTrailerAngle(towed, hitch), hitch) then
+                if self:canPullForward() then
+                    self:driveForward(dt)
+                else
+                    AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO,
+                        "reverse: folded to %.1f deg and the way forward is blocked - holding", hitch)
+                    self:stopAndHoldVehicle(dt)
+                end
+                return
+            end
+
             -- Update trailers in case we need to lock the front axle
             self.vehicle.ad.trailerModule:handleTrailerReversing(true)
             local storedSmootherDriving = AutoDrive.smootherDriving
             AutoDrive.smootherDriving = false
             AutoDrive.driveInDirection(self.vehicle, dt, 30, acc, 0.2, 20, true, false, -lx, -lz, speed, 1)
             AutoDrive.smootherDriving = storedSmootherDriving
+
+            if (g_updateLoopIndex + self.vehicle.id) % AutoDrive.PERF_FRAMES == 0 then
+                AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO,
+                    "reverse blind: hitch %s deg (limit %.1f), %.1f km/h",
+                    hitch ~= nil and string.format("%.1f", hitch) or "unknown",
+                    self:getMaxTrailerAngle(towed, hitch), speed)
+            end
         else
             -- A guided episode that does not continue the previous frame's starts fresh.
             --
@@ -573,8 +599,8 @@ end
 --- fold it would read the already rotated geometry and answer far too small.
 ADSpecialDrivingModule.STRAIGHT_ENOUGH_TO_MEASURE = 8
 
-function ADSpecialDrivingModule:getRigClearanceAngle()
-    local trailer = self.vehicle.trailer
+function ADSpecialDrivingModule:getRigClearanceAngle(unit, angle)
+    local trailer = unit or self.vehicle.trailer
     -- Measured for ONE rig. Hitching something else makes the answer wrong, and a stale one is worse
     -- than none: unhitch a tipper, put a fifteen metre livestock trailer behind the same tractor,
     -- and without this it would keep steering to the tipper's fold angle for the rest of the
@@ -591,7 +617,7 @@ function ADSpecialDrivingModule:getRigClearanceAngle()
     if trailer == nil or trailer.components == nil or trailer.components[1] == nil then
         return nil
     end
-    if math.abs(self.angleToTrailer or 0) > ADSpecialDrivingModule.STRAIGHT_ENOUGH_TO_MEASURE then
+    if math.abs(angle or self.angleToTrailer or 0) > ADSpecialDrivingModule.STRAIGHT_ENOUGH_TO_MEASURE then
         return nil
     end
 
@@ -611,6 +637,35 @@ function ADSpecialDrivingModule:getRigClearanceAngle()
 
     self.rigClearanceAngle = math.deg(math.atan2(gap, halfWidth))
     return self.rigClearanceAngle
+end
+
+--- The first thing being towed, and the angle it makes with the tractor.
+---
+--- getBasicStates works out the same angle from the REVERSE NODE, which only exists on the guided
+--- reverse - getReverseNode is not called on the blind one. The blind path needs the angle too, and
+--- the hitch angle does not depend on which controller is steering: it is the tractor's heading
+--- against the first towed unit's, whoever asked.
+function ADSpecialDrivingModule:firstTowedUnit()
+    if AutoDrive.getAllTowedUnits == nil then
+        return nil
+    end
+    local units = AutoDrive.getAllTowedUnits(self.vehicle)
+    if units == nil or units[2] == nil then
+        return nil
+    end
+    return units[2]
+end
+
+function ADSpecialDrivingModule:getHitchAngle(unit)
+    if unit == nil or AutoDrive.localDirectionToWorld == nil then
+        return nil
+    end
+    local vx, _, vz = AutoDrive.localDirectionToWorld(self.vehicle, 0, 0, 1)
+    local tx, _, tz = AutoDrive.localDirectionToWorld(unit, 0, 0, 1)
+    if vx == nil or tx == nil then
+        return nil
+    end
+    return AutoDrive.angleBetween({x = vx, z = vz}, {x = tx, z = tz})
 end
 
 --- Straightening a rig that has folded past recovery.
@@ -670,7 +725,8 @@ function ADSpecialDrivingModule.isFoldGettingWorse(angle, lastAngle, limit)
 end
 
 --- Track the fold and decide whether the vehicle should be pulling forward this frame.
-function ADSpecialDrivingModule:updateFoldRecovery(dt, limit)
+--- angle defaults to the guided controller's own reading; the blind path passes its own.
+function ADSpecialDrivingModule:updateFoldRecovery(dt, limit, angle)
     -- Nothing to fold. On a solo reverse getBasicStates fills angleToTrailer with the STEERING angle
     -- instead - see the reverseSolo branch there - and a tractor at full lock reaches forty to sixty
     -- degrees of that. Read as a hitch angle it is past any limit this module sets, so a bare
@@ -691,9 +747,11 @@ function ADSpecialDrivingModule:updateFoldRecovery(dt, limit)
         return false
     end
 
+    angle = angle or self.angleToTrailer
+
     if self.straightening then
         self.straighteningTimer:timer(true, ADSpecialDrivingModule.FOLD_RECOVERY_MAX, dt)
-        local recovered = math.abs(self.angleToTrailer or 0)
+        local recovered = math.abs(angle or 0)
             <= limit * ADSpecialDrivingModule.FOLD_RECOVERED_FRACTION
         if recovered or self.straighteningTimer:done() then
             self.straightening = false
@@ -708,42 +766,42 @@ function ADSpecialDrivingModule:updateFoldRecovery(dt, limit)
             self.foldRecoveryGaveUp = not recovered
             AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO,
                 "reverse: straightened to %.1f deg - resuming (%s)",
-                self.angleToTrailer or 0, recovered and "recovered" or "gave up, not trying again")
+                angle or 0, recovered and "recovered" or "gave up, not trying again")
         end
-        self.lastFoldAngle = self.angleToTrailer
+        self.lastFoldAngle = angle
         return self.straightening
     end
 
     if self.foldRecoveryGaveUp then
-        self.lastFoldAngle = self.angleToTrailer
+        self.lastFoldAngle = angle
         return false
     end
 
     local worsening = ADSpecialDrivingModule.isFoldGettingWorse(
-        self.angleToTrailer, self.lastFoldAngle, limit)
-    self.lastFoldAngle = self.angleToTrailer
+        angle, self.lastFoldAngle, limit)
+    self.lastFoldAngle = angle
 
     if self.foldTimer:timer(worsening, ADSpecialDrivingModule.FOLD_RECOVERY_AFTER, dt) then
         self.straightening = true
         self.straighteningTimer:timer(false)
         AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO,
             "reverse: folded to %.1f deg past a limit of %.1f and not recovering - pulling forward",
-            self.angleToTrailer or 0, limit)
+            angle or 0, limit)
         return true
     end
     return false
 end
 
-function ADSpecialDrivingModule:getMaxTrailerAngle()
+function ADSpecialDrivingModule:getMaxTrailerAngle(unit, angle)
     local limit = ADSpecialDrivingModule.MAX_TRAILER_ANGLE
     -- Whatever the rig's own shape allows, if it can be worked out. Floored, because a measurement
     -- that comes out absurdly small would otherwise stop the vehicle steering at all.
-    local clearance = self:getRigClearanceAngle()
+    local clearance = self:getRigClearanceAngle(unit, angle)
     if clearance ~= nil and clearance >= ADSpecialDrivingModule.MIN_PLAUSIBLE_TRAILER_ANGLE then
         limit = math.min(limit, clearance)
     end
 
-    local trailer = self.vehicle.trailer
+    local trailer = unit or self.vehicle.trailer
     if trailer == nil or trailer.jointRotLimit == nil or trailer.jointRotLimit[2] == nil then
         return limit
     end

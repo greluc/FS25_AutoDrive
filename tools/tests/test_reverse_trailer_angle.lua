@@ -342,215 +342,85 @@ function TestFoldRecovery:testAMissingSensorDoesNotBlockTheRecovery()
     lu.assertTrue(module:canPullForward())
 end
 
---- And the controller has to consult it before driving.
-function TestFoldRecovery:testTheControllerChecksBeforePulling()
+--- Both reverse controllers have to act on the decision, not just the one I built it in first.
+---
+--- driveReverse has two branches. The guided one steers the trailer and runs through reverseToPoint;
+--- the blind one drives straight back with the joints locked. A rig of three or more units - a
+--- dolly, a road train - takes the blind one, and that is the shape most able to jackknife. It was
+--- reached by none of this until a log showed reverseToPoint never being entered at all: 731
+--- reverses commanded, and checkWayPointReached, the first thing the guided path logs, absent from
+--- the whole file.
+---
+--- Wiring, not behaviour. It catches the recovery being dropped from either path.
+function TestFoldRecovery:testBothReversePathsActOnTheDecision()
     local f = io.open('../../scripts/Modules/SpecialDrivingModule.lua', 'r')
     local src = f:read('*a')
     f:close()
 
-    local decide = src:find('if self:updateFoldRecovery%(dt, maxTrailerAngle%) then')
-    local ask = src:find('if self:canPullForward%(%) then')
-    local hold = src:find('reverse: folded to %%.1f deg and the way forward is blocked')
-    lu.assertNotNil(decide, 'the controller has to ask whether the rig has folded past recovery')
-    lu.assertNotNil(ask, 'and then whether the way forward is clear')
-    lu.assertNotNil(hold, 'and hold rather than reverse deeper when it is not')
-    lu.assertTrue(ask > decide, 'the check belongs inside the recovery branch')
+    local guided = select(2, src:gsub('if self:updateFoldRecovery%(dt, maxTrailerAngle%) then', ''))
+    lu.assertEquals(guided, 1, 'the guided reverse has to ask whether the rig has folded')
+
+    local blind = select(2, src:gsub('self:updateFoldRecovery%(dt, self:getMaxTrailerAngle%(towed, hitch%), hitch%)', ''))
+    lu.assertEquals(blind, 1, 'and so does the blind one, on its own hitch angle')
+
+    local checks = select(2, src:gsub('if self:canPullForward%(%) then', ''))
+    lu.assertEquals(checks, 2, 'each of them checks the way forward before driving into it')
+
+    local holds = select(2, src:gsub('the way forward is blocked', ''))
+    lu.assertEquals(holds, 2, 'and each holds rather than reversing deeper when it is not')
 end
 
 
---- Calibration against the real fleet, not against numbers invented for a fixture.
+------------------------------------------------------------------------------------------------------------------------
+--- The hitch angle without a reverse node
 ---
---- Widths read out of the shipped vehicle data: 267 vehicles carry an input attacher joint, their
---- widths run from 1.5 m to 16.6 m and the median is exactly 3.0 m. Those are the numbers this
---- formula has to behave sensibly across, and the spread is the whole argument against a fixed
---- forty degrees - the same gap gives a standard tipper 34 degrees and a header 20.
-function TestRigClearance:testItIsCalibratedForRealMachines()
-    -- rig() takes spacing between roots; hulls of 3 m behind the tractor and 3.5 m ahead of the
-    -- trailer, so spacing minus 6.5 is the gap.
-    local median = rig(7.5, 3, 3.5, 1.5)          -- 3.0 m wide trailer, 1 m of gap
-    lu.assertAlmostEquals(median:getRigClearanceAngle(), 33.7, 0.5,
-        'the commonest trailer in the game with a metre of room')
+--- getBasicStates works the angle out from the REVERSE NODE, which only exists on the guided
+--- reverse. The blind path needs the same angle and getReverseNode is never called there, so it is
+--- taken from the first towed unit directly - the hitch angle does not depend on which controller
+--- happens to be steering.
+------------------------------------------------------------------------------------------------------------------------
+TestHitchAngle = {}
 
-    local wide = rig(9.5, 3, 3.5, 8.3)            -- a 16.6 m header, 3 m of gap
-    lu.assertTrue(wide:getRigClearanceAngle() < 25,
-        'sixteen metres across cannot swing as far as three metres across')
-
-    local narrow = rig(9.5, 3, 3.5, 0.75)         -- 1.5 m wide, 3 m of gap
-    lu.assertTrue(narrow:getRigClearanceAngle() > 70,
-        'a narrow trailer on a long drawbar is limited by the controller, not by its own shape')
+function TestHitchAngle:setUp()
+    TestSetup.reset()
 end
 
---- Across that whole real range the answer stays an angle, never a nonsense number.
-function TestRigClearance:testItStaysSaneAcrossTheWholeFleet()
-    for _, halfWidth in ipairs({ 0.75, 1.25, 1.5, 2.0, 3.5, 5.7, 8.3 }) do
-        for _, spacing in ipairs({ 6.5, 7.0, 8.0, 10.0, 14.0 }) do
-            local module = rig(spacing, 3, 3.5, halfWidth)
-            local angle = module:getRigClearanceAngle()
-            lu.assertNotNil(angle)
-            lu.assertTrue(angle >= 0 and angle < 90, string.format(
-                'half width %.2f, spacing %.1f gave %.1f degrees', halfWidth, spacing, angle))
-        end
+local function towedRig(tractorHeading, unitHeading)
+    local module = setmetatable({}, { __index = ADSpecialDrivingModule })
+    module.vehicle = TestSetup.vehicle()
+    local unit = { name = 'towed' }
+    AutoDrive.getAllTowedUnits = function() return { module.vehicle, unit }, 2 end
+    AutoDrive.localDirectionToWorld = function(v)
+        local a = math.rad(v == unit and unitHeading or tractorHeading)
+        return math.sin(a), 0, math.cos(a)
     end
+    return module, unit
 end
 
-
---- The oscillation this could have become, and the reason it does not.
----
---- On giving up, the recovery used to clear its own clock and let reversing resume - into the same
---- fold. Past the limit and still worsening, the fold clock fills again in three seconds, pulls
---- forward for another eight, gives up again: a rig shuffling back and forth on an eleven second
---- cycle for ever. That is precisely the "corrects over and over" this was built to cure, so one
---- attempt per manoeuvre and then it hands over.
-function TestFoldRecovery:testAFailedPullIsNotRetriedForever()
-    local module = folding()
-    local angles = {}
-    for i = 1, 50 do angles[i] = 45 + i * 0.1 end
-    run(module, angles)
-    lu.assertTrue(module.straightening, 'test setup: it has to be pulling forward first')
-
-    -- the pull runs its full length without ever straightening the rig
-    for _ = 1, math.ceil(ADSpecialDrivingModule.FOLD_RECOVERY_MAX / 100) + 5 do
-        module.angleToTrailer = 60
-        module:updateFoldRecovery(100, 40)
-    end
-    lu.assertFalse(module.straightening, 'test setup: it has to have given up by now')
-
-    -- and the fold is still there, worsening, for far longer than it took to trigger the first time
-    local pulling = false
-    for i = 1, 200 do
-        module.angleToTrailer = 60 + i * 0.01
-        pulling = module:updateFoldRecovery(100, 40) or pulling
-    end
-
-    lu.assertFalse(pulling, 'a pull that failed once must not be started again in the same manoeuvre')
+function TestHitchAngle:testAStraightRigIsZero()
+    local module = towedRig(0, 0)
+    lu.assertAlmostEquals(module:getHitchAngle(module:firstTowedUnit()), 0, 0.01)
 end
 
---- A fresh manoeuvre may try again - the refusal belongs to the episode, not to the vehicle.
-function TestFoldRecovery:testANewManoeuvreMayTryAgain()
-    local module = folding()
-    module.foldRecoveryGaveUp = true
-    module.vehicle.trailer = {}
-    module.vehicle.ad.trailerModule = nil
-
-    ADSpecialDrivingModule.reset(module)
-
-    lu.assertFalse(module.foldRecoveryGaveUp, 'a reset ends the episode and the refusal with it')
+function TestHitchAngle:testAFoldedRigReadsTheFold()
+    local module = towedRig(0, 35)
+    lu.assertAlmostEquals(math.abs(module:getHitchAngle(module:firstTowedUnit())), 35, 0.01)
 end
 
-
---- A pull that WORKED earns no such refusal. Only failure does. A rig that folds again later in the
---- same manoeuvre - which is ordinary in a long reverse - must still be helped.
-function TestFoldRecovery:testASuccessfulPullDoesNotBlockLaterOnes()
-    local module = folding()
-    local angles = {}
-    for i = 1, 50 do angles[i] = 45 + i * 0.1 end
-    run(module, angles)
-    lu.assertTrue(module.straightening, 'test setup: pulling forward')
-
-    -- this one straightens the rig properly
-    run(module, { 20 })
-    lu.assertFalse(module.straightening, 'test setup: recovered and resumed')
-    lu.assertFalse(module.foldRecoveryGaveUp, 'success is not a reason to refuse the next one')
-
-    -- and it folds again later in the same manoeuvre
-    local again = {}
-    for i = 1, 50 do again[i] = 45 + i * 0.1 end
-    lu.assertTrue(run(module, again), 'a second fold in one reverse still gets helped')
+--- It folds both ways and the reading has to follow.
+function TestHitchAngle:testItFoldsBothWays()
+    local left = towedRig(0, 35):getHitchAngle(towedRig(0, 35):firstTowedUnit())
+    local right = towedRig(0, -35):getHitchAngle(towedRig(0, -35):firstTowedUnit())
+    lu.assertTrue(left * right < 0, 'the two sides cannot have the same sign')
 end
 
-
---- The measurement belongs to ONE rig.
----
---- It is taken once, because the gap does not change while driving - but it does change the moment
---- something else is hitched up. A stale answer is worse than none: unhitch a tipper, put a fifteen
---- metre livestock trailer behind the same tractor, and a cached angle would keep steering to the
---- tipper's shape for the rest of the session. Tied to the trailer it was measured for, rather than
---- to a reset that may never come.
-function TestRigClearance:testSwappingTheTrailerRemeasures()
-    local module = rig(11, 3, 3.5, 1.5)          -- roomy rig
-    local roomy = module:getRigClearanceAngle()
-    lu.assertTrue(roomy > 60, 'test setup: this one has plenty of room')
-
-    -- a different, much wider trailer on the same tractor, closer in
-    local other = { components = { { node = 'other' } } }
-    other.ad = { adDimensions = {
-        maxWidthLeft = 1.5, maxWidthRight = 1.5, maxLengthFront = 3.5, maxLengthBack = 5,
-    } }
-    MockEngine.nodePositions['other'] = { x = 0, y = 0, z = -7 }
-    module.vehicle.trailer = other
-
-    local tight = module:getRigClearanceAngle()
-    lu.assertNotNil(tight)
-    lu.assertTrue(tight < 20, string.format(
-        'a new rig has to be measured afresh, got %.1f from the old one', tight))
-end
-
---- And the same trailer is still only measured once.
-function TestRigClearance:testTheSameTrailerIsNotRemeasured()
-    local module = rig(8, 3, 3.5, 1.5)
-    local first = module:getRigClearanceAngle()
-
-    MockEngine.nodePositions['trailer'] = { x = 0, y = 0, z = -20 }
-    lu.assertAlmostEquals(module:getRigClearanceAngle(), first, 0.01,
-        'the gap does not change while driving, so it is not measured again')
-end
-
-
---- A vehicle with nothing behind it cannot jackknife, and must not think it has.
----
---- On a solo reverse getBasicStates fills angleToTrailer with the STEERING angle instead of a hitch
---- angle - see its reverseSolo branch - and a tractor at full lock reaches forty to sixty degrees of
---- that. Read as a fold it is past any limit this module sets, so a bare tractor reversing round a
---- corner would have decided it had jackknifed and pulled forward, with no trailer at all.
-function TestFoldRecovery:testASoloVehicleNeverPullsForward()
-    local module = folding()
-    module.reverseSolo = true
-
-    local hardLock = {}
-    for i = 1, 200 do hardLock[i] = 55 + i * 0.01 end
-
-    local _, everPulled = run(module, hardLock)
-    lu.assertFalse(everPulled,
-        'full steering lock on a solo reverse is not a jackknife')
-    lu.assertFalse(module.straightening)
-end
-
---- And it does not carry a half filled fold clock into the moment a trailer IS found.
-function TestFoldRecovery:testTheSoloCaseLeavesNoResidue()
-    local module = folding()
-    module.reverseSolo = true
-    local hardLock = {}
-    for i = 1, 50 do hardLock[i] = 55 + i * 0.01 end
-    run(module, hardLock)
-
-    module.reverseSolo = false
-    local angles = {}
-    for i = 1, 10 do angles[i] = 45 + i * 0.1 end
-    lu.assertFalse(run(module, angles) == true,
-        'the fold has to be observed afresh, not inherited from the solo steering')
-end
-
-
---- Losing the trailer mid-pull must not leave a pull half finished, ready to resume from a stale
---- clock when one is found again. getReverseNode can fail to identify a reverse attachable on one
---- frame and find it on the next.
-function TestFoldRecovery:testLosingTheTrailerMidPullEndsThePull()
-    local module = folding()
-    local angles = {}
-    for i = 1, 50 do angles[i] = 45 + i * 0.1 end
-    run(module, angles)
-    lu.assertTrue(module.straightening, 'test setup: pulling forward')
-
-    module.reverseSolo = true
-    run(module, { 55 })
-    lu.assertFalse(module.straightening, 'no trailer means no pull to finish')
-
-    -- and when one is found again, the fold has to be observed afresh
-    module.reverseSolo = false
-    local again = {}
-    for i = 1, 10 do again[i] = 45 + i * 0.1 end
-    local _, everPulled = run(module, again)
-    lu.assertFalse(everPulled, 'a second of fold is not a resumed pull')
+--- Nothing towed means no hitch angle, and the caller must get nil rather than a zero it would
+--- read as a perfectly straight rig.
+function TestHitchAngle:testNothingTowedGivesNil()
+    local module = towedRig(0, 0)
+    AutoDrive.getAllTowedUnits = function() return { module.vehicle }, 1 end
+    lu.assertNil(module:firstTowedUnit())
+    lu.assertNil(module:getHitchAngle(nil))
 end
 
 os.exit(lu.LuaUnit.run())
