@@ -6,6 +6,109 @@ function AutoDrive:checkForVehicleCollision(vehicle,boundingBox, excludedVehicle
     return AutoDrive.checkForVehiclesInBox(boundingBox, excludedVehicles)
 end
 
+--- The same vehicles checkForVehiclesInBox would consider, resolved ONCE instead of per query.
+---
+--- Sibling of the function below and deliberately next to it, because the two have to keep the same
+--- idea of what counts: same exclusions - the caller's own rig through checkIsConnected, operating
+--- conveyor belts, trains - and the same 50 m reach, applied by the caller against the positions
+--- returned here.
+---
+--- It exists because the pathfinder asks the question per CELL. There is no spatial vehicle index in
+--- the game (VehicleSystem keeps a plain list), so every query walks every vehicle in the mission and
+--- calls getWorldTranslation on it. Once per frame while driving that is nothing; a few thousand
+--- times per search it is hundreds of thousands of engine calls, on a search that already takes
+--- twenty seconds. Hoisting the engine calls out leaves the per-cell work as plain arithmetic and a
+--- polygon test against a handful of boxes.
+---
+--- The snapshot is taken once per search, so a vehicle that MOVES during one is stale. That is the
+--- right trade here: what the planner has to route around is the machine standing still, and a
+--- moving one is the collision sensors' job while driving.
+--- The same vehicles checkForVehiclesInBox would consider, resolved ONCE instead of per query.
+---
+--- Sibling of the function below and deliberately next to it, because the two have to keep the same
+--- idea of what counts: same exclusions - the caller's own rig through checkIsConnected, operating
+--- conveyor belts, trains - and the same 50 m reach, applied by the caller against the positions
+--- returned here.
+---
+--- It exists because the pathfinder asks the question per CELL. There is no spatial vehicle index in
+--- the game (VehicleSystem keeps a plain list), so every query walks every vehicle in the mission and
+--- calls getWorldTranslation on it. Once per frame while driving that is nothing; a few thousand
+--- times per search it is hundreds of thousands of engine calls, on a search that already takes
+--- twenty seconds. Hoisting the engine calls out leaves the per-cell work as plain arithmetic and a
+--- polygon test against a handful of boxes.
+---
+--- The snapshot is taken once per search, so a vehicle that MOVES during one is stale. That is the
+--- right trade here: what the planner has to route around is the machine standing still, and a
+--- moving one is the collision sensors' job while driving.
+--- The first way point on a route that is clear of any machine standing on it.
+---
+--- Rejoining the road network is only worth anything if you rejoin PAST what stopped you. Measured:
+--- a full unloader planned its way out three times out of three - the pathfinder succeeded every
+--- time - and still ended up nose to nose with the harvester, because the plan only covered the
+--- forty metres to the rejoin point and the harvester was standing further along the same field
+--- course. The planner never looks beyond where it hands back to the network, so the way out has to
+--- hand back somewhere the network is actually drivable.
+---
+--- Returns fromIndex unchanged when nothing is standing on the route, which is the ordinary case.
+function AutoDrive.firstWayPointClearOfVehicles(wayPoints, fromIndex, excludedVehicles, clearance)
+    if wayPoints == nil or #wayPoints < 2 or fromIndex == nil then
+        return fromIndex
+    end
+    local obstacles = AutoDrive.collectObstacleVehicles(excludedVehicles)
+    if #obstacles == 0 then
+        return fromIndex
+    end
+
+    local lastBlocked = 0
+    for index = 1, #wayPoints - 1 do
+        local wayPoint = wayPoints[index]
+        if wayPoint ~= nil and wayPoint.x ~= nil then
+            for _, obstacle in ipairs(obstacles) do
+                local dx, dz = wayPoint.x - obstacle.x, wayPoint.z - obstacle.z
+                if (dx * dx + dz * dz) < (clearance * clearance) then
+                    lastBlocked = index
+                    break
+                end
+            end
+        end
+    end
+
+    if lastBlocked == 0 then
+        return fromIndex
+    end
+    -- one past the last blocked point, and never the very end of the route: the last point is where
+    -- the append takes over, and aiming at it leaves nothing to append.
+    return math.max(fromIndex, math.min(lastBlocked + 1, #wayPoints - 1))
+end
+
+function AutoDrive.collectObstacleVehicles(excludedVehicles)
+    local obstacles = {}
+    for _, otherVehicle in pairs(AutoDrive.getAllVehicles()) do
+        if otherVehicle ~= nil and otherVehicle.components ~= nil and otherVehicle.size ~= nil
+            and otherVehicle.size.width ~= nil and otherVehicle.size.length ~= nil and otherVehicle.rootNode ~= nil then
+            local isExcluded = (otherVehicle.spec_conveyorBelt and otherVehicle.spec_motorized and otherVehicle.getIsMotorStarted and otherVehicle:getIsMotorStarted())
+                or (otherVehicle.trainSystem ~= nil)
+            if not isExcluded and excludedVehicles ~= nil then
+                for _, excludedVehicle in pairs(excludedVehicles) do
+                    if excludedVehicle == otherVehicle or AutoDrive:checkIsConnected(excludedVehicle, otherVehicle) then
+                        isExcluded = true
+                        break
+                    end
+                end
+            end
+            if not isExcluded then
+                local x, y, z = getWorldTranslation(otherVehicle.components[1].node)
+                obstacles[#obstacles + 1] = {
+                    vehicle = otherVehicle,
+                    x = x, y = y, z = z,
+                    box = AutoDrive.getBoundingBoxForVehicle(otherVehicle),
+                }
+            end
+        end
+    end
+    return obstacles
+end
+
 function AutoDrive.checkForVehiclesInBox(boundingBox, excludedVehicles)
     for _, otherVehicle in pairs(AutoDrive.getAllVehicles()) do
         if otherVehicle ~= nil and otherVehicle.components ~= nil and otherVehicle.size.width ~= nil and otherVehicle.size.length ~= nil and otherVehicle.rootNode ~= nil then

@@ -457,18 +457,23 @@ TestVehicleAsObstacle = {}
 
 function TestVehicleAsObstacle:setUp()
     TestSetup.reset()
-    self.savedCheck = AutoDrive.checkForVehiclesInBox
-    self.seen = {}
+    self.saved = {
+        collect = AutoDrive.collectObstacleVehicles,
+        intersect = AutoDrive.boxesIntersect,
+    }
+    self.seen = { intersects = true }
     local seen = self.seen
-    AutoDrive.checkForVehiclesInBox = function(box, excluded)
-        seen.box = box
+    AutoDrive.collectObstacleVehicles = function(excluded)
         seen.excluded = excluded
-        return seen.answer == true
+        seen.collectCalls = (seen.collectCalls or 0) + 1
+        return seen.obstacles or {}
     end
+    AutoDrive.boxesIntersect = function(box) seen.box = box return seen.intersects end
 end
 
 function TestVehicleAsObstacle:tearDown()
-    AutoDrive.checkForVehiclesInBox = self.savedCheck
+    AutoDrive.collectObstacleVehicles = self.saved.collect
+    AutoDrive.boxesIntersect = self.saved.intersect
 end
 
 local function cellWithCorners()
@@ -479,9 +484,15 @@ local function cellWithCorners()
     return cell, corners
 end
 
+--- An obstacle at the cell, at the cell's own height.
+local function standing(x, z, y)
+    return { { vehicle = { getName = function() return 'JAGUAR 990' end },
+               x = x, z = z, y = y or 42, box = {} } }
+end
+
 function TestVehicleAsObstacle:testAStandingVehicleBlocksTheCell()
     local p = pfm()
-    self.seen.answer = true
+    self.seen.obstacles = standing(0, 0)
     local cell, corners = cellWithCorners()
 
     lu.assertTrue(p:vehicleBlockingCell(cell, corners))
@@ -489,16 +500,28 @@ end
 
 function TestVehicleAsObstacle:testAnEmptyCellIsNotBlocked()
     local p = pfm()
-    self.seen.answer = false
+    self.seen.obstacles = {}
     local cell, corners = cellWithCorners()
 
     lu.assertFalse(p:vehicleBlockingCell(cell, corners))
 end
 
+--- The name is what turns "a cell was refused" into a diagnosis.
+function TestVehicleAsObstacle:testTheBlockingVehicleIsNamed()
+    local p = pfm()
+    self.seen.obstacles = standing(0, 0)
+    local cell, corners = cellWithCorners()
+
+    p:vehicleBlockingCell(cell, corners)
+
+    lu.assertEquals(p.lastCollisionName, 'JAGUAR 990')
+end
+
 --- The corners are built in the plane and the check compares heights, so the ground height has to be
---- filled in. Without it the first vehicle within fifty metres makes it error on nil.
+--- filled in. Without it the comparison runs on nil.
 function TestVehicleAsObstacle:testTheBoxCarriesTheGroundHeight()
     local p = pfm()
+    self.seen.obstacles = standing(0, 0)
     local cell, corners = cellWithCorners()
 
     p:vehicleBlockingCell(cell, corners)
@@ -537,6 +560,60 @@ function TestVehicleAsObstacle:testWithoutATargetOnlyOurselvesAreSpared()
     p:vehicleBlockingCell(cell, corners)
 
     lu.assertEquals(#self.seen.excluded, 1)
+end
+
+--- The whole reason the list is a snapshot: the game has no spatial vehicle index, so resolving it
+--- per cell means walking every vehicle in the mission and calling into the engine for each. Once
+--- per frame while driving that is nothing; a few thousand times per search it is not.
+function TestVehicleAsObstacle:testTheVehicleListIsResolvedOncePerSearch()
+    local p = pfm()
+    self.seen.obstacles = standing(500, 500)
+    local cell, corners = cellWithCorners()
+
+    p:vehicleBlockingCell(cell, corners)
+    p:vehicleBlockingCell(cell, corners)
+    p:vehicleBlockingCell(cell, corners)
+
+    lu.assertEquals(self.seen.collectCalls, 1)
+end
+
+--- And a search starting fresh resolves it again, or a machine that has since moved stays a wall.
+function TestVehicleAsObstacle:testAFreshSearchResolvesItAgain()
+    local savedSetting = AutoDrive.getSetting
+    local savedMask = AutoDrive.collisionMaskTerrain
+    AutoDrive.getSetting = function() return 1 end
+    AutoDrive.collisionMaskTerrain = 0
+
+    local p = pfm()
+    p.vehicle.size = { length = 6, width = 3, height = 4 }
+    local cell, corners = cellWithCorners()
+    p:vehicleBlockingCell(cell, corners)
+    p:reset()
+    p:vehicleBlockingCell(cell, corners)
+
+    AutoDrive.getSetting = savedSetting
+    AutoDrive.collisionMaskTerrain = savedMask
+
+    lu.assertEquals(self.seen.collectCalls, 2)
+end
+
+--- Far away is not in the way. The cull is what keeps the per-cell work to arithmetic.
+function TestVehicleAsObstacle:testAVehicleBeyondTheReachIsIgnored()
+    local p = pfm()
+    self.seen.obstacles = standing(500, 500)
+    local cell, corners = cellWithCorners()
+
+    lu.assertFalse(p:vehicleBlockingCell(cell, corners),
+        'boxesIntersect would say yes - it must not even be asked')
+end
+
+--- Nor is a machine well above or below the route, which is what the height test is for.
+function TestVehicleAsObstacle:testAVehicleAtAVeryDifferentHeightIsIgnored()
+    local p = pfm()
+    self.seen.obstacles = standing(0, 0, 42 + 25)
+    local cell, corners = cellWithCorners()
+
+    lu.assertFalse(p:vehicleBlockingCell(cell, corners))
 end
 
 
@@ -658,7 +735,8 @@ function TestCellConsultsVehicles:setUp()
     TestSetup.reset()
     self.saved = {
         onField = AutoDrive.checkIsOnField,
-        inBox = AutoDrive.checkForVehiclesInBox,
+        collect = AutoDrive.collectObstacleVehicles,
+        intersect = AutoDrive.boxesIntersect,
         pathInBox = AutoDrive.checkForVehiclePathInBox,
         overlap = _G.overlapBox,
     }
@@ -669,9 +747,18 @@ end
 
 function TestCellConsultsVehicles:tearDown()
     AutoDrive.checkIsOnField = self.saved.onField
-    AutoDrive.checkForVehiclesInBox = self.saved.inBox
+    AutoDrive.collectObstacleVehicles = self.saved.collect
+    AutoDrive.boxesIntersect = self.saved.intersect
     AutoDrive.checkForVehiclePathInBox = self.saved.pathInBox
     _G.overlapBox = self.saved.overlap
+end
+
+--- A vehicle sitting exactly on the cell, and one nowhere near it.
+local function obstacleAt(x, z)
+    return function()
+        return { { vehicle = { getName = function() return 'JAGUAR 990' end },
+                   x = x, z = z, y = 0, box = {} } }
+    end
 end
 
 --- A pathfinder with every OTHER check in isDriveableAstar neutralised, so the only thing that can
@@ -695,7 +782,8 @@ end
 
 function TestCellConsultsVehicles:testACellWithAVehicleStandingInItIsRefused()
     local p = driveable()
-    AutoDrive.checkForVehiclesInBox = function() return true end
+    AutoDrive.collectObstacleVehicles = obstacleAt(2, 0)
+    AutoDrive.boxesIntersect = function() return true end
     local cell = { x = 2, z = 0, from_node = { x = 1, z = 0 } }
 
     p:isDriveableAstar(cell)
@@ -707,7 +795,8 @@ end
 
 function TestCellConsultsVehicles:testAnEmptyCellIsStillDriveable()
     local p = driveable()
-    AutoDrive.checkForVehiclesInBox = function() return false end
+    AutoDrive.collectObstacleVehicles = function() return {} end
+    AutoDrive.boxesIntersect = function() return false end
     local cell = { x = 2, z = 0, from_node = { x = 1, z = 0 } }
 
     p:isDriveableAstar(cell)

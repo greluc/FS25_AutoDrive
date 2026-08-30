@@ -117,7 +117,11 @@ end
 function PathFinderModule:reset()
     PathFinderModule.debugMsg(self.vehicle, "PFM:reset start")
     self.mask = AutoDrive.collisionMaskTerrain
-    self.obstacleExcluded = nil
+    self.obstacleVehicles = nil
+    -- how much work the cell test actually did, reported when a path is found: a search that
+    -- succeeds having tested six cells has not looked at much, and that is worth knowing
+    self.cellsTested = 0
+    self.cellsRefusedByVehicle = 0
     self.steps = 0
     self.grid = {}
     self.wayPoints = {}
@@ -1139,11 +1143,13 @@ function PathFinderModule:update(dt)
                     diffNetTime = netGetTime() - diffNetTime
                     self.diffOverallNetTime = self.diffOverallNetTime + diffNetTime
                     if current then
-                        PathFinderModule.debugMsg(self.vehicle, "PFM:update find goal reached self.steps %d diffOverallNetTime %d self.nodeGoal xz %d,%d current xz %d,%d"
+                        PathFinderModule.debugMsg(self.vehicle, "PFM:update find goal reached self.steps %d diffOverallNetTime %d self.nodeGoal xz %d,%d current xz %d,%d - cells tested %d, refused for a vehicle %d"
                             , self.steps
                             , self.diffOverallNetTime
                             , self.nodeGoal.x, self.nodeGoal.z
                             , current.x, current.z
+                            , self.cellsTested or 0
+                            , self.cellsRefusedByVehicle or 0
                         )
                     end
 
@@ -1907,21 +1913,50 @@ end
 -- compares heights, so the ground height under the cell is filled in here. Passing the bare corners
 -- would arithmetic-error on nil the first time a vehicle came within fifty metres.
 function PathFinderModule:vehicleBlockingCell(cell, corners)
-    if AutoDrive.checkForVehiclesInBox == nil or corners == nil then
+    if AutoDrive.collectObstacleVehicles == nil or corners == nil then
         return false
     end
-    if self.obstacleExcluded == nil then
-        self.obstacleExcluded = { self.vehicle }
+    if self.obstacleVehicles == nil then
+        local excluded = { self.vehicle }
         if self.targetVehicle ~= nil then
-            self.obstacleExcluded[#self.obstacleExcluded + 1] = self.targetVehicle
+            excluded[#excluded + 1] = self.targetVehicle
         end
+        self.obstacleVehicles = AutoDrive.collectObstacleVehicles(excluded)
+        -- Once per search, name them. Three rounds of this have gone on a guess about whether the
+        -- planner can see a machine at all; one line settles it. Zero here means the snapshot is
+        -- empty and the geometry is beside the point; a name here means the opposite.
+        local names = {}
+        for _, obstacle in ipairs(self.obstacleVehicles) do
+            names[#names + 1] = obstacle.vehicle.getName ~= nil and obstacle.vehicle:getName() or "unnamed"
+        end
+        PathFinderModule.debugMsg(self.vehicle, "PFM: obstacle vehicles considered %d - %s"
+            , #self.obstacleVehicles
+            , table.concat(names, ", ")
+        )
     end
+    if #self.obstacleVehicles == 0 then
+        return false
+    end
+
     local y = cell.shapeDefinition ~= nil and cell.shapeDefinition.y or 0
     local box = {}
     for i, corner in ipairs(PathFinderModule.cornersAsPolygon(corners)) do
         box[i] = { x = corner.x, y = y, z = corner.z }
     end
-    return AutoDrive.checkForVehiclesInBox(box, self.obstacleExcluded) == true
+
+    -- Cull cheaply before the polygon test, and by the same numbers the driving check uses: 50 m
+    -- across and 10 m of height, so a machine on a bridge over the route is not a wall on it.
+    for _, obstacle in ipairs(self.obstacleVehicles) do
+        local dx, dz = box[1].x - obstacle.x, box[1].z - obstacle.z
+        if (dx * dx + dz * dz) < (PathFinderModule.OBSTACLE_VEHICLE_RANGE * PathFinderModule.OBSTACLE_VEHICLE_RANGE)
+            and math.abs(y - obstacle.y) < 10 then
+            if AutoDrive.boxesIntersect(box, obstacle.box) == true then
+                self.lastCollisionName = obstacle.vehicle.getName ~= nil and obstacle.vehicle:getName() or "a vehicle"
+                return true
+            end
+        end
+    end
+    return false
 end
 
 -- The tightest corner the RIG can hold, as opposed to the one the tractor could.
@@ -1969,6 +2004,10 @@ end
 -- back to demanding room the rig does not need. The measured half widths already carry
 -- AutoDrive.DIMENSION_ADDITION (0.2 m) each; this is on top of that.
 PathFinderModule.TRAIN_SIDE_CLEARANCE = 1.0
+
+-- How far from a cell a standing vehicle still counts, matching the cull inside
+-- checkForVehiclesInBox so the planner and the driver agree on reach.
+PathFinderModule.OBSTACLE_VEHICLE_RANGE = 50
 
 -- Half extents of the box a cell is tested with, derived from the actual train.
 --
@@ -2934,6 +2973,7 @@ function PathFinderModule:drawDebugNewPF()
 end
 
 function PathFinderModule:isDriveableAstar(cell)
+    self.cellsTested = (self.cellsTested or 0) + 1
     cell.isRestricted = false
     cell.incoming = cell.from_node
     cell.hasCollision = false
@@ -3034,8 +3074,10 @@ function PathFinderModule:isDriveableAstar(cell)
     if not cell.isRestricted and self:vehicleBlockingCell(cell, corners) then
         cell.hasCollision = true
         cell.isRestricted = true
-        PathFinderModule.debugMsg(self.vehicle, "PFM:isDriveableAstar vehicle standing in cell xz %d,%d"
+        self.cellsRefusedByVehicle = (self.cellsRefusedByVehicle or 0) + 1
+        PathFinderModule.debugMsg(self.vehicle, "PFM:isDriveableAstar vehicle standing in cell xz %d,%d - %s"
             , cell.x, cell.z
+            , tostring(self.lastCollisionName or "unknown")
         )
     end
 
