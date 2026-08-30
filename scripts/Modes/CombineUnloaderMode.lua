@@ -140,6 +140,9 @@ function CombineUnloaderMode:monitorTasks(dt)
             self.failedPathFinder = 0
         else
             CombineUnloaderMode.debugMsg(self.vehicle, "CombineUnloaderMode:monitorTasks() - detected stuck vehicle - try reversing out of it now")
+            -- Reversing only buys room. Where the vehicle rejoins the network decides whether that
+            -- room is worth anything, so tell the exit task not to take the nearest way point.
+            self.exitFieldMustPlan = true
             self.vehicle.ad.specialDrivingModule:releaseVehicle()
             self.vehicle.ad.taskModule:abortAllTasks()
             self.activeTask = ReverseFromBadLocationTask:new(self.vehicle)
@@ -520,7 +523,8 @@ function CombineUnloaderMode:getTaskAfterUnload(filledToUnload)
         if AutoDrive.checkIsOnField(x, y, z) and distanceToStart > 30 then
             -- is activated on a field - use ExitFieldTask to leave field according to setting
             CombineUnloaderMode.debugMsg(self.vehicle, "CombineUnloaderMode:getTaskAfterUnload ExitFieldTask...")
-            nextTask = ExitFieldTask:new(self.vehicle)
+            nextTask = ExitFieldTask:new(self.vehicle, self.exitFieldMustPlan)
+            self.exitFieldMustPlan = false
             self.state = self.STATE_EXIT_FIELD
         else
             CombineUnloaderMode.debugMsg(self.vehicle, "CombineUnloaderMode:getTaskAfterUnload UnloadAtDestinationTask...")

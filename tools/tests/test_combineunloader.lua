@@ -1050,6 +1050,39 @@ function TestMonitorTasks:testItReversesOutWhenNobodyCanMakeWay()
     -- structurally, so every one of them is "equal" to every other and the assertion would hold
     -- whatever the state actually is.
     lu.assertTrue(rawequal(mode.state, CombineUnloaderMode.STATE_REVERSE_FROM_BAD_LOCATION))
+    lu.assertTrue(mode.exitFieldMustPlan,
+        'reversing only buys room - the exit has to be told not to rejoin where it came from')
+end
+
+--- And that instruction has to survive the trip to the task, or the reverse is pointless again.
+---
+--- Observed in game three times in one session: reverse out, rejoin at the nearest way point, which
+--- is on the field course the vehicle was queued on, drive straight back into the queue.
+function TestMonitorTasks:testTheExitTaskIsToldToPlanAfterARecovery()
+    local mode, log = monitored(CombineUnloaderMode.STATE_DRIVE_TO_UNLOAD, 10)
+    mode.exitFieldMustPlan = true
+    mode.vehicle.ad.stateModule = {
+        getFirstMarker = function() return { id = 1 } end,
+        getSecondMarker = function() return { id = 2 } end,
+    }
+    local savedById = ADGraphManager.getWayPointById
+    local savedField = AutoDrive.checkIsOnField
+    local savedExit = ExitFieldTask
+    ADGraphManager.getWayPointById = function() return { x = 500, y = 0, z = 500 } end
+    AutoDrive.checkIsOnField = function() return true end
+    -- The suite stubs task constructors by name, so capture the argument here rather than relying
+    -- on whichever stub happens to be installed.
+    local seen = {}
+    ExitFieldTask = { new = function(_, _, mustPlan) seen.mustPlan = mustPlan return {} end }
+
+    mode:getTaskAfterUnload(true)
+
+    ADGraphManager.getWayPointById = savedById
+    AutoDrive.checkIsOnField = savedField
+    ExitFieldTask = savedExit
+
+    lu.assertTrue(seen.mustPlan, 'the exit task has to know the vehicle was just freed')
+    lu.assertFalse(mode.exitFieldMustPlan, 'and it is consumed, not carried into the next exit')
 end
 
 --- Held on the road network, which is the case none of this could see before.

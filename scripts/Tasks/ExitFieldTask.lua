@@ -9,11 +9,18 @@ ExitFieldTask.STRATEGY_START = 0
 ExitFieldTask.STRATEGY_BEHIND_START = 1
 ExitFieldTask.STRATEGY_CLOSEST = 2
 
-function ExitFieldTask:new(vehicle)
+--- mustPlan: leave the field by PLANNING a way out, not by assuming the network is reachable.
+---
+--- Set by the caller when the vehicle has just been recovered from a standstill. In that case being
+--- near a way point is no evidence at all that the vehicle can drive, and the shortcut below - which
+--- finishes the task on the spot when the network is within a driver radius - hands it straight back
+--- to the follower that drove it into the obstacle in the first place.
+function ExitFieldTask:new(vehicle, mustPlan)
     local o = ExitFieldTask:create()
     o.vehicle = vehicle
     o.trailers = nil
     o.failedPathFinder = 0
+    o.mustPlan = mustPlan == true
     o.waitForCheckTimer = AutoDriveTON:new()
     return o
 end
@@ -92,11 +99,34 @@ function ExitFieldTask:startPathPlanning()
         local closestNode = ADGraphManager:getWayPointById(closest)
         local wayPoints = ADGraphManager:pathFromTo(closest, self.vehicle.ad.stateModule:getSecondWayPoint())
         if wayPoints ~= nil and #wayPoints > 1 then
-            if closestDistance > AutoDrive.getDriverRadius(self.vehicle) then
+            -- Where to rejoin the network.
+            --
+            -- The CLOSEST way point is the wrong answer for a vehicle that has just been freed from
+            -- standing behind something, and it is the answer that made the recovery pointless.
+            -- Observed in game, three times in one session: a full unloader reversed away from the
+            -- machine in front of it, then rejoined at the nearest way point - which is on the very
+            -- field course it had just been queued on - and drove back into the same queue. Reversing
+            -- achieves nothing if the way back in is where you came from.
+            --
+            -- So aim further along the route instead, and let the pathfinder find its own way to
+            -- there. Four way points on is the same distance the exitField == 1 setting uses in the
+            -- branch below, so this borrows a number the mod already lives with rather than inventing
+            -- one. A short route keeps the old target, because there is nowhere further to aim.
+            local targetNode = closestNode
+            local nextNode = wayPoints[2]
+            if self.mustPlan and #wayPoints > 6 then
+                targetNode = wayPoints[5]
+                nextNode = wayPoints[6]
+            end
+
+            -- "Already close enough" is true for a vehicle that can drive, and false for one that
+            -- has just proved it cannot. Measured: both unloaders reported zero pathfinder runs in a
+            -- whole session - every single ExitFieldTask ended here, on the shortcut.
+            if closestDistance > AutoDrive.getDriverRadius(self.vehicle) or self.mustPlan then
                 -- initiate pathFinder only if distance to closest wayPoint is enought to find a path
-                local vecToNextPoint = {x = wayPoints[2].x - closestNode.x, z = wayPoints[2].z - closestNode.z}
+                local vecToNextPoint = {x = nextNode.x - targetNode.x, z = nextNode.z - targetNode.z}
                 self.vehicle.ad.pathFinderModule:reset()
-                self.vehicle.ad.pathFinderModule:startPathPlanningTo(closestNode, vecToNextPoint)
+                self.vehicle.ad.pathFinderModule:startPathPlanningTo(targetNode, vecToNextPoint)
                 return true
             else
                 -- close to network, set task finished

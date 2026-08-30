@@ -2881,8 +2881,9 @@ function PathFinderModule:isDriveableAstar(cell)
         cell.hasCollision = cell.hasCollision or (self.collisionhits > 0)
         cell.isRestricted = cell.isRestricted or cell.hasCollision
         if cell.hasCollision then
-            PathFinderModule.debugMsg(self.vehicle, "PFM:isDriveableAstar cell.hasCollision xz %d,%d collision"
+            PathFinderModule.debugMsg(self.vehicle, "PFM:isDriveableAstar cell.hasCollision xz %d,%d blocked by %s"
                 , cell.x, cell.z
+                , tostring(self.lastCollisionName or "unknown")
             )
         end
 
@@ -2909,8 +2910,9 @@ function PathFinderModule:isDriveableAstar(cell)
                 if self.collisionhits > 0 then
                     cell.hasCollision = true
                     cell.isRestricted = true
-                    PathFinderModule.debugMsg(self.vehicle, "PFM:isDriveableAstar trailer sweep blocked xz %d,%d"
+                    PathFinderModule.debugMsg(self.vehicle, "PFM:isDriveableAstar trailer sweep blocked xz %d,%d by %s"
                         , cell.x, cell.z
+                        , tostring(self.lastCollisionName or "unknown")
                     )
                 end
             end
@@ -3518,6 +3520,12 @@ function PathFinderModule:collisionTestCallback(transformId)
             and collisionObject.rootVehicle == self.targetVehicle
         if not isSelf and not isTarget then
             self.collisionhits = self.collisionhits + 1
+            -- Remember WHAT refused the cell, for the same reason the front sensor now does: a
+            -- refused cell tells you a search failed, not why, and "the harvester", "the other
+            -- unloader", "a tree" and "the field boundary" call for four different answers. Costs
+            -- one assignment on a path that has already resolved the object.
+            self.lastCollisionName = collisionObject ~= nil and collisionObject.getName ~= nil
+                and collisionObject:getName() or "scenery"
             if PathFinderModule.debug == true then
                 local currentCollMask = getCollisionFilterGroup(transformId)
                 if currentCollMask then
