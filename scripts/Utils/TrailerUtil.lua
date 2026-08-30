@@ -347,7 +347,41 @@ end
 --- How deep the implement chain is followed. A dolly with a semitrailer on it is two.
 AutoDrive.MAX_TOWED_DEPTH = 6
 
-local function collectTowedUnits(vehicle, out, depth)
+--- Whether an attached object is actually BEHIND the vehicle it hangs off.
+---
+--- "Towed" has to mean towed. Excluding front loader and wheel loader tools by their typeDesc - the
+--- two the fill-capable walk leaves out - catches the obvious cases and misses everything else that
+--- sits at the front: a weight, a front tank, a front mounted implement. Measured in game on a
+--- tractor with a front weight and a trailer: three units where there are two, an angle to "the
+--- first towed unit" of 0.0 degrees because that unit is bolted to the nose and points exactly where
+--- the tractor does, and - the part that hurt - canBeHandledInReverse counting 3 against its limit
+--- of 2, which put the rig on the blind reverse that steers nothing.
+---
+--- The same test getReverseNode already uses: the object's origin, in the root's frame, behind it.
+--- When it cannot be measured the unit is counted, which is the safe direction for the length
+--- callers and only reinstates what this did before.
+local function isTowedBehind(root, object)
+    if root == nil or object == nil then
+        return true
+    end
+    if root.components == nil or root.components[1] == nil then
+        return true
+    end
+    if object.components == nil or object.components[1] == nil then
+        return true
+    end
+    if AutoDrive.worldToLocal == nil then
+        return true
+    end
+    local x, y, z = getWorldTranslation(object.components[1].node)
+    if x == nil then
+        return true
+    end
+    local _, _, diffZ = AutoDrive.worldToLocal(root, x, y, z)
+    return diffZ == nil or diffZ < 0
+end
+
+local function collectTowedUnits(root, vehicle, out, depth)
     if vehicle == nil or depth > AutoDrive.MAX_TOWED_DEPTH then
         return
     end
@@ -355,12 +389,11 @@ local function collectTowedUnits(vehicle, out, depth)
     if vehicle.getAttachedImplements ~= nil then
         for _, implement in pairs(vehicle:getAttachedImplements()) do
             local object = implement ~= nil and implement.object or nil
-            -- the same two the fill-capable walk leaves out: a shovel on the front is not a unit
-            -- being towed along behind
             if object ~= nil
                 and object.typeDesc ~= g_i18n:getText("typeDesc_frontloaderTool")
-                and object.typeDesc ~= g_i18n:getText("typeDesc_wheelLoaderTool") then
-                collectTowedUnits(object, out, depth + 1)
+                and object.typeDesc ~= g_i18n:getText("typeDesc_wheelLoaderTool")
+                and isTowedBehind(root, object) then
+                collectTowedUnits(root, object, out, depth + 1)
             end
         end
     end
@@ -387,7 +420,7 @@ function AutoDrive.getAllTowedUnits(vehicle)
         return nil, 0
     end
     local units = {}
-    collectTowedUnits(root, units, 0)
+    collectTowedUnits(root, root, units, 0)
     return units, #units
 end
 

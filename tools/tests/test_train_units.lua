@@ -157,4 +157,91 @@ function TestUnloadFillLevel:testTheSettingMovesTheLine()
         'a quarter full is enough once the driver is told a quarter is enough')
 end
 
+
+------------------------------------------------------------------------------------------------------------------------
+--- Towed means towed
+---
+--- The walk counted everything hanging off the vehicle and excluded only front loader and wheel
+--- loader TOOLS, by typeDesc. Everything else at the front came along: a weight, a front tank, a
+--- front mounted implement. Measured in game on a tractor carrying a front weight and pulling a
+--- trailer: three units where there are two, an angle to "the first towed unit" of 0.0 degrees
+--- because that unit is bolted to the nose and points exactly where the tractor does, and
+--- canBeHandledInReverse counting 3 against its limit of 2 - which put the rig on the blind reverse
+--- that steers nothing at all. The trailer folding into the tractor followed from there.
+------------------------------------------------------------------------------------------------------------------------
+TestTowedIsBehind = {}
+
+function TestTowedIsBehind:setUp()
+    TestSetup.reset()
+end
+
+--- A rig whose units have real positions, so the behind test can actually run. zOffset is metres
+--- along the tractor's own axis: negative is behind it, positive in front.
+local function positionedRig(towed)
+    local tractor = { size = { length = 6, width = 3 }, components = { { node = 'root' } } }
+    MockEngine.nodePositions['root'] = { x = 0, y = 0, z = 0 }
+    tractor.getRootVehicle = function() return tractor end
+
+    local attached = {}
+    for i, spec in ipairs(towed) do
+        local node = 'unit' .. i
+        MockEngine.nodePositions[node] = { x = 0, y = 0, z = spec.zOffset }
+        local unit = {
+            size = { length = spec.length or 8, width = 3 },
+            components = { { node = node } },
+            getRootVehicle = function() return tractor end,
+            getAttachedImplements = function() return {} end,
+        }
+        attached[#attached + 1] = { object = unit }
+    end
+    tractor.getAttachedImplements = function() return attached end
+    return tractor
+end
+
+--- The reported rig: a weight on the nose and a trailer behind.
+function TestTowedIsBehind:testAFrontWeightIsNotPartOfTheTrain()
+    local r = positionedRig({
+        { zOffset = 3, length = 1 },     -- the weight, in front
+        { zOffset = -9, length = 10 },   -- the trailer, behind
+    })
+
+    lu.assertEquals(select(2, AutoDrive.getAllTowedUnits(r)), 2,
+        'a weight bolted to the nose is not being towed')
+    lu.assertEquals(AutoDrive.getTractorTrainLength(r, true, false), 16,
+        'and its length is not part of the train')
+end
+
+--- Which is what decides whether the rig may be steered while reversing at all.
+function TestTowedIsBehind:testAFrontWeightDoesNotForceTheBlindReverse()
+    local module = { vehicle = positionedRig({
+        { zOffset = 3, length = 1 },
+        { zOffset = -9, length = 10 },
+    }) }
+
+    lu.assertTrue(ADTrailerModule.canBeHandledInReverse(module),
+        'tractor and one trailer may be steered backwards, weight or no weight')
+end
+
+--- What is genuinely behind still counts, however much of it there is.
+function TestTowedIsBehind:testEverythingBehindStillCounts()
+    local r = positionedRig({
+        { zOffset = -5, length = 4.65 },
+        { zOffset = -14, length = 10.5 },
+    })
+
+    lu.assertEquals(select(2, AutoDrive.getAllTowedUnits(r)), 3)
+end
+
+--- And a unit that cannot be measured is counted, which is the safe direction for the length
+--- callers and is what the walk did before there was a test at all.
+function TestTowedIsBehind:testAnUnmeasurableUnitIsStillCounted()
+    local tractor = { size = { length = 6, width = 3 }, components = { { node = 'root' } } }
+    MockEngine.nodePositions['root'] = { x = 0, y = 0, z = 0 }
+    tractor.getRootVehicle = function() return tractor end
+    local ghost = { size = { length = 8, width = 3 }, getAttachedImplements = function() return {} end }
+    tractor.getAttachedImplements = function() return { { object = ghost } } end
+
+    lu.assertEquals(select(2, AutoDrive.getAllTowedUnits(tractor)), 2)
+end
+
 os.exit(lu.LuaUnit.run())
