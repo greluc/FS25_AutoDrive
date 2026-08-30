@@ -508,17 +508,92 @@ ADSpecialDrivingModule.MAX_TRAILER_ANGLE = 40
 --- has locked - and reading it as one would stop the vehicle steering entirely.
 ADSpecialDrivingModule.MIN_PLAUSIBLE_TRAILER_ANGLE = 10
 
+--- Half width and forward/backward reach of a unit, measured where AutoDrive has measured it and
+--- taken from the model otherwise. The same order of preference CombineUnloaderMode.getTrainWidth
+--- uses, and for the same reason: the measured hull is the real one, but it is not always there.
+function ADSpecialDrivingModule.unitExtents(unit)
+    if unit == nil then
+        return nil
+    end
+    local dims = unit.ad ~= nil and unit.ad.adDimensions or nil
+    if dims ~= nil and dims.maxWidthLeft ~= nil and dims.maxWidthRight ~= nil
+        and dims.maxLengthFront ~= nil and dims.maxLengthBack ~= nil then
+        return math.max(dims.maxWidthLeft, dims.maxWidthRight), dims.maxLengthFront, dims.maxLengthBack
+    end
+    if unit.size ~= nil and unit.size.width ~= nil and unit.size.length ~= nil then
+        return unit.size.width / 2, unit.size.length / 2, unit.size.length / 2
+    end
+    return nil
+end
+
+--- The hitch angle at which the trailer's front corner reaches the back of the tractor.
+---
+--- Only two numbers decide it: the free gap between the tractor's rear and the trailer's front when
+--- the rig is straight, and how wide the trailer is. The corner swings about the coupling on a
+--- circle, and it arrives at the tractor's rear plane when it has turned through
+--- atan(gap / halfWidth). A tight rig behind a wide trailer folds into itself at twenty degrees; a
+--- long drawbar gives sixty.
+---
+--- Three approximations, and all three err the same way - towards a SMALLER angle than the rig can
+--- really manage, so the estimate can make the controller gentler and never bolder:
+---   the pivot is taken at the tractor's rear face, while the real coupling sits at or behind it,
+---   and a pivot further back would leave more room;
+---   the tractor's own width is not considered, so a corner that would swing clear past the side of
+---   the tractor is still counted as arriving;
+---   the gap is measured between measured hulls, which are the outermost points of each unit.
+---
+--- Measured once, while the rig is straight enough for the measurement to mean anything - taken mid
+--- fold it would read the already rotated geometry and answer far too small.
+ADSpecialDrivingModule.STRAIGHT_ENOUGH_TO_MEASURE = 8
+
+function ADSpecialDrivingModule:getRigClearanceAngle()
+    if self.rigClearanceAngle ~= nil then
+        return self.rigClearanceAngle
+    end
+    local trailer = self.vehicle.trailer
+    if trailer == nil or trailer.components == nil or trailer.components[1] == nil then
+        return nil
+    end
+    if math.abs(self.angleToTrailer or 0) > ADSpecialDrivingModule.STRAIGHT_ENOUGH_TO_MEASURE then
+        return nil
+    end
+
+    local halfWidth, frontReach, _ = ADSpecialDrivingModule.unitExtents(trailer)
+    local _, _, tractorBackReach = ADSpecialDrivingModule.unitExtents(self.vehicle)
+    if halfWidth == nil or tractorBackReach == nil or halfWidth <= 0 then
+        return nil
+    end
+
+    local tx, ty, tz = getWorldTranslation(trailer.components[1].node)
+    local _, _, trailerZ = AutoDrive.worldToLocal(self.vehicle, tx, ty, tz)
+    -- trailerZ is negative behind us; the free space is what is left once both hulls are taken off
+    local gap = math.abs(trailerZ) - tractorBackReach - frontReach
+    if gap < 0 then
+        gap = 0
+    end
+
+    self.rigClearanceAngle = math.deg(math.atan2(gap, halfWidth))
+    return self.rigClearanceAngle
+end
+
 function ADSpecialDrivingModule:getMaxTrailerAngle()
     local limit = ADSpecialDrivingModule.MAX_TRAILER_ANGLE
+    -- Whatever the rig's own shape allows, if it can be worked out. Floored, because a measurement
+    -- that comes out absurdly small would otherwise stop the vehicle steering at all.
+    local clearance = self:getRigClearanceAngle()
+    if clearance ~= nil and clearance >= ADSpecialDrivingModule.MIN_PLAUSIBLE_TRAILER_ANGLE then
+        limit = math.min(limit, clearance)
+    end
+
     local trailer = self.vehicle.trailer
     if trailer == nil or trailer.jointRotLimit == nil or trailer.jointRotLimit[2] == nil then
         return limit
     end
     local declared = math.deg(math.abs(trailer.jointRotLimit[2]))
-    if declared < ADSpecialDrivingModule.MIN_PLAUSIBLE_TRAILER_ANGLE then
-        return limit
+    if declared >= ADSpecialDrivingModule.MIN_PLAUSIBLE_TRAILER_ANGLE then
+        limit = math.min(limit, declared)
     end
-    return math.min(limit, declared)
+    return limit
 end
 
 function ADSpecialDrivingModule:reverseToPoint(dt, maxSpeed)
@@ -618,10 +693,14 @@ function ADSpecialDrivingModule:reverseToPoint(dt, maxSpeed)
     -- into the tractor and no amount of further steering recovers it. Throttled, because this runs
     -- every frame of every reverse.
     if (g_updateLoopIndex + self.vehicle.id) % AutoDrive.PERF_FRAMES == 0 then
+        -- The geometric estimate is reported separately from the limit actually in force, because
+        -- the two answer different questions: the limit is what the controller is steering to, the
+        -- estimate is a claim about the rig that can be checked against where it really binds.
         AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO,
-            "reverse: hitch %.1f deg (limit %.1f), wanted %.1f, steering %.1f deg, %.1f km/h",
-            self.angleToTrailer or 0, maxTrailerAngle, targetAngleToTrailer,
-            self.steeringAngle or 0, speed)
+            "reverse: hitch %.1f deg (limit %.1f, rig allows %s), wanted %.1f, steering %.1f deg, %.1f km/h",
+            self.angleToTrailer or 0, maxTrailerAngle,
+            self.rigClearanceAngle ~= nil and string.format("%.1f", self.rigClearanceAngle) or "unknown",
+            targetAngleToTrailer, self.steeringAngle or 0, speed)
     end
 
     self.lastAngleToPoint = self.angleToPoint
