@@ -485,6 +485,42 @@ function ADSpecialDrivingModule:getReverseNode()
     return reverseNode
 end
 
+--- The largest hitch angle the reverse controller will aim for.
+---
+--- The controller has always clamped its TARGET angle to a fixed forty degrees. That number is a
+--- guess about control stability, not a statement about the rig: how far a trailer can swing before
+--- its front corner reaches the tractor depends on the drawbar, the trailer's width and where the
+--- hitch sits, and it differs enormously between a short tipper and a long semitrailer.
+---
+--- Where the game states a limit, use it. FS25 puts the attached implement's per-axis joint rotation
+--- limits on the implement itself - jointRotLimit[2] is the Y axis, which is yaw, in radians (see
+--- AttacherJoints.updateAttacherJointLimits and the setRotationLimit(i-1, ...) beside it). Only 70 of
+--- the 267 base game vehicles with a trailer hitch declare one, so this is not a general answer; for
+--- the rest nothing changes.
+---
+--- Taken as a CEILING on the existing figure, never as a replacement. A rig that may only fold
+--- thirty degrees must not be aimed at forty; one that may fold eighty is still better steered to
+--- forty, because the clamp is also what keeps the controller stable. So the change can only ever
+--- reduce how far the trailer is asked to swing.
+ADSpecialDrivingModule.MAX_TRAILER_ANGLE = 40
+
+--- Below this the declared limit is not a hinge angle at all - an unset field, or a joint the game
+--- has locked - and reading it as one would stop the vehicle steering entirely.
+ADSpecialDrivingModule.MIN_PLAUSIBLE_TRAILER_ANGLE = 10
+
+function ADSpecialDrivingModule:getMaxTrailerAngle()
+    local limit = ADSpecialDrivingModule.MAX_TRAILER_ANGLE
+    local trailer = self.vehicle.trailer
+    if trailer == nil or trailer.jointRotLimit == nil or trailer.jointRotLimit[2] == nil then
+        return limit
+    end
+    local declared = math.deg(math.abs(trailer.jointRotLimit[2]))
+    if declared < ADSpecialDrivingModule.MIN_PLAUSIBLE_TRAILER_ANGLE then
+        return limit
+    end
+    return math.min(limit, declared)
+end
+
 function ADSpecialDrivingModule:reverseToPoint(dt, maxSpeed)
     if maxSpeed == nil then
         maxSpeed = math.huge
@@ -514,7 +550,9 @@ function ADSpecialDrivingModule:reverseToPoint(dt, maxSpeed)
         self.dFactor = 6.7 --self.vehicle.ad.stateModule:getFieldSpeedLimit() * 0.1 --10
     end
 
-    local targetAngleToTrailer = math.clamp((p * self.pFactor) + (self.i * self.iFactor) + (d * self.dFactor), -40, 40)
+    local maxTrailerAngle = self:getMaxTrailerAngle()
+    local targetAngleToTrailer = math.clamp((p * self.pFactor) + (self.i * self.iFactor) + (d * self.dFactor),
+        -maxTrailerAngle, maxTrailerAngle)
     local targetDiff = self.angleToTrailer - targetAngleToTrailer
     local offsetX = -targetDiff * 5
     local offsetZ = -20
@@ -574,6 +612,17 @@ function ADSpecialDrivingModule:reverseToPoint(dt, maxSpeed)
     speed = math.min(maxSpeed, speed)
     AutoDrive.driveInDirection(self.vehicle, dt, maxAngle, acc, 0.2, 20, true, false, lx, lz, speed, 1)
     AutoDrive.smootherDriving = storedSmootherDriving
+
+    -- What the rig is actually doing while reversing, which nothing showed before. The hitch angle
+    -- is the quantity the whole manoeuvre turns on: past a certain figure the trailer is folding
+    -- into the tractor and no amount of further steering recovers it. Throttled, because this runs
+    -- every frame of every reverse.
+    if (g_updateLoopIndex + self.vehicle.id) % AutoDrive.PERF_FRAMES == 0 then
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO,
+            "reverse: hitch %.1f deg (limit %.1f), wanted %.1f, steering %.1f deg, %.1f km/h",
+            self.angleToTrailer or 0, maxTrailerAngle, targetAngleToTrailer,
+            self.steeringAngle or 0, speed)
+    end
 
     self.lastAngleToPoint = self.angleToPoint
 end
