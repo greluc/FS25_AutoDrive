@@ -136,6 +136,7 @@ function PathFinderModule:reset()
     self.goingToNetwork  = false
     self.goingToPipe = false
     self.chasingVehicle = false
+    self.targetVehicle = nil
     self.isSecondChasingVehicle = false
     self.max_pathfinder_steps = 0
     self.vehicleMinHeight = math.max(self.vehicle.size and self.vehicle.size.height and self.vehicle.size.height, 5) -- min height for collision detection 5m
@@ -523,6 +524,7 @@ function PathFinderModule:startPathPlanningToPipe(combine, chasing)
         self.max_pathfinder_steps = PathFinderModule.MAX_PATHFINDER_STEPS_COMBINE_TURN
     end
     self.chasingVehicle = chasing
+    self.targetVehicle = combine
 end
 
 function PathFinderModule:startPathPlanningToVehicle(targetVehicle, targetDistance)
@@ -543,6 +545,7 @@ function PathFinderModule:startPathPlanningToVehicle(targetVehicle, targetDistan
 
     self.goingToPipe = false
     self.chasingVehicle = true
+    self.targetVehicle = targetVehicle
     self.isSecondChasingVehicle = true
     if targetVehicle.ad ~= nil and targetVehicle.ad.pathFinderModule ~= nil and targetVehicle.ad.pathFinderModule.fruitToCheck ~= nil then
         self.fruitToCheck = targetVehicle.ad.pathFinderModule.fruitToCheck
@@ -643,6 +646,7 @@ function PathFinderModule:startPathPlanningTo(targetPoint, targetVector)
     self.restrictToField = AutoDrive.getSetting("restrictToField", self.vehicle) and self.startIsOnField and self.endIsOnField
     self.goingToPipe = false
     self.chasingVehicle = false
+    self.targetVehicle = nil
     self.isSecondChasingVehicle = false
     self.goingToNetwork = false
     self.destinationId = nil
@@ -3499,7 +3503,20 @@ end
 function PathFinderModule:collisionTestCallback(transformId)
     if transformId ~= 0 and transformId ~= g_currentMission.terrainRootNode then
         local collisionObject = g_currentMission:getNodeObject(transformId)
-        if (collisionObject == nil) or (collisionObject ~= nil and not (collisionObject.rootVehicle == self.vehicle)) then
+        -- Neither ourselves nor the vehicle we are driving TO. A path to a harvester's pipe ends
+        -- alongside the harvester, and an unloader asking for one is usually standing beside it
+        -- already - so counting it as an obstacle walls in both ends of the search at once. Measured
+        -- in game: the A* popped its start node, had every neighbour refused, and gave up with an
+        -- empty open list on the first iteration ("PFM:find exit end count 1", grid of six) while
+        -- the harvester it could not reach stood a hundred metres away.
+        --
+        -- The vehicle was already handed in - startPathPlanningToPipe takes the combine and
+        -- startPathPlanningToVehicle the target - and both threw it away after reading a position
+        -- out of it, keeping only a boolean saying that a chase was in progress.
+        local isSelf = collisionObject ~= nil and collisionObject.rootVehicle == self.vehicle
+        local isTarget = collisionObject ~= nil and self.targetVehicle ~= nil
+            and collisionObject.rootVehicle == self.targetVehicle
+        if not isSelf and not isTarget then
             self.collisionhits = self.collisionhits + 1
             if PathFinderModule.debug == true then
                 local currentCollMask = getCollisionFilterGroup(transformId)

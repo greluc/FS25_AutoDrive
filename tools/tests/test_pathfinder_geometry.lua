@@ -319,4 +319,98 @@ function TestCellDistance:testASampleOnTheTargetIsAtZero()
     lu.assertAlmostEquals(p:cellDistance(onTarget), 0, 1e-6)
 end
 
+
+------------------------------------------------------------------------------------------------------------------------
+--- What counts as an obstacle
+---
+--- Not ourselves, and not the vehicle we are driving TO. A path to a harvester's pipe ends alongside
+--- the harvester, and an unloader asking for one is usually standing beside it already - so counting
+--- it as an obstacle walls in both ends of the search at once.
+---
+--- Measured in game: the A* popped its start node, had every neighbour refused, and gave up on the
+--- first iteration with an empty open list ("PFM:find exit end count 1", grid of six) while the
+--- harvester it could not reach stood a hundred metres away. The vehicle was already handed in -
+--- startPathPlanningToPipe takes the combine, startPathPlanningToVehicle the target - and both threw
+--- it away after reading a position out of it, keeping only a boolean saying a chase was on.
+------------------------------------------------------------------------------------------------------------------------
+TestCollisionCallback = {}
+
+function TestCollisionCallback:setUp() TestSetup.reset() end
+
+local function hitsFor(nodeObject, targetVehicle)
+    local p = pfm()
+    p.collisionhits = 0
+    p.targetVehicle = targetVehicle
+    g_currentMission.getNodeObject = function(_, _) return nodeObject end
+    g_currentMission.terrainRootNode = 999
+    p:collisionTestCallback(1)
+    return p.collisionhits
+end
+
+function TestCollisionCallback:testAStrangerIsAnObstacle()
+    local other = {}
+    other.rootVehicle = other
+    lu.assertEquals(hitsFor(other, nil), 1)
+end
+
+function TestCollisionCallback:testWeAreNotOurOwnObstacle()
+    local p = pfm()
+    p.collisionhits = 0
+    g_currentMission.getNodeObject = function(_, _) return { rootVehicle = p.vehicle } end
+    g_currentMission.terrainRootNode = 999
+    p:collisionTestCallback(1)
+    lu.assertEquals(p.collisionhits, 0)
+end
+
+--- The one this exists for.
+function TestCollisionCallback:testTheVehicleWeAreDrivingToIsNotAnObstacle()
+    local combine = {}
+    combine.rootVehicle = combine
+    lu.assertEquals(hitsFor(combine, combine), 0,
+        'a path to a harvester cannot be found if the harvester is a wall')
+end
+
+--- And it is only that one vehicle, not every vehicle on the field.
+function TestCollisionCallback:testAnotherVehicleIsStillAnObstacleWhileChasing()
+    local combine = {}
+    combine.rootVehicle = combine
+    local stranger = {}
+    stranger.rootVehicle = stranger
+    lu.assertEquals(hitsFor(stranger, combine), 1)
+end
+
+--- The terrain itself is not an obstacle, and neither is node zero.
+function TestCollisionCallback:testTerrainAndNothingAreNotObstacles()
+    local p = pfm()
+    p.collisionhits = 0
+    g_currentMission.terrainRootNode = 999
+    g_currentMission.getNodeObject = function(_, _) return nil end
+    p:collisionTestCallback(0)
+    p:collisionTestCallback(999)
+    lu.assertEquals(p.collisionhits, 0)
+end
+
+--- And the callback can only spare the target if the search was told which vehicle that is.
+---
+--- Both entry points already receive it and used to throw it away after reading a position out of
+--- it. Driving startPathPlanningToPipe needs a combine, a pipe, a chase position and a grid, so this
+--- reads the source instead: it pins the wiring, not the behaviour, and that is exactly the half
+--- that was missing - the callback above was correct in isolation and had nothing to compare against.
+function TestCollisionCallback:testBothEntryPointsRecordTheVehicleTheyAreDrivingTo()
+    local f = io.open('../../scripts/Modules/PathFinderModule.lua', 'r')
+    local src = f:read('*a')
+    f:close()
+
+    local function contains(needle, message)
+        lu.assertNotNil(string.find(src, needle, 1, true), message)
+    end
+
+    contains('self.targetVehicle = combine',
+        'startPathPlanningToPipe has to remember the combine')
+    contains('self.targetVehicle = targetVehicle',
+        'startPathPlanningToVehicle has to remember its target')
+    contains('self.targetVehicle = nil',
+        'and it has to be let go when the chase ends, or the next search spares a stranger')
+end
+
 os.exit(lu.LuaUnit.run())
