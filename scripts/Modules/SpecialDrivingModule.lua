@@ -166,7 +166,11 @@ function ADSpecialDrivingModule:driveReverse(dt, maxSpeed, maxAcceleration, guid
             "reverse: %s (%d towed units, reverse node %s)",
             guided == true and "guided" or "blind, straight back",
             towed or -1,
-            self.reverseNode ~= nil and "yes" or "no")
+            -- ASKED for, not read off the module. self.reverseNode is only ever assigned by the
+            -- guided path and by handleReverseDriving, so on the blind branch the field is simply
+            -- never filled - and reading it there reported "no" whatever getReverseNode would have
+            -- answered. It said nothing about the rig and I read it as if it did.
+            self:getReverseNode() ~= nil and "yes" or "no")
     end
 
     if self.vehicle.ad.collisionDetectionModule:checkReverseCollision() then
