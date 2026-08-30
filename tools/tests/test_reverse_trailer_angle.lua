@@ -453,4 +453,41 @@ function TestFoldRecovery:testASuccessfulPullDoesNotBlockLaterOnes()
     lu.assertTrue(run(module, again), 'a second fold in one reverse still gets helped')
 end
 
+
+--- The measurement belongs to ONE rig.
+---
+--- It is taken once, because the gap does not change while driving - but it does change the moment
+--- something else is hitched up. A stale answer is worse than none: unhitch a tipper, put a fifteen
+--- metre livestock trailer behind the same tractor, and a cached angle would keep steering to the
+--- tipper's shape for the rest of the session. Tied to the trailer it was measured for, rather than
+--- to a reset that may never come.
+function TestRigClearance:testSwappingTheTrailerRemeasures()
+    local module = rig(11, 3, 3.5, 1.5)          -- roomy rig
+    local roomy = module:getRigClearanceAngle()
+    lu.assertTrue(roomy > 60, 'test setup: this one has plenty of room')
+
+    -- a different, much wider trailer on the same tractor, closer in
+    local other = { components = { { node = 'other' } } }
+    other.ad = { adDimensions = {
+        maxWidthLeft = 1.5, maxWidthRight = 1.5, maxLengthFront = 3.5, maxLengthBack = 5,
+    } }
+    MockEngine.nodePositions['other'] = { x = 0, y = 0, z = -7 }
+    module.vehicle.trailer = other
+
+    local tight = module:getRigClearanceAngle()
+    lu.assertNotNil(tight)
+    lu.assertTrue(tight < 20, string.format(
+        'a new rig has to be measured afresh, got %.1f from the old one', tight))
+end
+
+--- And the same trailer is still only measured once.
+function TestRigClearance:testTheSameTrailerIsNotRemeasured()
+    local module = rig(8, 3, 3.5, 1.5)
+    local first = module:getRigClearanceAngle()
+
+    MockEngine.nodePositions['trailer'] = { x = 0, y = 0, z = -20 }
+    lu.assertAlmostEquals(module:getRigClearanceAngle(), first, 0.01,
+        'the gap does not change while driving, so it is not measured again')
+end
+
 os.exit(lu.LuaUnit.run())

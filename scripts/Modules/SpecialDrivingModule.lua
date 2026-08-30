@@ -41,6 +41,10 @@ function ADSpecialDrivingModule:reset()
     self.straightening = false
     self.foldRecoveryGaveUp = false
     self.lastFoldAngle = nil
+    -- The rig measurement is deliberately NOT cleared here. It is tied to the trailer it was taken
+    -- for and invalidated when that changes, which covers the case a reset does not: the same rig
+    -- has the same gap whether or not a manoeuvre ended. Clearing it as well would be a line no test
+    -- can miss, which is a line doing nothing.
 end
 
 function ADSpecialDrivingModule:stopVehicle(isBlocked, lx, lz)
@@ -557,10 +561,20 @@ end
 ADSpecialDrivingModule.STRAIGHT_ENOUGH_TO_MEASURE = 8
 
 function ADSpecialDrivingModule:getRigClearanceAngle()
+    local trailer = self.vehicle.trailer
+    -- Measured for ONE rig. Hitching something else makes the answer wrong, and a stale one is worse
+    -- than none: unhitch a tipper, put a fifteen metre livestock trailer behind the same tractor,
+    -- and without this it would keep steering to the tipper's fold angle for the rest of the
+    -- session. Same shape as every other piece of state in this session that outlived the thing
+    -- that justified it, so it is tied to the trailer it was measured for rather than to a reset
+    -- that may never come.
+    if self.rigClearanceTrailer ~= trailer then
+        self.rigClearanceAngle = nil
+        self.rigClearanceTrailer = trailer
+    end
     if self.rigClearanceAngle ~= nil then
         return self.rigClearanceAngle
     end
-    local trailer = self.vehicle.trailer
     if trailer == nil or trailer.components == nil or trailer.components[1] == nil then
         return nil
     end
