@@ -194,4 +194,121 @@ function TestRigClearance:testAnAbsurdMeasurementIsFloored()
     lu.assertEquals(module:getMaxTrailerAngle(), ADSpecialDrivingModule.MAX_TRAILER_ANGLE)
 end
 
+
+------------------------------------------------------------------------------------------------------------------------
+--- Pulling forward out of a fold
+---
+--- Past a certain hitch angle reversing cannot undo the fold: every further metre backwards drives
+--- the trailer further into the tractor, whatever the steering does. The only way out is the one
+--- every driver uses - pull forward, which straightens a trailer on its own, and then resume.
+---
+--- The threshold is not a number from a textbook. Whether reversing is still recovering is
+--- observable: the angle is past what the controller aims for AND it is not getting smaller, held
+--- over a stretch rather than judged on one frame.
+------------------------------------------------------------------------------------------------------------------------
+TestFoldRecovery = {}
+
+function TestFoldRecovery:setUp()
+    TestSetup.reset()
+end
+
+local function folding()
+    local module = setmetatable({}, { __index = ADSpecialDrivingModule })
+    module.vehicle = TestSetup.vehicle()
+    module.foldTimer = AutoDriveTON:new()
+    module.straighteningTimer = AutoDriveTON:new()
+    module.straightening = false
+    return module
+end
+
+--- Inside the limit is not a fold at all, however long it lasts.
+function TestFoldRecovery:testAnAngleInsideTheLimitIsNotAFold()
+    lu.assertFalse(ADSpecialDrivingModule.isFoldGettingWorse(30, 29, 40))
+end
+
+--- Past the limit and still growing is the case this exists for.
+function TestFoldRecovery:testPastTheLimitAndGrowingIsAFold()
+    lu.assertTrue(ADSpecialDrivingModule.isFoldGettingWorse(50, 45, 40))
+end
+
+--- Past the limit but coming back means reversing IS recovering it - leave it alone.
+function TestFoldRecovery:testPastTheLimitButRecoveringIsNotAFold()
+    lu.assertFalse(ADSpecialDrivingModule.isFoldGettingWorse(45, 50, 40))
+end
+
+--- The sign is not the point; a rig folds both ways.
+function TestFoldRecovery:testItFoldsBothWays()
+    lu.assertTrue(ADSpecialDrivingModule.isFoldGettingWorse(-50, -45, 40))
+    lu.assertFalse(ADSpecialDrivingModule.isFoldGettingWorse(-45, -50, 40))
+end
+
+local function run(module, angles, dt)
+    local pulling = nil
+    for _, a in ipairs(angles) do
+        module.angleToTrailer = a
+        pulling = module:updateFoldRecovery(dt or 100, 40)
+    end
+    return pulling
+end
+
+--- One bad frame is not a fold. It has to persist.
+function TestFoldRecovery:testAMomentaryFoldDoesNotTriggerIt()
+    local module = folding()
+    local angles = {}
+    for i = 1, 10 do angles[i] = 45 + i * 0.1 end
+    lu.assertFalse(run(module, angles) == true, 'a second of it is not enough')
+end
+
+--- Held long enough without improving, the vehicle pulls forward.
+function TestFoldRecovery:testASustainedFoldPullsForward()
+    local module = folding()
+    local angles = {}
+    for i = 1, 50 do angles[i] = 45 + i * 0.1 end
+    lu.assertTrue(run(module, angles), 'reversing is not recovering this - pull forward')
+end
+
+--- And it stops once the rig is comfortably straight again, not the instant it touches the limit.
+function TestFoldRecovery:testItResumesOnceStraightened()
+    local module = folding()
+    local angles = {}
+    for i = 1, 50 do angles[i] = 45 + i * 0.1 end
+    run(module, angles)
+    lu.assertTrue(module.straightening, 'test setup: it has to be pulling forward first')
+
+    lu.assertTrue(run(module, { 39, 38 }), 'just inside the limit is not straight enough yet')
+    lu.assertFalse(run(module, { 20 }), 'well inside it is')
+end
+
+--- A pull that never straightens the rig has to hand back rather than drive on for ever.
+function TestFoldRecovery:testThePullForwardIsBounded()
+    local module = folding()
+    local angles = {}
+    for i = 1, 50 do angles[i] = 45 + i * 0.1 end
+    run(module, angles)
+
+    local stillPulling = true
+    for _ = 1, math.ceil(ADSpecialDrivingModule.FOLD_RECOVERY_MAX / 100) + 5 do
+        module.angleToTrailer = 60
+        stillPulling = module:updateFoldRecovery(100, 40)
+    end
+
+    lu.assertFalse(stillPulling, 'it cannot pull forward indefinitely')
+end
+
+--- And the controller has to actually pull forward, not merely be able to decide that it should.
+--- The tests above drive updateFoldRecovery directly; this pins that its answer reaches the vehicle.
+--- Wiring, not behaviour, and worth exactly that much.
+function TestFoldRecovery:testTheControllerActsOnTheDecision()
+    local f = io.open('../../scripts/Modules/SpecialDrivingModule.lua', 'r')
+    local src = f:read('*a')
+    f:close()
+
+    lu.assertNotNil(src:match('if self:updateFoldRecovery%(dt, maxTrailerAngle%) then'),
+        'the reverse controller has to ask whether the rig has folded past recovery')
+    local branch = src:match('if self:updateFoldRecovery%(dt, maxTrailerAngle%) then(.-)end')
+    lu.assertNotNil(branch)
+    lu.assertNotNil(branch:match('self:driveForward%(dt%)'),
+        'and answering yes means pulling forward')
+end
+
 os.exit(lu.LuaUnit.run())

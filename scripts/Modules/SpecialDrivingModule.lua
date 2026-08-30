@@ -8,6 +8,10 @@ function ADSpecialDrivingModule:new(vehicle)
     self.__index = self
     o.vehicle = vehicle
     ADSpecialDrivingModule.reset(o)
+    -- Folding past recovery, and the forward pull that undoes it.
+    o.foldTimer = AutoDriveTON:new()
+    o.straighteningTimer = AutoDriveTON:new()
+    o.straightening = false
     return o
 end
 
@@ -576,6 +580,75 @@ function ADSpecialDrivingModule:getRigClearanceAngle()
     return self.rigClearanceAngle
 end
 
+--- Straightening a rig that has folded past recovery.
+---
+--- Past a certain hitch angle, reversing cannot undo the fold: every further metre backwards drives
+--- the trailer further into the tractor, whatever the steering does. The only way out is the one
+--- every driver uses - pull FORWARD, which straightens a trailer on its own, and then resume.
+---
+--- The threshold is not guessed, because it does not have to be. Whether reversing is still
+--- recovering the fold is observable: the angle is past what the controller aims for AND it is not
+--- getting smaller, over a sustained stretch rather than an instant. That reads the actual rig on
+--- the actual ground instead of a number from a textbook that would be wrong for half the combos.
+ADSpecialDrivingModule.FOLD_RECOVERY_AFTER = 3000
+
+--- Pull forward no longer than this, whatever the angle does. A recovery that cannot recover has to
+--- hand back rather than drive on into something.
+ADSpecialDrivingModule.FOLD_RECOVERY_MAX = 8000
+
+--- Resume reversing once the fold is comfortably back inside the limit, not the instant it touches
+--- it - straightening to exactly the limit only folds again on the next metre.
+ADSpecialDrivingModule.FOLD_RECOVERED_FRACTION = 0.6
+
+--- Whether reversing is still winning against the fold.
+---
+--- Its own function so a test can drive the rule rather than restate it.
+function ADSpecialDrivingModule.isFoldGettingWorse(angle, lastAngle, limit)
+    if angle == nil or limit == nil or limit <= 0 then
+        return false
+    end
+    if math.abs(angle) <= limit then
+        return false
+    end
+    if lastAngle == nil then
+        return true
+    end
+    return math.abs(angle) >= math.abs(lastAngle)
+end
+
+--- Track the fold and decide whether the vehicle should be pulling forward this frame.
+function ADSpecialDrivingModule:updateFoldRecovery(dt, limit)
+    if self.straightening then
+        self.straighteningTimer:timer(true, ADSpecialDrivingModule.FOLD_RECOVERY_MAX, dt)
+        local recovered = math.abs(self.angleToTrailer or 0)
+            <= limit * ADSpecialDrivingModule.FOLD_RECOVERED_FRACTION
+        if recovered or self.straighteningTimer:done() then
+            self.straightening = false
+            self.straighteningTimer:timer(false)
+            self.foldTimer:timer(false)
+            AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO,
+                "reverse: straightened to %.1f deg - resuming (%s)",
+                self.angleToTrailer or 0, recovered and "recovered" or "gave up")
+        end
+        self.lastFoldAngle = self.angleToTrailer
+        return self.straightening
+    end
+
+    local worsening = ADSpecialDrivingModule.isFoldGettingWorse(
+        self.angleToTrailer, self.lastFoldAngle, limit)
+    self.lastFoldAngle = self.angleToTrailer
+
+    if self.foldTimer:timer(worsening, ADSpecialDrivingModule.FOLD_RECOVERY_AFTER, dt) then
+        self.straightening = true
+        self.straighteningTimer:timer(false)
+        AutoDrive.debugPrint(self.vehicle, AutoDrive.DC_VEHICLEINFO,
+            "reverse: folded to %.1f deg past a limit of %.1f and not recovering - pulling forward",
+            self.angleToTrailer or 0, limit)
+        return true
+    end
+    return false
+end
+
 function ADSpecialDrivingModule:getMaxTrailerAngle()
     local limit = ADSpecialDrivingModule.MAX_TRAILER_ANGLE
     -- Whatever the rig's own shape allows, if it can be worked out. Floored, because a measurement
@@ -626,6 +699,14 @@ function ADSpecialDrivingModule:reverseToPoint(dt, maxSpeed)
     end
 
     local maxTrailerAngle = self:getMaxTrailerAngle()
+
+    -- A rig folded past what steering can undo is not helped by more reversing. Pull forward
+    -- instead; the trailer straightens itself, and the manoeuvre picks up where it left off.
+    if self:updateFoldRecovery(dt, maxTrailerAngle) then
+        self:driveForward(dt)
+        self.lastAngleToPoint = self.angleToPoint
+        return
+    end
     local targetAngleToTrailer = math.clamp((p * self.pFactor) + (self.i * self.iFactor) + (d * self.dFactor),
         -maxTrailerAngle, maxTrailerAngle)
     local targetDiff = self.angleToTrailer - targetAngleToTrailer
