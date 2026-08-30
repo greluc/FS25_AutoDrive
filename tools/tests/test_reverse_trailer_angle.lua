@@ -150,10 +150,22 @@ function TestRigClearance:testALongDrawbarAllowsMore()
     lu.assertTrue(module:getRigClearanceAngle() > 60)
 end
 
---- Overlapping hulls are not a negative gap, they are no room at all.
-function TestRigClearance:testOverlappingHullsGiveZero()
+--- Overlapping hulls mean the model does not describe this rig, and the honest answer is none.
+---
+--- Measured in game: a real tractor and trailer produced "rig allows 0.0" on every frame of a
+--- reverse. The subtraction assumes both reference points sit at the middle of their hulls, and a
+--- trailer's sits at its axle with the drawbar reaching out in front - so the gap comes out
+--- negative. Nought degrees looked like a measurement; it was a failure wearing a number.
+function TestRigClearance:testOverlappingHullsGiveNoAnswer()
     local module = rig(5, 3, 3.5, 1.5)
-    lu.assertAlmostEquals(module:getRigClearanceAngle(), 0, 0.01)
+    lu.assertNil(module:getRigClearanceAngle(),
+        'a model that does not fit the rig has to say so, not answer zero')
+end
+
+--- And the controller then keeps its own figure rather than being driven to a standstill.
+function TestRigClearance:testAnUnusableModelLeavesTheControllerLimit()
+    local module = rig(5, 3, 3.5, 1.5)
+    lu.assertEquals(module:getMaxTrailerAngle(), ADSpecialDrivingModule.MAX_TRAILER_ANGLE)
 end
 
 --- Measured only while the rig is straight: taken mid fold it would read the already rotated
@@ -189,8 +201,12 @@ function TestRigClearance:testARoomyRigDoesNotRaiseIt()
 end
 
 --- An absurdly small measurement must not lock the steering.
+--- A measurement that is real but absurdly small must not lock the steering either.
 function TestRigClearance:testAnAbsurdMeasurementIsFloored()
-    local module = rig(5, 3, 3.5, 1.5)   -- zero gap, so zero degrees
+    local module = rig(6.6, 3, 3.5, 8)   -- 0.1 m of gap against an eight metre half width
+    local angle = module:getRigClearanceAngle()
+    lu.assertNotNil(angle)
+    lu.assertTrue(angle < ADSpecialDrivingModule.MIN_PLAUSIBLE_TRAILER_ANGLE)
     lu.assertEquals(module:getMaxTrailerAngle(), ADSpecialDrivingModule.MAX_TRAILER_ANGLE)
 end
 

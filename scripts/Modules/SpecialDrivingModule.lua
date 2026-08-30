@@ -631,8 +631,21 @@ function ADSpecialDrivingModule:getRigClearanceAngle(unit, angle)
     local _, _, trailerZ = AutoDrive.worldToLocal(self.vehicle, tx, ty, tz)
     -- trailerZ is negative behind us; the free space is what is left once both hulls are taken off
     local gap = math.abs(trailerZ) - tractorBackReach - frontReach
-    if gap < 0 then
-        gap = 0
+
+    -- A gap of zero or less means the model does not describe this rig, and the honest answer is
+    -- then no answer at all.
+    --
+    -- Measured in game and this is why it is here: a real tractor and trailer produced "rig allows
+    -- 0.0" on every single frame of a reverse. The subtraction assumes both reference points sit at
+    -- the middle of their hulls; a trailer's sits at its axle and its drawbar reaches out in front
+    -- of the body, so half the trailer's length is counted as being where the tractor is and the
+    -- gap comes out negative. Clamping that to zero produced a number - nought degrees - that only
+    -- the plausibility floor stopped from locking the steering, and which looked like a measurement
+    -- rather than a failure. Returning nil falls back to the controller's own figure and says so in
+    -- the log, which is what the caller can actually act on.
+    if gap <= 0 then
+        self.rigClearanceAngle = nil
+        return nil
     end
 
     self.rigClearanceAngle = math.deg(math.atan2(gap, halfWidth))
