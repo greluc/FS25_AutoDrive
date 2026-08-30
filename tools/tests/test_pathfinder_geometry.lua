@@ -72,30 +72,61 @@ function TestBoxExtents:testExtentsAreCachedPerRun()
     lu.assertEquals(p:getTrainHalfExtents(), hw1, 'extents must not be recomputed per cell')
 end
 
---- Which SLOT the extents land in, which is a different question from what they are worth.
+--- What the cell box is, in both axes.
 ---
---- The box is handed to overlapBox turned by atan2(-dz, dx), and under that angle the ex slot is the
---- extent ALONG travel: smoothResultingPPPath_Refined builds its box with the very same angle and
---- puts the along-travel half length there (length/2+2.5 in ex, sideLength+1.5 in ez). Assigning the
---- half extents in their natural order put them the other way round, so the box stood broadside - as
---- wide across the path as the train is long, and only as long as it is wide. Every cell of every
---- search was tested that way, and a rig was refused every gap narrower than its own LENGTH.
+--- ACROSS travel is the rig's half width. That is the honest number and the reason for measuring the
+--- train at all: the corridor has to be wide enough for what is being towed. Assigning the extents
+--- in their natural order put half LENGTH across instead - the box stood broadside, as wide as the
+--- train is long - and refused field entrances and gateways the rig fits through comfortably.
 ---
---- The tests above pin the numbers getTrainHalfExtents returns and say nothing about where they go,
---- which is why the whole gate stayed green with the box turned ninety degrees. The old box survived
---- this because it was square: it is specifically a rig longer than its turn radius that suffers.
-function TestBoxExtents:testTheLongExtentRunsAlongTravelNotAcrossIt()
-    local p = pfm()
-    p.trainHalfWidth, p.trainHalfLength = 1.5, 7   -- a 14 m long, 3 m wide train
+--- ALONG travel is half a grid step, not half the train. The A* steps by minTurnRadius and checks
+--- cell by cell, so consecutive boxes at minTurnRadius/2 abut exactly and the corridor is covered
+--- with no gap. A box the length of the TRAIN reaches three cells either side of its own centre, so
+--- one machine parked near the route blocks a corridor of seven cells. Measured in game with a
+--- harvester on the headland: 17,035 cells refused for collision, 5,075 more by the off-tracking
+--- probe that re-uses this box, and the search giving up with six cells in its grid - it never left
+--- the start. The train's length belongs to the off-tracking box, which is where the rear of the rig
+--- actually cuts the corner.
+---
+--- The slot matters as much as the value: the box is turned by atan2(-dz, dx), under which ex is the
+--- along-travel axis. The tests below pin what getTrainHalfExtents returns and say nothing about
+--- where it goes, which is why the box could stand ninety degrees out with the whole gate green.
+function TestBoxExtents:testTheCellBoxIsOneGridStepAlongAndTheRigWideAcross()
+    local p = pfm()                                  -- minTurnRadius 8
+    p.trainHalfWidth, p.trainHalfLength = 1.5, 10    -- a 20 m long, 3 m wide train
 
     -- entered from the west, so travelling +x
     local shape = p:getShapeDefByDirectionType_New({ x = 10, z = 0, incoming = { x = 9, z = 0 } })
 
     lu.assertAlmostEquals(shape.angleRad, 0, 1e-9, 'test setup: travelling +x is angle zero')
-    lu.assertEquals(shape.widthX, 7,
-        'the ex slot is the along-travel extent, so it carries the half LENGTH')
+    lu.assertEquals(shape.widthX, p.minTurnRadius / 2,
+        'along travel is half a grid step, so neighbouring cell boxes abut')
     lu.assertEquals(shape.widthZ, 1.5,
-        'and ez the half width - the other way round makes a 3 m rig demand a 14 m gap')
+        'across travel is the half width of the rig, not its length')
+end
+
+--- The failure this replaced, stated as itself: the box must never be as wide as the train is long.
+function TestBoxExtents:testTheBoxIsNeverAsWideAsTheTrainIsLong()
+    local p = pfm()
+    p.trainHalfWidth, p.trainHalfLength = 1.5, 10
+
+    local shape = p:getShapeDefByDirectionType_New({ x = 10, z = 0, incoming = { x = 9, z = 0 } })
+
+    lu.assertTrue(shape.widthZ < p.trainHalfLength,
+        'a three metre rig demanded a twenty metre gap when the long extent went across')
+end
+
+--- And it must never reach further along the path than one cell, or a single obstacle closes a
+--- corridor several cells deep and the search cannot leave its start.
+function TestBoxExtents:testTheBoxDoesNotReachPastTheNeighbouringCell()
+    for _, trainHalfLength in ipairs({ 3, 7, 10, 12 }) do
+        local p = pfm()
+        p.trainHalfWidth, p.trainHalfLength = 1.5, trainHalfLength
+        local shape = p:getShapeDefByDirectionType_New({ x = 10, z = 0, incoming = { x = 9, z = 0 } })
+        lu.assertTrue(shape.widthX <= p.minTurnRadius / 2, string.format(
+            'a %.0f m train made the cell box reach %.1f m along a %.1f m grid step',
+            trainHalfLength * 2, shape.widthX * 2, p.minTurnRadius))
+    end
 end
 
 ------------------------------------------------------------------------------------------------------------------------

@@ -1981,14 +1981,28 @@ function PathFinderModule:getShapeDefByDirectionType_New(cell)
 
     shapeDefinition.x = worldPos.x
     shapeDefinition.z = worldPos.z
-    -- widthX is the extent ALONG travel and widthZ the one across it, because both this box and the
-    -- one in smoothResultingPPPath_Refined are turned by atan2(-dz, dx) and that call puts the
-    -- along-travel half length in the same slot (line 2310: length/2+2.5 there, sideLength+1.5
-    -- across). Assigning the half extents in their natural order put half WIDTH along travel and
-    -- half LENGTH across it, so the box stood broadside: as wide across the path as the train is
-    -- long. Every cell of every search was tested that way, and field entrances, gateways and lanes
-    -- the rig fits through were refused. The old box was immune only because it was square.
-    shapeDefinition.widthZ, shapeDefinition.widthX = self:getTrainHalfExtents()
+    -- widthX is the extent ALONG travel and widthZ the one across it: both this box and the one in
+    -- smoothResultingPPPath_Refined are turned by atan2(-dz, dx), and that call puts the along-travel
+    -- half length in the same slot (line 2310: length/2+2.5 there, sideLength+1.5 across).
+    --
+    -- ACROSS is the rig's half width. That is the honest number and the point of measuring the train
+    -- at all: the corridor has to be wide enough for what is being towed. Assigning the extents in
+    -- their natural order put half LENGTH across instead, and the box stood broadside - as wide as
+    -- the train is long - which refused field entrances and gateways the rig fits through.
+    --
+    -- ALONG is half a grid step, not half the train. The train's length has no business here: the
+    -- A* steps by minTurnRadius and checks cell by cell, so consecutive boxes at minTurnRadius/2
+    -- abut exactly and the corridor is covered without a gap. A box the length of the TRAIN reaches
+    -- three cells either side of its own centre, so one machine parked near the route blocks a
+    -- corridor of seven cells. Measured in game with a harvester on the headland: 17,035 cells
+    -- refused for collision, 5,075 more by the off-tracking probe that re-uses this box, and the
+    -- search giving up with six cells in the grid - it could not leave the start.
+    --
+    -- What the train's length IS for is the off-tracking box above, which places a second footprint
+    -- where the rear of the rig actually cuts the corner. That is where a long trailer belongs.
+    local halfWidth = self:getTrainHalfExtents()
+    shapeDefinition.widthX = self.minTurnRadius / 2
+    shapeDefinition.widthZ = halfWidth
 
     local corners = self:getCornersFromShapeDefinition(shapeDefinition)
     if corners ~= nil then
