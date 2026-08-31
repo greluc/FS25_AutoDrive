@@ -986,7 +986,7 @@ function PathFinderModule:update(dt)
         -- wall, a target that is fine but walled in, and a search that simply ran long all end here
         -- and want different answers. Read-only - the cell's own flags as the sweep left them.
         if self.targetCell ~= nil then
-            PathFinderModule.debugMsg(self.vehicle, "PFM:update giving up - target %d,%d restricted %s collision %s, last obstacle %s"
+            AutoDrive.debugMsg(self.vehicle, "PFM:update giving up - target %d,%d restricted %s collision %s, last obstacle %s"
                 , self.targetCell.x, self.targetCell.z
                 , tostring(self.targetCell.isRestricted)
                 , tostring(self.targetCell.hasCollision)
@@ -1119,7 +1119,7 @@ function PathFinderModule:update(dt)
                     end
                     if self:dubinsShouldGiveUp() then
                         self.dubinsAborted = true
-                        PathFinderModule.debugMsg(self.vehicle, "PFM:update giving up on Dubins - sweeps %d, interrupted frames %d"
+                        AutoDrive.debugMsg(self.vehicle, "PFM:update giving up on Dubins - sweeps %d, interrupted frames %d"
                             , self.dubinsCount or 0
                             , self.dubinsInterrupts or 0
                         )
@@ -1184,7 +1184,7 @@ function PathFinderModule:update(dt)
                     diffNetTime = netGetTime() - diffNetTime
                     self.diffOverallNetTime = self.diffOverallNetTime + diffNetTime
                     if current then
-                        PathFinderModule.debugMsg(self.vehicle, "PFM:update find goal reached self.steps %d diffOverallNetTime %d self.nodeGoal xz %d,%d current xz %d,%d - cells tested %d, refused for a vehicle %d"
+                        AutoDrive.debugMsg(self.vehicle, "PFM:update find goal reached self.steps %d diffOverallNetTime %d self.nodeGoal xz %d,%d current xz %d,%d - cells tested %d, refused for a vehicle %d"
                             , self.steps
                             , self.diffOverallNetTime
                             , self.nodeGoal.x, self.nodeGoal.z
@@ -1966,11 +1966,28 @@ function PathFinderModule:vehicleBlockingCell(cell, corners)
         -- Once per search, name them. Three rounds of this have gone on a guess about whether the
         -- planner can see a machine at all; one line settles it. Zero here means the snapshot is
         -- empty and the geometry is beside the point; a name here means the opposite.
-        local names = {}
-        for _, obstacle in ipairs(self.obstacleVehicles) do
-            names[#names + 1] = obstacle.vehicle.getName ~= nil and obstacle.vehicle:getName() or "unnamed"
+        -- Count, then the handful that are actually near us. Naming all of them printed every
+        -- vehicle in the mission - two hundred entries including every pallet - which is a line
+        -- nobody reads and a log nobody can search.
+        local vx, vz = 0, 0
+        if self.vehicle ~= nil and self.vehicle.components ~= nil and self.vehicle.components[1] ~= nil then
+            vx, _, vz = getWorldTranslation(self.vehicle.components[1].node)
         end
-        PathFinderModule.debugMsg(self.vehicle, "PFM: obstacle vehicles considered %d - %s"
+        local nearest = {}
+        for _, obstacle in ipairs(self.obstacleVehicles) do
+            local dx, dz = obstacle.x - vx, obstacle.z - vz
+            nearest[#nearest + 1] = { d = dx * dx + dz * dz, obstacle = obstacle }
+        end
+        table.sort(nearest, function(a, b) return a.d < b.d end)
+        local names = {}
+        for index = 1, math.min(5, #nearest) do
+            local obstacle = nearest[index].obstacle
+            names[#names + 1] = string.format("%s at %dm"
+                , obstacle.vehicle.getName ~= nil and obstacle.vehicle:getName() or "unnamed"
+                , math.floor(math.sqrt(nearest[index].d))
+            )
+        end
+        AutoDrive.debugMsg(self.vehicle, "PFM: obstacle vehicles considered %d, nearest: %s"
             , #self.obstacleVehicles
             , table.concat(names, ", ")
         )
@@ -3442,7 +3459,7 @@ function PathFinderModule:reachedGoal(current, goal)
 end
 
 function PathFinderModule:setupNew(behindStartCell, startCell, targetCell, userdata)
-    PathFinderModule.debugMsg(self.vehicle, "PFM:setupNew behindStartCell %s,%s startCell %s,%s targetCell %s,%s"
+    AutoDrive.debugMsg(self.vehicle, "PFM:setupNew behindStartCell %s,%s startCell %s,%s targetCell %s,%s"
         , tostring(behindStartCell.x)
         , tostring(behindStartCell.z)
         , tostring(startCell.x)
