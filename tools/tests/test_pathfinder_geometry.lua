@@ -887,4 +887,253 @@ function TestGoalCellIsChecked:testTheGoalIsTestedFromWhereWeArrive()
 end
 
 
+------------------------------------------------------------------------------------------------------------------------
+--- Giving up on the Dubins shortcut has to be reachable
+---
+--- The brake counted COMPLETED sweeps: "a sweep spread over several frames is one try, so only count
+--- it once all candidate curves have been checked". A sweep that never completes is never counted.
+---
+--- Measured in game, one vehicle, one standstill: 28 sweeps started, 27 stopped by the frame budget,
+--- exactly ONE counted - against a threshold of four. The vehicle would have needed well over a
+--- hundred sweeps to give up, so it never did, the A* never got a frame, and the driver recomputed a
+--- path for as long as anyone watched. Reported twice as an endless path calculation.
+------------------------------------------------------------------------------------------------------------------------
+TestDubinsGivesUp = {}
+
+function TestDubinsGivesUp:setUp() TestSetup.reset() end
+
+function TestDubinsGivesUp:testTheInterruptCounterStartsAtZero()
+    local p = pfm()
+    p:resetDubins()
+
+    lu.assertEquals(p.dubinsInterrupts, 0)
+end
+
+--- A fresh search has had enough of nothing.
+function TestDubinsGivesUp:testAFreshSearchKeepsTrying()
+    local p = pfm()
+    p:resetDubins()
+
+    lu.assertFalse(p:dubinsShouldGiveUp())
+end
+
+--- The rule that was missing: a sweep still in progress is bounded by the WORK it has done, because
+--- an interrupted sweep is never counted as a try and would otherwise run forever.
+function TestDubinsGivesUp:testAnInterruptedSweepIsBoundedByItsWork()
+    local p = pfm()
+    p:resetDubins()
+    p.dubinsPending = true
+    p.dubinsInterrupts = PathFinderModule.DUBINS_MAX_INTERRUPTED_FRAMES + 1
+
+    lu.assertTrue(p:dubinsShouldGiveUp())
+end
+
+function TestDubinsGivesUp:testASweepInProgressIsNotGivenUpOnTooEarly()
+    local p = pfm()
+    p:resetDubins()
+    p.dubinsPending = true
+    p.dubinsInterrupts = 1
+
+    lu.assertFalse(p:dubinsShouldGiveUp())
+end
+
+--- The measured standstill: 27 interruptions, sweep still pending, one completed try. It had to give
+--- up and did not. This is the case, stated as the test.
+function TestDubinsGivesUp:testTheMeasuredStandstillGivesUp()
+    local p = pfm()
+    p:resetDubins()
+    p.dubinsPending = true
+    p.dubinsInterrupts = 27
+    p.dubinsCount = 1
+
+    lu.assertTrue(p:dubinsShouldGiveUp(),
+        '28 sweeps started, 27 stopped by the budget, exactly one counted against a threshold of four')
+end
+
+--- The original rule is untouched: four completed sweeps is still enough.
+function TestDubinsGivesUp:testCompletedSweepsStillCount()
+    local p = pfm()
+    p:resetDubins()
+    p.dubinsCount = PathFinderModule.DUBINS_MAX_SWEEPS + 1
+
+    lu.assertTrue(p:dubinsShouldGiveUp())
+end
+
+function TestDubinsGivesUp:testFewerCompletedSweepsDoNot()
+    local p = pfm()
+    p:resetDubins()
+    p.dubinsCount = PathFinderModule.DUBINS_MAX_SWEEPS
+
+    lu.assertFalse(p:dubinsShouldGiveUp())
+end
+
+--- And so is the fruit fallback: once fruit is being ignored, the A* is what is wanted.
+function TestDubinsGivesUp:testTheFruitFallbackStillEndsIt()
+    local p = pfm()
+    p:resetDubins()
+    p.fallBackMode3 = true
+
+    lu.assertTrue(p:dubinsShouldGiveUp())
+end
+
+
+--- Counting the interruption is what makes the bound above mean anything, so it is driven, not
+--- restated: the sweep is stopped by the frame budget and the counter has to move.
+function TestDubinsGivesUp:testAnInterruptedSweepIsCounted()
+    local p = pfm()
+    p:resetDubins()
+    p.dubinsNodes = {}
+    p.q0, p.q1 = {}, {}
+    p.isDriveableDubins = function() return true end
+    -- a curve with more samples than one frame's budget, so the sweep cannot finish in one go
+    p.dubins = {
+        outPath = {},
+        createWayPoints = function() end,
+        dubins_shortest_path = function(self)
+            self.outPath = {}
+            for i = 1, 50 do self.outPath[i] = { x = i, z = 0, t = 0 } end
+            return ADDubins.EDUBOK
+        end,
+        dubins_path_sample_many = function() return ADDubins.EDUBOK end,
+    }
+    local savedScheduler, savedTime = ADScheduler, _G.netGetTime
+    ADScheduler = { getStepsPerFrame = function() return 1 end }
+    _G.netGetTime = function() return 0 end
+
+    local first = p:getDubinsPath()
+    local afterOne = p.dubinsInterrupts
+    p:getDubinsPath()
+
+    ADScheduler, _G.netGetTime = savedScheduler, savedTime
+
+    lu.assertNil(first, 'the sweep ran out of budget rather than returning a path')
+    lu.assertEquals(afterOne, 1)
+    lu.assertEquals(p.dubinsInterrupts, 2, 'every interrupted frame counts, or the bound never binds')
+end
+
+--- And the count has to actually stop it. Driven to the bound rather than asserted about: this is
+--- the loop that ran until somebody watched it and gave up first.
+function TestDubinsGivesUp:testTheSweepEventuallyStopsItself()
+    local p = pfm()
+    p:resetDubins()
+    p.dubinsNodes = {}
+    p.q0, p.q1 = {}, {}
+    p.isDriveableDubins = function() return true end
+    p.dubins = {
+        outPath = {},
+        createWayPoints = function() end,
+        dubins_shortest_path = function(self)
+            self.outPath = {}
+            for i = 1, 500 do self.outPath[i] = { x = i, z = 0, t = 0 } end
+            return ADDubins.EDUBOK
+        end,
+        dubins_path_sample_many = function() return ADDubins.EDUBOK end,
+    }
+    local savedScheduler, savedTime = ADScheduler, _G.netGetTime
+    ADScheduler = { getStepsPerFrame = function() return 1 end }
+    _G.netGetTime = function() return 0 end
+
+    local frames = 0
+    while not p.dubinsAborted and frames < 1000 do
+        p:getDubinsPath()
+        frames = frames + 1
+    end
+
+    ADScheduler, _G.netGetTime = savedScheduler, savedTime
+
+    lu.assertTrue(p.dubinsAborted, 'the shortcut has to hand the frames back on its own')
+    lu.assertEquals(frames, PathFinderModule.DUBINS_MAX_INTERRUPTED_FRAMES + 1)
+end
+
+
+------------------------------------------------------------------------------------------------------------------------
+--- The Dubins cell test has to see standing vehicles too
+---
+--- A Dubins curve is not a lesser path: when one is accepted it becomes the route the vehicle
+--- drives, and update() returns it before the A* runs at all. A machine standing in the way has to
+--- refuse a Dubins sample exactly as it refuses an A* cell, or the shortcut is a hole straight
+--- through the check. Reported from the game: a path was found, and it still ended at the harvester.
+------------------------------------------------------------------------------------------------------------------------
+TestDubinsCellConsultsVehicles = {}
+
+function TestDubinsCellConsultsVehicles:setUp()
+    TestSetup.reset()
+    self.saved = {
+        onField = AutoDrive.checkIsOnField,
+        collect = AutoDrive.collectObstacleVehicles,
+        intersect = AutoDrive.boxesIntersect,
+        pathInBox = AutoDrive.checkForVehiclePathInBox,
+        overlap = _G.overlapBox,
+    }
+    self.seen = { intersects = false }
+    local seen = self.seen
+    AutoDrive.checkIsOnField = function() return true end
+    AutoDrive.checkForVehiclePathInBox = function() return false end
+    AutoDrive.collectObstacleVehicles = function() return seen.obstacles or {} end
+    AutoDrive.boxesIntersect = function(box) seen.box = box return seen.intersects end
+    _G.overlapBox = function() return 0 end
+end
+
+function TestDubinsCellConsultsVehicles:tearDown()
+    AutoDrive.checkIsOnField = self.saved.onField
+    AutoDrive.collectObstacleVehicles = self.saved.collect
+    AutoDrive.boxesIntersect = self.saved.intersect
+    AutoDrive.checkForVehiclePathInBox = self.saved.pathInBox
+    _G.overlapBox = self.saved.overlap
+end
+
+--- One machine sitting exactly where the sample is, at the sample's own height.
+local function standingAt(x, z, y)
+    return { { vehicle = { getName = function() return 'JAGUAR 990' end }, x = x, y = y, z = z,
+               box = { { x = x - 2, y = y, z = z - 4 }, { x = x + 2, y = y, z = z - 4 },
+                       { x = x + 2, y = y, z = z + 4 }, { x = x - 2, y = y, z = z + 4 } } } }
+end
+
+local function dubinsCellTester()
+    local p = pfm()
+    p.vehicle.size = { width = 3, length = 6 }
+    p.restrictToField = false
+    p.avoidFruitSetting = false
+    p.collisionhits = 0
+    p.checkSlopeAngle = function() return false, 0 end
+    p.checkForFruitInArea = function() end
+    return p
+end
+
+function TestDubinsCellConsultsVehicles:testASampleInsideAMachineIsRefused()
+    local p = dubinsCellTester()
+    self.seen.obstacles = standingAt(2, 0, 30)
+    self.seen.intersects = true
+    local cell = { x = 2, z = 0, t = 0, worldPos = { x = 2, y = 30, z = 0 } }
+
+    p:isDriveableDubins(cell)
+
+    lu.assertTrue(cell.isRestricted, 'an accepted curve becomes the route, so it gets the same test')
+end
+
+function TestDubinsCellConsultsVehicles:testAClearSampleIsStillDriveable()
+    local p = dubinsCellTester()
+    self.seen.obstacles = standingAt(2, 0, 30)
+    self.seen.intersects = false
+    local cell = { x = 2, z = 0, t = 0, worldPos = { x = 2, y = 30, z = 0 } }
+
+    p:isDriveableDubins(cell)
+
+    lu.assertFalse(cell.isRestricted)
+end
+
+--- Dubins cells carry worldPos where A* cells carry a shapeDefinition, and the height check inside
+--- checkForVehiclesInBox reads it. Handing it a nil made it error on the first vehicle in range.
+function TestDubinsCellConsultsVehicles:testTheGroundHeightComesFromTheDubinsCell()
+    local p = dubinsCellTester()
+    self.seen.obstacles = standingAt(2, 0, 30)
+    local cell = { x = 2, z = 0, t = 0, worldPos = { x = 2, y = 30, z = 0 } }
+
+    p:isDriveableDubins(cell)
+
+    lu.assertEquals(self.seen.box[1].y, 30,
+        'a Dubins cell carries worldPos where an A* cell carries a shapeDefinition')
+end
+
+
 os.exit(lu.LuaUnit.run())

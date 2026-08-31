@@ -77,6 +77,18 @@ PathFinderModule.PP_CELL_X = 9
 PathFinderModule.PP_CELL_Z = 9
 
 PathFinderModule.GRID_SIZE_FACTOR = 0.5
+
+--- How many budget-interrupted frames of Dubins work to allow before letting the A* have them.
+---
+--- Not frames of wall clock: the scheduler activates one vehicle's pathfinder at a time, so these
+--- are activations, and twenty of them is already a long time to be standing still. The number has
+--- to sit below what was measured at the standstill this came from - 27 interruptions with no sign
+--- of giving up - or the bound is decoration. Dubins is a shortcut for a close target; if it has not
+--- produced a curve in twenty goes, the A* is the answer and every further go is one it does not get.
+PathFinderModule.DUBINS_MAX_INTERRUPTED_FRAMES = 20
+
+--- How many completed sweeps to allow. Unchanged in value; named so the rule reads as a rule.
+PathFinderModule.DUBINS_MAX_SWEEPS = 4
 PathFinderModule.GRID_SIZE_FACTOR_SECOND_UNLOADER = 1.1
 
 PathFinderModule.PP_MAX_EAGER_LOOKAHEAD_STEPS = 1
@@ -200,11 +212,36 @@ end
 -- dubinsAborted means the Dubins shortcut gave up and the A* result has to be used. Both must be
 -- cleared for every new search, otherwise a found path is silently dropped.
 -- dubinsCandidate / dubinsSampleIndex keep a sweep that ran out of its frame budget resumable.
+--- Whether to stop trying Dubins and let the A* have the frames.
+---
+--- Two ways to have had enough, and only one of them used to be here. The sweep count is the
+--- intended one: four full passes over the candidate curves and the shortcut has had its go.
+--- But a sweep is only counted once it COMPLETES, and a sweep interrupted by the frame budget never
+--- does - so the count is not a bound on anything.
+---
+--- Measured in game, one vehicle, one standstill: 28 sweeps started, 27 stopped by the budget, and
+--- exactly ONE counted against a threshold of four. Over a hundred sweeps would have been needed to
+--- give up, so it never gave up, the A* never got a frame, and the driver recomputed a path for as
+--- long as anyone watched. Reported twice as an endless path calculation.
+---
+--- So the work is bounded as well as the tries, and the work bound is checked even mid-sweep -
+--- that being exactly the state that used to be unbounded.
+function PathFinderModule:dubinsShouldGiveUp()
+    if (self.dubinsInterrupts or 0) > PathFinderModule.DUBINS_MAX_INTERRUPTED_FRAMES then
+        return true
+    end
+    if self.dubinsPending then
+        return false
+    end
+    return self.fallBackMode3 == true or (self.dubinsCount or 0) > PathFinderModule.DUBINS_MAX_SWEEPS
+end
+
 function PathFinderModule:resetDubins()
     self.dubinsDone = false
     self.dubinsAborted = false
     self.dubinsCount = 0
     self.dubinsPending = false
+    self.dubinsInterrupts = 0
     self.dubinsCandidate = nil
     self.dubinsSampleIndex = nil
     self.dubinsFromCell = nil
@@ -1079,9 +1116,13 @@ function PathFinderModule:update(dt)
                         PathFinderModule.debugMsg(self.vehicle, "PFM:update getDubinsPath self.fallBackMode3 %s"
                             , tostring(self.fallBackMode3)
                         )
-                        if self.fallBackMode3 or self.dubinsCount > 4 then
-                            self.dubinsAborted = true
-                        end
+                    end
+                    if self:dubinsShouldGiveUp() then
+                        self.dubinsAborted = true
+                        PathFinderModule.debugMsg(self.vehicle, "PFM:update giving up on Dubins - sweeps %d, interrupted frames %d"
+                            , self.dubinsCount or 0
+                            , self.dubinsInterrupts or 0
+                        )
                     end
                     -- return
                 end
@@ -1938,7 +1979,13 @@ function PathFinderModule:vehicleBlockingCell(cell, corners)
         return false
     end
 
-    local y = cell.shapeDefinition ~= nil and cell.shapeDefinition.y or 0
+    -- A* cells carry a shapeDefinition, Dubins cells a worldPos. Both mean the ground under the cell.
+    local y = 0
+    if cell.shapeDefinition ~= nil and cell.shapeDefinition.y ~= nil then
+        y = cell.shapeDefinition.y
+    elseif cell.worldPos ~= nil and cell.worldPos.y ~= nil then
+        y = cell.worldPos.y
+    end
     local box = {}
     for i, corner in ipairs(PathFinderModule.cornersAsPolygon(corners)) do
         box[i] = { x = corner.x, y = y, z = corner.z }
@@ -3554,6 +3601,21 @@ function PathFinderModule:isDriveableDubins(cell)
         end
     end
 
+    -- The same gap the A* cell test had, in the other cell test.
+    --
+    -- Dubins is not a lesser path - when a curve is accepted it becomes the route the vehicle
+    -- drives, and update() returns it before the A* runs at all. So a machine standing in the way
+    -- has to refuse a Dubins sample exactly as it refuses an A* cell, or the shortcut is a hole
+    -- straight through the check. Reported from the game: a path was found and it still ended at
+    -- the harvester.
+    if not cell.isRestricted and self:vehicleBlockingCell(cell, corners) then
+        cell.hasCollision = true
+        cell.isRestricted = true
+        PathFinderModule.debugMsg(self.vehicle, "PFM:isDriveableDubins vehicle standing in cell xz %d,%d"
+            , cell.x, cell.z
+        )
+    end
+
     if not cell.isRestricted and cell.incoming ~= nil then
         local worldPosPrevious = cell.incoming.worldPos
         local vectorX = worldPosPrevious.x - cell.worldPos.x
@@ -3643,6 +3705,13 @@ function PathFinderModule:getDubinsPath()
                         , diffNetTime
                     )
                     self.dubinsPending = true
+                    self.dubinsInterrupts = (self.dubinsInterrupts or 0) + 1
+                    -- Decided here rather than only on the next pass through update: this is the
+                    -- function that knows the sweep was cut short, and waiting a frame to act on it
+                    -- is a frame the A* does not get.
+                    if self:dubinsShouldGiveUp() then
+                        self.dubinsAborted = true
+                    end
                     return nil
                 end
                 local wayPoint = outPath[self.dubinsSampleIndex]
