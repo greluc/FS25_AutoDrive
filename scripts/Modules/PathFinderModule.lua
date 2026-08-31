@@ -89,6 +89,12 @@ PathFinderModule.DUBINS_MAX_INTERRUPTED_FRAMES = 20
 
 --- How many completed sweeps to allow. Unchanged in value; named so the rule reads as a rule.
 PathFinderModule.DUBINS_MAX_SWEEPS = 4
+
+--- Closer than this many cells and the search refuses to run at all - setupNew calls it
+--- "too close to target", sets completelyBlocked and returns before the first expansion.
+--- Named because callers have to respect it: aiming at something nearer is not a hard
+--- search, it is a guaranteed failure, and a caller that retries it retries it forever.
+PathFinderModule.MIN_TARGET_CELLS = 3
 PathFinderModule.GRID_SIZE_FACTOR_SECOND_UNLOADER = 1.1
 
 PathFinderModule.PP_MAX_EAGER_LOOKAHEAD_STEPS = 1
@@ -124,6 +130,28 @@ function PathFinderModule:new(vehicle)
     o.dubins = ADDubins:new()
     PathFinderModule.reset(o)
     return o
+end
+
+--- Whether a target is so close that the search will not run.
+---
+--- setupNew answers this in grid cells and returns completelyBlocked before its first expansion.
+--- Stated as a rule of its own because a caller choosing a target has to respect the same threshold
+--- - aiming nearer is not a hard search, it is a guaranteed failure, and callers retry failures.
+function PathFinderModule.targetTooClose(cellDistance)
+    return cellDistance < PathFinderModule.MIN_TARGET_CELLS
+end
+
+--- The nearest target a search can actually be given, in metres.
+---
+--- The grid steps by the driver radius, and setupNew refuses anything under MIN_TARGET_CELLS of
+--- them. A caller that has to choose a target - where to rejoin the network, say - needs the number
+--- in metres before any search exists, so it is derived from the same radius the grid uses.
+function AutoDrive.minPlannableDistance(vehicle)
+    local radius = AutoDrive.getDriverRadius ~= nil and AutoDrive.getDriverRadius(vehicle) or 0
+    if radius == nil or radius <= 0 then
+        radius = PathFinderModule.PP_CELL_X or 6
+    end
+    return radius * PathFinderModule.MIN_TARGET_CELLS
 end
 
 function PathFinderModule:reset()
@@ -1131,10 +1159,10 @@ function PathFinderModule:update(dt)
                 self:setupNew(self.behindStartCell, self.startCell,self.targetCell)
                 local dx, dz = self.nodeStart.x - self.nodeGoal.x, self.nodeStart.z - self.nodeGoal.z
                 local diff = math.sqrt(dx * dx + dz * dz)
-                local toCloseToTarget = (diff < 3)
+                local toCloseToTarget = PathFinderModule.targetTooClose(diff)
                 dx, dz = self.nodeBehindStart.x - self.nodeGoal.x, self.nodeBehindStart.z - self.nodeGoal.z
                 diff = math.sqrt(dx * dx + dz * dz)
-                toCloseToTarget = toCloseToTarget or (diff < 3)
+                toCloseToTarget = toCloseToTarget or PathFinderModule.targetTooClose(diff)
                 if (self.nodeBehindStart == self.nodeGoal) or toCloseToTarget then
                     self.completelyBlocked = true
                     return  -- no valid path

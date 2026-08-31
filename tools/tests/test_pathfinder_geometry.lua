@@ -1156,4 +1156,62 @@ function TestDubinsCellConsultsVehicles:testTheGroundHeightComesFromTheDubinsCel
 end
 
 
+------------------------------------------------------------------------------------------------------------------------
+--- How near a target may be before the search refuses to run
+---
+--- setupNew declares anything under MIN_TARGET_CELLS "too close to target", sets completelyBlocked
+--- and returns before its first expansion. A caller that picks a target has to respect the same
+--- threshold, because it answers failure by planning again.
+---
+--- Measured: 527 searches by one vehicle, all with the identical start and target one cell apart,
+--- every one refused before it began, zero paths found, for as long as the player watched.
+------------------------------------------------------------------------------------------------------------------------
+TestMinimumTargetDistance = {}
+
+function TestMinimumTargetDistance:setUp()
+    TestSetup.reset()
+    self.savedRadius = AutoDrive.getDriverRadius
+end
+
+function TestMinimumTargetDistance:tearDown()
+    AutoDrive.getDriverRadius = self.savedRadius
+end
+
+function TestMinimumTargetDistance:testATargetOneCellAwayIsTooClose()
+    lu.assertTrue(PathFinderModule.targetTooClose(1))
+end
+
+function TestMinimumTargetDistance:testTheThresholdItselfIsFarEnough()
+    lu.assertFalse(PathFinderModule.targetTooClose(PathFinderModule.MIN_TARGET_CELLS))
+end
+
+function TestMinimumTargetDistance:testJustUnderTheThresholdIsNot()
+    lu.assertTrue(PathFinderModule.targetTooClose(PathFinderModule.MIN_TARGET_CELLS - 0.01))
+end
+
+--- In metres, for callers that have to choose a target before any search exists.
+function TestMinimumTargetDistance:testTheDistanceComesFromTheGridStep()
+    AutoDrive.getDriverRadius = function() return 8 end
+
+    lu.assertEquals(AutoDrive.minPlannableDistance(TestSetup.vehicle()),
+        8 * PathFinderModule.MIN_TARGET_CELLS)
+end
+
+--- A wider rig steps by a wider cell, so its minimum grows with it.
+function TestMinimumTargetDistance:testAWiderTurningRigNeedsMoreRoom()
+    AutoDrive.getDriverRadius = function() return 8 end
+    local narrow = AutoDrive.minPlannableDistance(TestSetup.vehicle())
+    AutoDrive.getDriverRadius = function() return 14 end
+
+    lu.assertTrue(AutoDrive.minPlannableDistance(TestSetup.vehicle()) > narrow)
+end
+
+--- And it is never zero, or the caller aims at its own position and the search refuses it again.
+function TestMinimumTargetDistance:testAnUnknownRadiusStillKeepsItsDistance()
+    AutoDrive.getDriverRadius = function() return 0 end
+
+    lu.assertTrue(AutoDrive.minPlannableDistance(TestSetup.vehicle()) > 0)
+end
+
+
 os.exit(lu.LuaUnit.run())

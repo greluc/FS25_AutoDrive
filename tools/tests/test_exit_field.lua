@@ -31,7 +31,8 @@ local function exiting(mustPlan, routeLength, closestDistance)
         route[i] = { id = i, x = i * 10, y = 0, z = 0 }
     end
 
-    local vehicle = TestSetup.vehicle({ id = 5 })
+    local vehicle = TestSetup.vehicle({ id = 5, components = { { node = 'exitV' } } })
+    MockEngine.nodePositions['exitV'] = { x = 0, y = 0, z = 0 }
     vehicle.getClosestWayPoint = function() return 1, closestDistance end
     vehicle.ad.stateModule = {
         getSecondWayPoint = function() return routeLength end,
@@ -59,6 +60,9 @@ local function exiting(mustPlan, routeLength, closestDistance)
         return out
     end
     AutoDrive.getDriverRadius = function() return 10 end
+    -- the pathfinder's own precondition, in metres: it refuses a target under three grid
+    -- cells and the task must not aim at one
+    AutoDrive.minPlannableDistance = function() return 30 end
     AutoDrive.getSetting = function(name) if name == 'exitField' then return ExitFieldTask.STRATEGY_CLOSEST end return 0 end
 
     local task = ExitFieldTask:new(vehicle, mustPlan)
@@ -75,6 +79,7 @@ function TestExitField:setUp()
         pathFromTo = ADGraphManager.pathFromTo,
         radius = AutoDrive.getDriverRadius,
         setting = AutoDrive.getSetting,
+        minPlan = AutoDrive.minPlannableDistance,
     }
 end
 
@@ -83,6 +88,7 @@ function TestExitField:tearDown()
     ADGraphManager.pathFromTo = self.saved.pathFromTo
     AutoDrive.getDriverRadius = self.saved.radius
     AutoDrive.getSetting = self.saved.setting
+    AutoDrive.minPlannableDistance = self.saved.minPlan
 end
 
 --- Unchanged: a driver that is genuinely already on the network does not plan anything.
@@ -115,27 +121,42 @@ function TestExitField:testARecoveredVehiclePlansEvenWhenTheNetworkIsRightThere(
     lu.assertEquals(record.finished, 0)
 end
 
---- And it rejoins further along, not where it came from. Rejoining at the nearest way point puts it
---- back on the field course it was queued on.
-function TestExitField:testARecoveredVehicleRejoinsFurtherAlongTheRoute()
+--- And it rejoins far enough away that the search will actually run.
+---
+--- setupNew refuses a target under three grid cells and returns completelyBlocked before its first
+--- expansion, so aiming nearer is not a hard search - it is a guaranteed failure, and this task
+--- answers failure by planning again. Measured: 527 searches by one vehicle, every one with the
+--- identical start and target one cell apart, every one refused before it began, zero paths found.
+function TestExitField:testARecoveredVehicleAimsPastThePathfindersMinimum()
     local task, record, route = exiting(true, 20, 3)
 
     task:startPathPlanning()
 
-    lu.assertEquals(record.target, route[5],
-        'the nearest way point is the one it was already stuck on')
-    lu.assertAlmostEquals(record.vector.x, route[6].x - route[5].x, 0.001,
+    -- way points sit at x = 10, 20, 30 ... and the minimum is 30 m
+    lu.assertEquals(record.target, route[3], 'the first point the search is allowed to be given')
+    lu.assertAlmostEquals(record.vector.x, route[4].x - route[3].x, 0.001,
         'and the heading has to be the one at the point it actually aims for')
 end
 
---- A route with nowhere further to aim keeps the old target rather than running off the end of it.
-function TestExitField:testAShortRouteKeepsTheNearestWayPoint()
-    local task, record, route = exiting(true, 3, 3)
+--- Nearer points are skipped, however many of them there are.
+function TestExitField:testPointsInsideTheMinimumAreSkipped()
+    local task, record, route = exiting(true, 20, 3)
+    AutoDrive.minPlannableDistance = function() return 75 end
 
     task:startPathPlanning()
 
-    lu.assertEquals(record.planned, 1)
-    lu.assertEquals(record.target, route[1])
+    lu.assertEquals(record.target, route[8], 'x = 80 is the first at or past 75 m')
+end
+
+--- And a route entirely inside the minimum is not planned at all. There is nothing to plan and
+--- nothing to retry - which is the difference between finishing and looping five hundred times.
+function TestExitField:testARouteShorterThanThePathfinderCanPlanIsJustDriven()
+    local task, record = exiting(true, 3, 3)
+
+    task:startPathPlanning()
+
+    lu.assertEquals(record.planned, 0, 'a search that cannot run must not be started')
+    lu.assertEquals(record.finished, 1)
 end
 
 --- The flag is off by default, so every caller that does not ask for it is untouched.

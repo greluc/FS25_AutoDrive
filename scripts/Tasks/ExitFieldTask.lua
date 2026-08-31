@@ -119,6 +119,40 @@ function ExitFieldTask:startPathPlanning()
                 nextNode = wayPoints[6]
             end
 
+            -- Far enough away that the search will run at all.
+            --
+            -- setupNew refuses a target under MIN_TARGET_CELLS grid cells and returns
+            -- completelyBlocked before its first expansion, so aiming nearer is not a hard search,
+            -- it is a guaranteed failure - and this task answers failure by planning again.
+            -- Measured, and the reason this exists: 527 searches by one vehicle, every one of them
+            -- with the identical start and target one cell apart, every one refused before it began,
+            -- zero paths found, for the whole time the player watched.
+            --
+            -- Four way points on was a guess at "far enough". This is the actual threshold, taken
+            -- from the pathfinder's own precondition rather than borrowed from a setting.
+            if self.mustPlan then
+                local minDistance = AutoDrive.minPlannableDistance(self.vehicle)
+                local vx, _, vz = getWorldTranslation(self.vehicle.components[1].node)
+                local reachable = nil
+                for index = 1, #wayPoints - 1 do
+                    local wayPoint = wayPoints[index]
+                    local dx, dz = wayPoint.x - vx, wayPoint.z - vz
+                    if (dx * dx + dz * dz) >= (minDistance * minDistance) then
+                        reachable = index
+                        break
+                    end
+                end
+                if reachable == nil then
+                    -- The whole way out is shorter than the pathfinder can plan. There is nothing to
+                    -- plan, and nothing to retry: drive it.
+                    ExitFieldTask.debugMsg(self.vehicle, "ExitFieldTask:startPathPlanning - route shorter than the pathfinder can plan - driving it")
+                    self:finished()
+                    return false
+                end
+                targetNode = wayPoints[reachable]
+                nextNode = wayPoints[reachable + 1]
+            end
+
             -- "Already close enough" is true for a vehicle that can drive, and false for one that
             -- has just proved it cannot. Measured: both unloaders reported zero pathfinder runs in a
             -- whole session - every single ExitFieldTask ended here, on the shortcut.
