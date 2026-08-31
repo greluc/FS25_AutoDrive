@@ -553,6 +553,26 @@ function TestVehicleAsObstacle:testTheVehicleWeAreDrivingToIsSpared()
     lu.assertEquals(self.seen.excluded[2], p.targetVehicle)
 end
 
+--- The snapshot is resolved once and reused for every cell, so "once" has to mean once per SEARCH.
+--- Leaving that to reset() alone would leave it to the discipline of thirteen call sites in ten
+--- tasks, and they do not agree - startPathPlanningToNetwork never goes through the common entry
+--- point. setupNew runs for every search and again for every fallback restart, so it clears it.
+function TestVehicleAsObstacle:testEverySearchLooksAtWhereTheMachinesAreNow()
+    local p = pfm()
+    p.get_node = function(_, x, z) return { x = x, z = z, cost = 0 } end
+    p.estimate_cost = function() return 0 end
+    p.isDriveableAstar = function() return true end
+    p.targetAheadCell = { x = 4, z = 0 }
+    p.targetCell = { x = 3, z = 0 }
+    p.startCell = { x = 0, z = 0 }
+    p.obstacleVehicles = { 'a stale snapshot' }
+
+    p:setupNew({ x = -1, z = 0 }, { x = 0, z = 0 }, { x = 3, z = 0 })
+
+    lu.assertNil(p.obstacleVehicles,
+        'a fallback taking another twenty seconds must not plan around where a machine used to be')
+end
+
 function TestVehicleAsObstacle:testWithoutATargetOnlyOurselvesAreSpared()
     local p = pfm()
     local cell, corners = cellWithCorners()

@@ -3450,6 +3450,16 @@ function PathFinderModule:setupNew(behindStartCell, startCell, targetCell, userd
         , tostring(targetCell.x)
         , tostring(targetCell.z)
     )
+    -- Take a fresh look at where the machines are.
+    --
+    -- The snapshot is resolved once and reused for every cell, which is what makes the per-cell test
+    -- affordable - but "once" has to mean once per SEARCH, not once per module. Clearing it in
+    -- reset() alone would leave that to the discipline of thirteen call sites in ten tasks, and they
+    -- do not agree: startPathPlanningToNetwork does not go through the common entry point at all.
+    -- setupNew runs for every search and again for every fallback restart, which is exactly the
+    -- granularity wanted - a fallback that takes another twenty seconds should not still be planning
+    -- around where a harvester stood before it.
+    self.obstacleVehicles = nil
     self.cachedNodes = {}
     self.openset = {}
     self.openHeap = {}
